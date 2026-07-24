@@ -17,6 +17,52 @@ import type {
 const CLAUDE_CODE_IDENTITY =
   "You are Claude Code, Anthropic's official CLI for Claude.";
 
+// —— 临时错误自动退避重试（429 限速 / 503 / 5xx / engine overloaded / 网络抖动）——
+// 只在「开始读流之前」重试，故不会重复出字；并发撞限速会自己缓一下继续，不用手动重发。
+function backoffMs(attempt: number): number {
+  return Math.min(1000 * 2 ** attempt, 15000) + Math.floor(Math.random() * 400);
+}
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new DOMException("Aborted", "AbortError"));
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(t);
+        reject(new DOMException("Aborted", "AbortError"));
+      },
+      { once: true },
+    );
+  });
+}
+async function fetchWithRetry(url: string, init: RequestInit, retries = 4): Promise<Response> {
+  const signal = init.signal as AbortSignal | undefined;
+  for (let attempt = 0; ; attempt++) {
+    let res: Response | null = null;
+    try {
+      res = await fetch(url, init);
+    } catch (e: any) {
+      if (e?.name === "AbortError" || signal?.aborted || attempt >= retries) throw e;
+      await sleep(backoffMs(attempt), signal); // 网络错误退避重试
+      continue;
+    }
+    const transient = res.status === 429 || res.status === 503 || (res.status >= 500 && res.status < 600);
+    if (transient && attempt < retries) {
+      const ra = Number(res.headers.get("retry-after"));
+      const wait = Number.isFinite(ra) && ra > 0 ? Math.min(ra * 1000, 20000) : backoffMs(attempt);
+      try {
+        await res.body?.cancel();
+      } catch {
+        /* ignore */
+      }
+      await sleep(wait, signal);
+      continue;
+    }
+    return res;
+  }
+}
+
 // ---------- Anthropic（同时支持 api-key 与订阅 OAuth）----------
 class AnthropicProvider implements Provider {
   name = "anthropic";
@@ -42,9 +88,15 @@ class AnthropicProvider implements Provider {
         baseURL: cfg.baseUrl,
         defaultHeaders: { "anthropic-beta": cfg.anthropicBeta },
         fetch: capFetch,
+        maxRetries: 4, // 429/5xx 自动退避重试(并发撞限速更稳)
       });
     } else {
-      this.client = new Anthropic({ apiKey: cfg.apiKey, baseURL: cfg.baseUrl, fetch: capFetch });
+      this.client = new Anthropic({
+        apiKey: cfg.apiKey,
+        baseURL: cfg.baseUrl,
+        fetch: capFetch,
+        maxRetries: 4,
+      });
     }
   }
 
@@ -176,7 +228,7 @@ class OpenAIProvider implements Provider {
     // 此时不发 max_tokens，让服务端按 (窗口 - 输入) 自适应，绝不越界。
     const ctxWin = this.cfg.contextWindow || 0;
     const sendMaxTokens = ctxWin && this.cfg.maxTokens >= ctxWin ? undefined : this.cfg.maxTokens;
-    const res = await fetch(`${base}/chat/completions`, {
+    const res = await fetchWithRetry(`${base}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -389,7 +441,7 @@ class CodexProvider implements Provider {
       reasoning: { effort: "medium" },
     };
 
-    const res = await fetch(this.cfg.codexEndpoint, {
+    const res = await fetchWithRetry(this.cfg.codexEndpoint, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.cfg.codexToken}`,
