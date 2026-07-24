@@ -260,6 +260,21 @@ export function App() {
   const [showAcctMenu, setShowAcctMenu] = useState(false);
   const [webLoginBusy, setWebLoginBusy] = useState(false);
   const [authBusy, setAuthBusy] = useState(false); // 失败处一键授权 Claude 进行中
+  const [codexBusy, setCodexBusy] = useState(false); // Codex 一键授权进行中
+  async function doCodexLogin() {
+    setCodexBusy(true);
+    try {
+      const ok = await window.minicc.codexLogin();
+      push({
+        type: "notice",
+        text: ok
+          ? "✓ Codex 授权成功，已切到 Codex 订阅，可以直接对话了。"
+          : "Codex 授权未完成（取消/超时/端口 1455 被占）。若本机在跑 codex CLI 请先关掉再试。",
+      });
+    } finally {
+      setCodexBusy(false);
+    }
+  }
   const [needAuth, setNeedAuth] = useState(false); // 检测到缺授权：授权条常驻显示
   const [authDismissed, setAuthDismissed] = useState(false); // 用户手动 × 关掉了授权条
   const [oauthStep, setOauthStep] = useState<"idle" | "awaiting-code">("idle"); // 浏览器授权：等回填授权码
@@ -1628,14 +1643,15 @@ export function App() {
                   </>
                 )
               ) : curPreset?.kind === "codex" ? (
-                // Codex 订阅：用本机 ChatGPT 登录态
+                // Codex 订阅：应用内一键 ChatGPT 授权(无需本机 codex CLI)
                 <>
                   <span>
-                    🔑 Codex 订阅需要本机 ChatGPT 登录态：在终端运行 <code>codex login</code>{" "}
-                    登录后回来重发即可。
+                    🔑 Codex 订阅需要 ChatGPT 登录。点下方<b>一键授权</b>，会开系统浏览器登录 ChatGPT（本机无需装 codex）。
                   </span>
                   <div className="err-auth-actions">
-                    <button onClick={() => setShowSettings(true)}>查看设置</button>
+                    <button className="allow" onClick={doCodexLogin} disabled={codexBusy}>
+                      {codexBusy ? "授权中…（浏览器完成登录）" : "一键授权（ChatGPT 登录）"}
+                    </button>
                   </div>
                 </>
               ) : apiKeyStep === "awaiting" ? (
@@ -3357,6 +3373,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [customModel, setCustomModel] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [claudeBusy, setClaudeBusy] = useState(false); // Claude 一键授权进行中
+  const [sCodexBusy, setSCodexBusy] = useState(false); // 设置里 Codex 一键授权进行中
   const [sysPrompt, setSysPrompt] = useState(""); // 系统提示词(可编辑)
   const [sysPromptDefault, setSysPromptDefault] = useState(""); // 默认模板(恢复默认用)
   const [sysPromptTouched, setSysPromptTouched] = useState(false); // 是否自定义过(否则存 undefined=用默认)
@@ -4068,6 +4085,32 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                     </div>
                   </label>
                 </>
+              )}
+
+              {preset.kind === "codex" && (
+                <div className="field">
+                  <span>ChatGPT 授权</span>
+                  <p className="s-note">
+                    应用内一键登录 ChatGPT（走本地回环，无需安装 codex CLI）。授权成功即写入本机 ~/.codex，可直接对话。
+                  </p>
+                  <button
+                    type="button"
+                    className="allow"
+                    disabled={sCodexBusy}
+                    onClick={async () => {
+                      setSCodexBusy(true);
+                      try {
+                        const ok = await window.minicc.codexLogin();
+                        if (ok) onClose();
+                        else alert("Codex 授权未完成（取消/超时/端口 1455 被占）。");
+                      } finally {
+                        setSCodexBusy(false);
+                      }
+                    }}
+                  >
+                    {sCodexBusy ? "授权中…（浏览器完成登录）" : "一键授权（ChatGPT 登录）"}
+                  </button>
+                </div>
               )}
 
               {(preset.kind === "anthropic-apikey" || preset.kind === "openai") && (

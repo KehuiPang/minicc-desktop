@@ -57,6 +57,7 @@ import {
 } from "./settings.js";
 import { getAccount, logout } from "./account.js";
 import { claudeOAuthLogin, claudeOAuthOpenBrowser, claudeOAuthExchange } from "./claude-oauth.js";
+import { codexOAuthLogin } from "./codex-oauth.js";
 import { log, LOG_FILE } from "./logger.js";
 
 log("boot", "minicc 主进程启动", "日志文件:", LOG_FILE);
@@ -1722,6 +1723,25 @@ ipcMain.handle("account:claude-oauth-exchange", async (_e, code: string) => {
   log("claude-login-ipc", "用授权码换 token");
   const r = await claudeOAuthExchange(code);
   return r ? r.token : null;
+});
+
+// Codex 订阅一键授权：app 内跑 ChatGPT OAuth(本地 1455 回环)，写 ~/.codex/auth.json。
+// 成功返回 true；由前端切到 codex 预设(复用其成熟切换逻辑) + 刷新账号。
+ipcMain.handle("account:codex-login", async () => {
+  log("codex-login-ipc", "应用内 ChatGPT 授权");
+  const r = await codexOAuthLogin();
+  if (!r) return false;
+  // 持久化选中 codex + 重载 provider(读新写的 ~/.codex/auth.json)，前端账号随 evt:ready/account 刷新
+  const s = loadSettings();
+  if (s) saveSettings({ ...s, providerId: "codex", kind: "codex", model: s.model || "gpt-5.5" });
+  try {
+    initProvider();
+    send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow });
+    void emitAccount();
+  } catch (e) {
+    log("codex-login-ipc", "重载 provider 失败", String(e));
+  }
+  return true;
 });
 
 // 读系统剪贴板(供「完成授权」自动取授权码)
