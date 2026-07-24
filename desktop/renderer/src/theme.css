@@ -2910,3 +2910,10 @@ body {
 }
 /* hover 出删除按钮时，时间仍保留(与删除按钮并排)，稍加深 */
 .session-item:hover .s-time { opacity: 0.75; }
+
+/* ===== 流式中纯文本(顺滑，零 markdown 解析)：保留换行/空格，写完再转 markdown ===== */
+.md-streaming {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}

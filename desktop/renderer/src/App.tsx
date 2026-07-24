@@ -282,8 +282,8 @@ export function App() {
 
   const push = (it: Item) => setItems((p) => [...p, it]);
 
-  // 流式增量批处理：累积到 ref，节流到 ~50ms 才 flush 一次(而非每帧)，
-  // 避免正在流的长消息每帧全量重解析 markdown(O(n²) 卡顿)。~20fps 阅读上足够顺滑。
+  // 流式增量批处理：累积到 ref，节流 flush。流式那条现在渲染纯文本(不再重解析 markdown)，
+  // 每次 flush 极轻，故降到 ~30ms(~33fps) 让出字更顺滑；流完再切完整 Markdown。
   const pendingDeltaRef = useRef("");
   const flushTimerRef = useRef<number | null>(null);
   function scheduleFlush() {
@@ -291,7 +291,7 @@ export function App() {
     flushTimerRef.current = window.setTimeout(() => {
       flushTimerRef.current = null;
       flushDelta();
-    }, 50);
+    }, 30);
   }
   function flushDelta() {
     if (flushTimerRef.current != null) {
@@ -2286,7 +2286,8 @@ function CopyBtn({ text }: { text: string }) {
 
 // 助手文字块：无头像、整块左对齐、纯 markdown 渲染
 // memo：只有 text/streaming 变的那条才重渲染，其余消息跳过——流式不卡的关键
-// streaming=true(正在流)：跳过 rehype 代码高亮(最贵)，写完那一刻再高亮
+// streaming=true(正在流)：渲染纯文本(零 Markdown 解析开销，避免越长越卡 O(n²))；
+// 流完那一刻(streaming=false)才做完整 Markdown + 代码高亮。
 const AssistantMsg = React.memo(function AssistantMsg({
   text,
   streaming,
@@ -2296,7 +2297,11 @@ const AssistantMsg = React.memo(function AssistantMsg({
 }) {
   return (
     <div className="aimsg">
-      <MarkdownView text={text} highlight={!streaming} />
+      {streaming ? (
+        <div className="md md-streaming">{text}</div>
+      ) : (
+        <MarkdownView text={text} highlight={true} />
+      )}
     </div>
   );
 });
