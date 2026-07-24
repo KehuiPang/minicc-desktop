@@ -33,6 +33,7 @@ export interface AgentHooks {
   onUsage?(u: SessionUsage): void; // 每轮请求后回报累计用量
   onRateLimits?(rl: import("../types.js").RateLimits): void; // 订阅额度快照
   onCompact?(before: number, after: number): void; // 压缩发生时回报条数变化
+  onStep?(): void; // 每完成一段(助手消息/工具结果)后回调：用于即时落盘，重启不丢进度
 }
 
 export class Agent {
@@ -155,6 +156,7 @@ export class Agent {
       if (result.rateLimits) hooks.onRateLimits?.(result.rateLimits);
 
       this.messages.push({ role: "assistant", content: result.content, ts: Date.now() });
+      hooks.onStep?.(); // 助手段落已入历史，即时落盘(重启不丢)
 
       const toolUses = result.content.filter(
         (b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use",
@@ -241,6 +243,7 @@ export class Agent {
       const inj = this.drainInject();
       if (inj.length) resultsBlocks.push(...inj);
       this.messages.push({ role: "user", content: resultsBlocks });
+      hooks.onStep?.(); // 工具结果已入历史，即时落盘
       if (signal?.aborted) return; // 中断：tool_result 已入队(历史合法)，就此结束
     }
   }

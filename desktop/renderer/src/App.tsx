@@ -1670,15 +1670,26 @@ export function App() {
               ))}
             </div>
           )}
+          {suggestion && input === "" && (
+            <div
+              className="suggest-bar"
+              title="点击或按 Tab 采纳"
+              onClick={() => {
+                setInput(suggestion);
+                setSuggestion("");
+                taRef.current?.focus();
+              }}
+            >
+              <span className="suggest-ico">💡</span>
+              <span className="suggest-text">{suggestion}</span>
+              <span className="suggest-key">Tab 采纳</span>
+            </div>
+          )}
           <div className="input-wrap">
             <textarea
               ref={taRef}
               rows={1}
-              placeholder={
-                input === "" && suggestion
-                  ? `${suggestion}      ⇥ Tab 采纳`
-                  : "描述你的需求…（可直接粘贴图片；/reset 清空对话）"
-              }
+              placeholder="描述你的需求…（可直接粘贴图片；/reset 清空对话）"
               value={input}
               onChange={(e) => {
                 setInput(e.target.value);

@@ -2937,3 +2937,19 @@ body {
 .code-wrap:hover .code-copy { opacity: 0.9; }
 .code-copy:hover { color: var(--text); border-color: var(--accent); }
 .code-copy.ok { color: #5aa469; border-color: #5aa469; opacity: 1; }
+
+/* ===== 下一步建议栏(输入框上方，明显可点，Tab 采纳) ===== */
+.suggest-bar {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 2px 8px; padding: 7px 12px;
+  font-size: 12.5px; color: var(--text-dim);
+  background: var(--accent-soft); border: 1px solid var(--border);
+  border-radius: 10px; cursor: pointer; transition: border-color 0.12s;
+}
+.suggest-bar:hover { border-color: var(--accent); color: var(--text); }
+.suggest-ico { flex: 0 0 auto; }
+.suggest-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggest-key {
+  flex: 0 0 auto; padding: 1px 7px; font-size: 10.5px;
+  border: 1px solid var(--border-strong); border-radius: 5px; color: var(--text-muted);
+}

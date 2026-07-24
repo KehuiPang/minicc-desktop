@@ -989,6 +989,28 @@ function persistCurrent() {
   persist(currentId);
 }
 
+// 即时落盘(不触发智能标题/防刷)：每完成一段就存，重启不丢进度。可附带正在生成的半截草稿。
+const streamDrafts = new Map<string, string>(); // 正在流的助手段落累积文本(还没进 agent.messages)
+const draftSaveAt = new Map<string, number>(); // 草稿落盘节流时间戳
+function persistQuiet(id: string, draft?: string) {
+  const a = agents.get(id);
+  if (!a) return;
+  let msgs = a.getMessages();
+  if (draft && draft.trim()) {
+    // 把正在生成的半截作为临时助手消息附在末尾一起存(重启后可见/可续)；正常完成时会被真消息覆盖
+    msgs = [...msgs, { role: "assistant", content: [{ type: "text", text: draft }] } as any];
+  }
+  if (msgs.length === 0) return;
+  saveSession(id, msgs, deriveTitle(msgs), Date.now(), a.getUsage());
+}
+// 流式草稿节流落盘(~1.2s 一次)：既保存半截又不狂写盘
+function saveDraftThrottled(id: string) {
+  const now = Date.now();
+  if (now - (draftSaveAt.get(id) || 0) < 1200) return;
+  draftSaveAt.set(id, now);
+  persistQuiet(id, streamDrafts.get(id));
+}
+
 // AI 智能标题：每一轮对话后都重新总结，让标题实时跟上会话内容
 const titleInFlight = new Set<string>(); // 正在生成的会话(防重入)，非"只生成一次"
 function hasText(msgs: any[], role: string): boolean {
@@ -1224,7 +1246,15 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
     const runP = agent.send(
       text,
       {
-        onText: (delta) => send("evt:assistant-delta", { sid: useId, delta }),
+        onText: (delta) => {
+          send("evt:assistant-delta", { sid: useId, delta });
+          streamDrafts.set(useId, (streamDrafts.get(useId) || "") + delta); // 累积半截
+          saveDraftThrottled(useId); // 节流落盘：重启不丢正在生成的内容
+        },
+        onStep: () => {
+          streamDrafts.delete(useId); // 该段已进历史，清草稿
+          persistQuiet(useId); // 即时落盘真实消息(每段/每工具轮)
+        },
         onToolStart: (id, name, input) => send("evt:tool-start", { sid: useId, id, name, input }),
         onToolEnd: (id, result, isError) => send("evt:tool-end", { sid: useId, id, result, isError }),
         requestPermission: (tool, input) =>
@@ -1260,6 +1290,8 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
       runs.delete(useId);
       emitTasks();
     }
+    streamDrafts.delete(useId); // 清掉流式草稿(真实消息已在历史)
+    draftSaveAt.delete(useId);
     persist(useId); // 该会话跑完落盘
     void emitAccount(); // 刷新余额/本会话已消耗(DeepSeek 等)
     if (useId === currentId && !ac.signal.aborted) void suggestNextAction(useId); // 仅当前会话、正常跑完才提建议
