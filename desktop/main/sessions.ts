@@ -21,6 +21,8 @@ export interface SessionMeta {
   usage?: { totalInput: number; totalOutput: number; lastInput: number };
   group?: string; // 所属分组名；空=未分组
   priority?: number; // 优先级：数字越大越靠前(默认 0)
+  order?: number; // 手动拖拽排序键(同优先级内按此升序；未拖过=按 -updatedAt)
+  project?: string; // AI 推断的项目/主题(用于「按项目智能分组」)
 }
 
 function ensure() {
@@ -83,6 +85,30 @@ export function setSessionPriority(id: string, priority: number) {
   if (!s) return;
   s.priority = Number.isFinite(priority) ? priority : 0;
   saveList(l);
+}
+
+// 手动拖拽排序：写入 order 键(前端算好的相邻中点值)
+export function setSessionOrder(id: string, order: number) {
+  const l = listSessions();
+  const s = l.find((x) => x.id === id);
+  if (!s || !Number.isFinite(order)) return;
+  s.order = order;
+  saveList(l);
+}
+
+// AI 推断的项目/主题(用于按项目智能分组)
+export function setSessionProject(id: string, project: string) {
+  const l = listSessions();
+  const s = l.find((x) => x.id === id);
+  if (!s) return;
+  s.project = (project || "").trim() || undefined;
+  saveList(l);
+}
+
+// 组顺序整体重排(拖拽组头)
+export function setGroupsOrder(names: string[]) {
+  if (!Array.isArray(names)) return;
+  saveGroups(names.filter((x) => typeof x === "string"));
 }
 
 // 历史是否合法：user/assistant 交替 + 每个 tool_use 都有紧跟的配对 tool_result
@@ -160,7 +186,16 @@ export function saveSession(
   const all = listSessions();
   const prev = all.find((s) => s.id === id); // 保留已设的分组/优先级，别被每轮落盘抹掉
   const l = all.filter((s) => s.id !== id);
-  l.unshift({ id, title, updatedAt: now, usage, group: prev?.group, priority: prev?.priority });
+  l.unshift({
+    id,
+    title,
+    updatedAt: now,
+    usage,
+    group: prev?.group,
+    priority: prev?.priority,
+    order: prev?.order,
+    project: prev?.project,
+  });
   saveList(l);
 }
 

@@ -9,6 +9,9 @@ export interface MiniccApi {
   deleteSession(id: string): void;
   setSessionGroup(id: string, group?: string | null): void;
   setSessionPriority(id: string, priority: number): void;
+  setSessionOrder(id: string, order: number): void;
+  reorderGroups(names: string[]): void;
+  setGroupMode(mode: "manual" | "date" | "project"): void;
   deleteExchange(sid: string, ordinal: number): void;
   bootstrap(): Promise<{ sessions: any[]; groups?: string[]; currentId: string; messages: any[]; usage?: any; rateLimits?: any }>;
   getSettings(): Promise<{ settings: any; backend: string; model: string; defaultPrompt?: string }>;

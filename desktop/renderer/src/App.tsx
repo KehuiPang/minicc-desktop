@@ -33,6 +33,7 @@ interface SessionMeta {
   updatedAt: number;
   group?: string;
   priority?: number;
+  order?: number;
 }
 
 const CTX_MAX = 1_000_000; // gpt-5.5 上下文窗口估算，用于占用条
@@ -159,8 +160,13 @@ export function App() {
   const [autoMode, setAutoMode] = useState(true);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [groups, setGroups] = useState<string[]>([]); // 分组顺序(新组置顶)
+  const [groupMode, setGroupMode] = useState<"manual" | "date" | "project">("manual"); // 分组模式
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [ctxMenu, setCtxMenu] = useState<{ sid: string; x: number; y: number } | null>(null); // 会话右键菜单
+  const [dragId, setDragId] = useState<string | null>(null); // 正在拖拽的会话 id
+  const [dragOverId, setDragOverId] = useState<string | null>(null); // 拖到哪个会话上(高亮)
+  const [dragGroup, setDragGroup] = useState<string | null>(null); // 正在拖拽的组名
+  const [dragOverGroup, setDragOverGroup] = useState<string | null>(null); // 拖到哪个组头上
   const [groupInputSid, setGroupInputSid] = useState<string | null>(null); // 正在为哪个会话输入新组名
   const [newGroupName, setNewGroupName] = useState("");
   const [currentId, setCurrentId] = useState("");
@@ -302,6 +308,7 @@ export function App() {
       setStations(r?.settings?.customStations || []);
       setProviderOrder(r?.settings?.providerOrder || []);
       setHiddenProviders(r?.settings?.hiddenProviders || []);
+      setGroupMode((r?.settings as any)?.groupMode || "manual");
       // 应用主题(默认暗色·minicc客户端默认深色)
       const theme = (r?.settings as any)?.theme || "dark";
       document.documentElement.setAttribute("data-theme", theme);
@@ -742,6 +749,76 @@ export function App() {
 
   const stop = () => window.minicc.stop(currentId);
 
+  // ——— 侧栏分组/排序辅助 ———
+  const orderKey = (s: SessionMeta) => (s.order != null ? s.order : -s.updatedAt);
+  // 组内排序：优先级(数字大在前) → 手动拖拽键(未拖过=按最近更新)
+  const sortRows = (arr: SessionMeta[]) =>
+    [...arr].sort((a, b) => (b.priority || 0) - (a.priority || 0) || orderKey(a) - orderKey(b));
+  // 日期分组的桶名 + 排序权重
+  const dateBucket = (ts: number): string => {
+    const d = new Date(ts);
+    const now = new Date();
+    const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diff = Math.round((day(now) - day(d)) / 86400000);
+    if (diff <= 0) return "今天";
+    if (diff === 1) return "昨天";
+    if (diff <= 7) return "近 7 天";
+    if (diff <= 30) return "近 30 天";
+    if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1} 月`;
+    return `${d.getFullYear()} 年`;
+  };
+  const dateRank = (b: string) =>
+    ["今天", "昨天", "近 7 天", "近 30 天"].indexOf(b) >= 0
+      ? ["今天", "昨天", "近 7 天", "近 30 天"].indexOf(b)
+      : 100; // 具体月/年桶排后面，用桶内最新时间兜底排序
+  // 会话所属分组(按当前模式)
+  const groupOf = (s: SessionMeta): string =>
+    groupMode === "date" ? dateBucket(s.updatedAt) : groupMode === "project" ? s.project || "未归类" : s.group || "";
+
+  // 拖拽会话到某会话上→插入并写 order；手动模式下跨组=移动分组
+  function dropOnSession(e: React.DragEvent, target: SessionMeta, list: SessionMeta[]) {
+    e.preventDefault();
+    setDragOverId(null);
+    const id = dragId;
+    setDragId(null);
+    if (!id || id === target.id) return;
+    const dragged = sessions.find((s) => s.id === id);
+    if (!dragged) return;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const below = e.clientY > rect.top + rect.height / 2;
+    const others = list.filter((r) => r.id !== id);
+    const ti = others.findIndex((r) => r.id === target.id);
+    const above = below ? others[ti] : others[ti - 1];
+    const belowItem = below ? others[ti + 1] : others[ti];
+    let newOrder: number;
+    if (above && belowItem) newOrder = (orderKey(above) + orderKey(belowItem)) / 2;
+    else if (above) newOrder = orderKey(above) + 1e6;
+    else if (belowItem) newOrder = orderKey(belowItem) - 1e6;
+    else newOrder = orderKey(target);
+    if (groupMode === "manual" && (dragged.group || "") !== (target.group || ""))
+      window.minicc.setSessionGroup(id, target.group || null);
+    window.minicc.setSessionOrder(id, newOrder);
+  }
+
+  // 拖拽组头重排(仅手动模式)
+  function dropOnGroup(e: React.DragEvent, targetGroup: string, ordered: string[]) {
+    e.preventDefault();
+    const g = dragGroup;
+    setDragGroup(null);
+    setDragOverGroup(null);
+    if (!g || g === targetGroup) return;
+    const without = ordered.filter((x) => x !== g);
+    const ti = without.indexOf(targetGroup);
+    const next = [...without.slice(0, ti), g, ...without.slice(ti)];
+    const rest = groups.filter((x) => !next.includes(x)); // 无会话的组保持在后
+    window.minicc.reorderGroups([...next, ...rest]);
+  }
+
+  function changeGroupMode(m: "manual" | "date" | "project") {
+    setGroupMode(m);
+    window.minicc.setGroupMode(m);
+  }
+
   function answerPerm(decision: "allow" | "deny") {
     if (!pending) return;
     window.minicc.respondPermission(pending.id, decision);
@@ -811,21 +888,59 @@ export function App() {
         <div className="session-list">
           {sessions.length === 0 && <div className="empty">暂无历史对话</div>}
           {(() => {
-            // 组内排序：优先级(数字大在前) → 最近更新
-            const sortRows = (arr: SessionMeta[]) =>
-              [...arr].sort(
-                (a, b) => (b.priority || 0) - (a.priority || 0) || b.updatedAt - a.updatedAt,
-              );
             const byGroup = new Map<string, SessionMeta[]>();
             for (const s of sessions) {
-              const g = s.group || "";
+              const g = groupOf(s);
               if (!byGroup.has(g)) byGroup.set(g, []);
               byGroup.get(g)!.push(s);
             }
-            const renderRow = (s: SessionMeta) => (
+            // 组顺序：手动=groups 顺序(新组置顶)；日期=按时间桶权重；项目=按最新会话时间
+            let orderedGroups: string[];
+            if (groupMode === "date") {
+              orderedGroups = [...byGroup.keys()]
+                .filter((g) => g !== "")
+                .sort(
+                  (a, b) =>
+                    dateRank(a) - dateRank(b) ||
+                    Math.max(...byGroup.get(b)!.map((s) => s.updatedAt)) -
+                      Math.max(...byGroup.get(a)!.map((s) => s.updatedAt)),
+                );
+            } else if (groupMode === "project") {
+              orderedGroups = [...byGroup.keys()]
+                .filter((g) => g !== "")
+                .sort(
+                  (a, b) =>
+                    Math.max(...byGroup.get(b)!.map((s) => s.updatedAt)) -
+                    Math.max(...byGroup.get(a)!.map((s) => s.updatedAt)),
+                );
+            } else {
+              orderedGroups = groups.filter((g) => byGroup.has(g));
+            }
+            const manual = groupMode === "manual";
+            const renderRow = (s: SessionMeta, list: SessionMeta[]) => (
               <div
                 key={s.id}
-                className={"session-item" + (s.id === currentId ? " active" : "")}
+                className={
+                  "session-item" +
+                  (s.id === currentId ? " active" : "") +
+                  (s.id === dragId ? " dragging" : "") +
+                  (s.id === dragOverId ? " drag-over" : "")
+                }
+                draggable
+                onDragStart={(e) => {
+                  setDragId(s.id);
+                  e.dataTransfer.effectAllowed = "move";
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (dragId && dragId !== s.id) setDragOverId(s.id);
+                }}
+                onDragLeave={() => setDragOverId((v) => (v === s.id ? null : v))}
+                onDrop={(e) => dropOnSession(e, s, list)}
+                onDragEnd={() => {
+                  setDragId(null);
+                  setDragOverId(null);
+                }}
                 onClick={() => window.minicc.switchSession(s.id)}
                 onContextMenu={(e) => {
                   e.preventDefault();
@@ -851,7 +966,6 @@ export function App() {
                 </button>
               </div>
             );
-            const orderedGroups = groups.filter((g) => byGroup.has(g)); // 有会话的组，按组顺序(新组置顶)
             return (
               <>
                 {orderedGroups.map((g) => {
@@ -860,7 +974,43 @@ export function App() {
                   return (
                     <div key={"g:" + g} className="session-group">
                       <div
-                        className="group-head"
+                        className={
+                          "group-head" +
+                          (g === dragOverGroup ? " g-drag-over" : "") +
+                          (g === dragGroup ? " g-dragging" : "")
+                        }
+                        draggable={manual}
+                        onDragStart={
+                          manual
+                            ? (e) => {
+                                setDragGroup(g);
+                                e.stopPropagation();
+                                e.dataTransfer.effectAllowed = "move";
+                              }
+                            : undefined
+                        }
+                        onDragOver={
+                          manual
+                            ? (e) => {
+                                if (dragGroup && dragGroup !== g) {
+                                  e.preventDefault();
+                                  setDragOverGroup(g);
+                                }
+                              }
+                            : undefined
+                        }
+                        onDragLeave={
+                          manual ? () => setDragOverGroup((v) => (v === g ? null : v)) : undefined
+                        }
+                        onDrop={manual ? (e) => dropOnGroup(e, g, orderedGroups) : undefined}
+                        onDragEnd={
+                          manual
+                            ? () => {
+                                setDragGroup(null);
+                                setDragOverGroup(null);
+                              }
+                            : undefined
+                        }
                         onClick={() =>
                           setCollapsedGroups((prev) => {
                             const n = new Set(prev);
@@ -876,11 +1026,14 @@ export function App() {
                         </span>
                         <span className="group-count">{rows.length}</span>
                       </div>
-                      {!collapsed && rows.map(renderRow)}
+                      {!collapsed && rows.map((s) => renderRow(s, rows))}
                     </div>
                   );
                 })}
-                {sortRows(byGroup.get("") || []).map(renderRow)}
+                {(() => {
+                  const un = sortRows(byGroup.get("") || []);
+                  return un.map((s) => renderRow(s, un));
+                })()}
               </>
             );
           })()}
@@ -1756,7 +1909,13 @@ export function App() {
         />
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
-      {showAppSettings && <AppSettingsModal onClose={() => setShowAppSettings(false)} />}
+      {showAppSettings && (
+        <AppSettingsModal
+          onClose={() => setShowAppSettings(false)}
+          groupMode={groupMode}
+          onGroupMode={changeGroupMode}
+        />
+      )}
 
       {pending && (
         <div className="perm-overlay">
@@ -4154,7 +4313,15 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
 }
 
 // 应用级设置弹窗(与具体平台无关的开关放这里)
-function AppSettingsModal({ onClose }: { onClose: () => void }) {
+function AppSettingsModal({
+  onClose,
+  groupMode,
+  onGroupMode,
+}: {
+  onClose: () => void;
+  groupMode: "manual" | "date" | "project";
+  onGroupMode: (m: "manual" | "date" | "project") => void;
+}) {
   const [theme, setTheme] = useState("dark");
   useEffect(() => {
     window.minicc.getSettings().then((r: any) => setTheme(r?.settings?.theme || "dark"));
@@ -4170,6 +4337,26 @@ function AppSettingsModal({ onClose }: { onClose: () => void }) {
     <div className="perm-overlay" onClick={onClose}>
       <div className="settings" onClick={(e) => e.stopPropagation()}>
         <h3>设置</h3>
+        <div className="app-set-group">会话分组</div>
+        <div className="theme-pick" style={{ marginBottom: "6px" }}>
+          {[
+            { id: "manual", label: "手动分组" },
+            { id: "date", label: "按日期" },
+            { id: "project", label: "按项目" },
+          ].map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              className={"theme-opt" + (groupMode === m.id ? " on" : "")}
+              onClick={() => onGroupMode(m.id as any)}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+        <div className="app-set-hint" style={{ marginBottom: "14px" }}>
+          手动：右键会话移动/新建分组、可拖拽排序；按日期/按项目：自动分组（项目名由 AI 按会话内容归纳）。
+        </div>
         <div className="app-set-group">界面主题</div>
         <div className="theme-pick" style={{ marginBottom: "14px" }}>
           {[

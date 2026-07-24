@@ -2866,3 +2866,13 @@ body {
   cursor: pointer; font-size: 13px; line-height: 1; padding: 0 2px;
 }
 .queued-x:hover { color: var(--spark); }
+
+/* ===== 拖拽排序视觉态 ===== */
+.session-item { transition: box-shadow 0.1s; }
+.session-item.dragging { opacity: 0.45; }
+.session-item.drag-over { box-shadow: inset 0 2px 0 0 var(--accent); }
+.group-head { transition: box-shadow 0.1s; }
+.group-head.g-dragging { opacity: 0.5; }
+.group-head.g-drag-over { box-shadow: inset 0 2px 0 0 var(--accent); }
+.group-head[draggable="true"] { cursor: grab; }
+.group-head[draggable="true"]:active { cursor: grabbing; }

@@ -123,6 +123,7 @@ export interface Settings {
   theme?: "dark" | "light" | "gray" | "gold"; // 界面主题(均遵循minicc VI；gold=原版怀旧)
   providerOrder?: string[]; // 用户自定义的平台展示顺序(存 providerId；缺省走内置默认序)
   hiddenProviders?: string[]; // 用户隐藏、不在切换菜单出现的平台(设置里仍可恢复)
+  groupMode?: "manual" | "date" | "project"; // 侧栏分组模式：手动/按日期/按项目智能分组(默认 manual)
 }
 
 // 自定义中转站：名称 + OpenAI 兼容端点(key 存 creds[id] 槽，同其它平台)

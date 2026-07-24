@@ -38,6 +38,11 @@ contextBridge.exposeInMainWorld("minicc", {
     ipcRenderer.send("session:set-group", id, group),
   setSessionPriority: (id: string, priority: number) =>
     ipcRenderer.send("session:set-priority", id, priority),
+  setSessionOrder: (id: string, order: number) =>
+    ipcRenderer.send("session:set-order", id, order),
+  reorderGroups: (names: string[]) => ipcRenderer.send("session:reorder-groups", names),
+  setGroupMode: (mode: "manual" | "date" | "project") =>
+    ipcRenderer.send("settings:set-group-mode", mode),
   deleteExchange: (sid: string, ordinal: number) =>
     ipcRenderer.send("session:delete-exchange", sid, ordinal),
   bootstrap: () => ipcRenderer.invoke("session:bootstrap") as Promise<any>,

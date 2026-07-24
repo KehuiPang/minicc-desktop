@@ -37,6 +37,9 @@ import {
   listGroups,
   setSessionGroup,
   setSessionPriority,
+  setSessionOrder,
+  setSessionProject,
+  setGroupsOrder,
 } from "./sessions.js";
 import {
   loadSettings,
@@ -1016,8 +1019,10 @@ async function maybeSmartTitle(id: string) {
     .join("\n");
   try {
     const res = await provider.complete(
-      "你是会话标题生成器。根据对话(尤其最新内容)输出一个 4-10 个汉字的简短中文标题，概括当前主题，不要任何标点、引号、空格或解释。",
-      [{ role: "user", content: [{ type: "text", text: `对话:\n${convo}\n\n标题:` }] }] as any,
+      "你是会话标注器。根据对话(尤其最新内容)输出两项，用竖线分隔：" +
+        "①4-10 个汉字的简短中文标题(概括当前主题)；②2-6 字的项目/产品名或主题域(用于归类，如某系统名/某功能域，若无明显项目就填通用主题)。" +
+        "严格只输出「标题|项目」，不要任何引号、解释、多余空格。",
+      [{ role: "user", content: [{ type: "text", text: `对话:\n${convo}\n\n标题|项目:` }] }] as any,
       [],
       {},
     );
@@ -1026,11 +1031,15 @@ async function maybeSmartTitle(id: string) {
       .map((b: any) => b.text)
       .join("")
       .trim();
-    const title = raw.replace(/[\s"'`。，、：:！!？?（）()【】\[\]]/g, "").slice(0, 12);
+    const [rawTitle, rawProject] = raw.split(/[|｜]/);
+    const clean = (t?: string) => (t || "").replace(/[\s"'`。，、：:！!？?（）()【】\[\]]/g, "");
+    const title = clean(rawTitle).slice(0, 12);
+    const project = clean(rawProject).slice(0, 8);
     if (title) {
       const a = agents.get(id);
       if (a) {
         saveSession(id, a.getMessages(), title, Date.now(), a.getUsage());
+        if (project) setSessionProject(id, project);
         send("evt:sessions", listSessions());
       }
     }
@@ -1324,6 +1333,18 @@ ipcMain.on("session:set-priority", (_e, id: string, priority: number) => {
   send("evt:sessions", listSessions());
 });
 
+// 会话手动拖拽排序：写入 order 键
+ipcMain.on("session:set-order", (_e, id: string, order: number) => {
+  setSessionOrder(id, order);
+  send("evt:sessions", listSessions());
+});
+
+// 组顺序拖拽重排
+ipcMain.on("session:reorder-groups", (_e, names: string[]) => {
+  setGroupsOrder(names);
+  send("evt:groups", listGroups());
+});
+
 // 删除某一轮问答(第 ordinal 条用户输入及其后到下一条用户输入之间的全部消息=该轮回复)
 // 整轮删除→历史天然保持交替与 tool_use/tool_result 配对，不产生占位垃圾
 ipcMain.on("session:delete-exchange", (_e, id: string, ordinal: number) => {
@@ -1427,6 +1448,12 @@ ipcMain.on("settings:set", (_e, s: Settings) => {
   } catch (e: any) {
     send("evt:error", "切换后端失败：" + e.message);
   }
+});
+
+// 纯 UI 设置(分组模式)：只落盘，不重启 provider
+ipcMain.on("settings:set-group-mode", (_e, mode: "manual" | "date" | "project") => {
+  const s = loadSettings() || ({} as Settings);
+  saveSettings({ ...s, groupMode: mode });
 });
 
 // —— 全局记忆(设置里手动编辑) ——
