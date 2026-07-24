@@ -262,6 +262,30 @@ export function App() {
   const [webLoginBusy, setWebLoginBusy] = useState(false);
   const [authBusy, setAuthBusy] = useState(false); // 失败处一键授权 Claude 进行中
   const [codexBusy, setCodexBusy] = useState(false); // Codex 一键授权进行中
+  // 无为账号（B2：全新正交账号态，≠模型商账号，独立身份区。最终顶栏样式待小美定稿换皮）
+  const [wuwei, setWuwei] = useState<{
+    user: { id: string; email: string | null; name: string | null; avatar: string | null };
+    coin: { balance: number };
+  } | null>(null);
+  const [wuweiBusy, setWuweiBusy] = useState(false);
+  async function doWuweiLogin() {
+    setWuweiBusy(true);
+    try {
+      const me = await window.minicc.wuweiLogin();
+      if (me) {
+        setWuwei(me);
+        push({ type: "notice", text: `无为账号已登录：${me.user.name || me.user.email || "用户"}，无为币 ${me.coin.balance}` });
+      } else {
+        push({ type: "notice", text: "无为登录未完成或已取消。" });
+      }
+    } finally {
+      setWuweiBusy(false);
+    }
+  }
+  async function doWuweiLogout() {
+    await window.minicc.wuweiLogout();
+    setWuwei(null);
+  }
   async function doCodexLogin() {
     setCodexBusy(true);
     try {
@@ -722,6 +746,7 @@ export function App() {
 
   useEffect(() => {
     window.minicc.getAccount().then(setAccount);
+    window.minicc.wuweiMe().then(setWuwei).catch(() => {});
     // 主动拉取当前后端/模型，避免 evt:ready 推送早于订阅被丢导致显示「…」
     window.minicc.getSettings().then((r: any) => {
       if (r?.backend) setMeta((m) => ({ ...m, backend: r.backend, model: r.model || m.model }));
@@ -1322,6 +1347,72 @@ export function App() {
             account.nickname || account.email || account.label || (account.loggedIn ? "已登录" : "未登录");
           return (
             <div className="sidebar-foot">
+              {/* 无为账号身份区（B2 占位·独立于下方模型商账号；VI: 玄墨黑底/月白字/靛青点缀。最终顶栏样式待小美定稿） */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 8px",
+                  marginBottom: 6,
+                  borderRadius: 8,
+                  background: "#1E232B",
+                  color: "#F4F6F8",
+                  fontSize: 13,
+                }}
+              >
+                {wuwei ? (
+                  <>
+                    <div
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: "50%",
+                        background: "#274A63",
+                        color: "#F4F6F8",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        overflow: "hidden",
+                        flex: "0 0 auto",
+                      }}
+                    >
+                      {wuwei.user.avatar ? (
+                        <img src={wuwei.user.avatar} alt="" style={{ width: "100%", height: "100%" }} />
+                      ) : (
+                        (wuwei.user.name || wuwei.user.email || "无").slice(0, 1).toUpperCase()
+                      )}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {wuwei.user.name || wuwei.user.email || "无为用户"}
+                      <span style={{ color: "#6F9FAD", marginLeft: 6 }}>⚡{wuwei.coin.balance}</span>
+                    </div>
+                    <button
+                      onClick={doWuweiLogout}
+                      title="退出无为账号"
+                      style={{ background: "none", border: "none", color: "#6F9FAD", cursor: "pointer", flex: "0 0 auto" }}
+                    >
+                      退出
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={doWuweiLogin}
+                    disabled={wuweiBusy}
+                    style={{
+                      flex: 1,
+                      background: "none",
+                      border: "1px solid #274A63",
+                      color: "#F4F6F8",
+                      borderRadius: 6,
+                      padding: "4px 8px",
+                      cursor: wuweiBusy ? "default" : "pointer",
+                    }}
+                  >
+                    {wuweiBusy ? "登录中…（浏览器完成）" : "登录无为账号"}
+                  </button>
+                )}
+              </div>
               <button className="acct-btn" onClick={() => setShowAcctMenu((v) => !v)}>
                 <div className={"acct-av" + (account.loggedIn ? "" : " off")}>
                   {account.avatar ? (
