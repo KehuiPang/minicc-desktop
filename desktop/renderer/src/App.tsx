@@ -174,7 +174,6 @@ export function App() {
   const [rate, setRate] = useState<any>(null);
   const [input, setInput] = useState("");
   const [suggestion, setSuggestion] = useState(""); // 输入框幽灵提示：下一步动作建议(Tab 补全)
-  const [queued, setQueued] = useState<{ sid: string; text: string; images: string[] }[]>([]); // 跑动中排队的待发消息
   const [autoMode, setAutoMode] = useState(true);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [groups, setGroups] = useState<string[]>([]); // 分组顺序(新组置顶)
@@ -632,20 +631,6 @@ export function App() {
     setSuggestion(""); // 切换会话清掉上个会话的建议
   }, [currentId]);
 
-  // 排队冲刷：当前会话回复跑完(busy true→false)且有排队消息，自动发下一条
-  const prevBusyRef = useRef(busy);
-  useEffect(() => {
-    if (prevBusyRef.current && !busy) {
-      const idx = queued.findIndex((q) => q.sid === currentId);
-      if (idx >= 0) {
-        const item = queued[idx];
-        setQueued((q) => q.filter((_, i) => i !== idx));
-        doSend(item.text, item.images);
-      }
-    }
-    prevBusyRef.current = busy;
-  }, [busy, queued, currentId]);
-
   useEffect(() => {
     window.minicc.getAccount().then(setAccount);
     // 主动拉取当前后端/模型，避免 evt:ready 推送早于订阅被丢导致显示「…」
@@ -752,12 +737,13 @@ export function App() {
     setSuggestion(""); // 发送后清掉旧的下一步建议(回复完会重新生成)
     const imgs = pendingImages;
     if (busy) {
-      // 跑动中：排队。当前回复完成后自动发送，AI 带着刚做完的上下文自己判断怎么接
-      setQueued((q) => [...q, { sid: currentId, text, images: imgs }]);
+      // 跑动中：实时注入到当前回合，AI 会在下一步综合权衡、优先处理，不必等整轮跑完
+      push({ type: "user", text, images: imgs.length ? imgs : undefined, ts: Date.now() });
       if (text) {
         history.current.push(text);
         histIdx.current = history.current.length;
       }
+      window.minicc.inject(currentId, text, imgs.length ? imgs : undefined);
       clearComposer();
       return;
     }
@@ -1461,27 +1447,6 @@ export function App() {
         </div>
 
         <div className="composer" ref={composerRef}>
-          {/* 跑动中排队的待发消息：回复完成后自动依次发送 */}
-          {queued.some((q) => q.sid === currentId) && (
-            <div className="queued-row">
-              <span className="queued-hint">
-                ⏳ 已排队 {queued.filter((q) => q.sid === currentId).length} 条 · 回复后自动发送
-              </span>
-              {queued.map((q, i) =>
-                q.sid === currentId ? (
-                  <span className="queued-chip" key={i} title={q.text}>
-                    {q.text.slice(0, 24) || "[图片]"}
-                    <button
-                      className="queued-x"
-                      onClick={() => setQueued((list) => list.filter((_, j) => j !== i))}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ) : null,
-              )}
-            </div>
-          )}
           {/* 鉴权提示条：检测到缺授权后常驻，直到授权成功或用户手动 × 关闭 */}
           {needAuth && !authDismissed && (
             <div className="err-fix err-auth">

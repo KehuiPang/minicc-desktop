@@ -1207,8 +1207,7 @@ app.on("window-all-closed", () => {
 
 // —— IPC：渲染 → 主 ——
 // 多任务：sid 指定跑哪个会话(前端传 currentId)，各会话各自异步、互不阻塞。事件都带 sid，前端只把当前可见会话的更新画出来。
-ipcMain.on("chat:send", async (_e, sid: string, text: string, images?: string[]) => {
-  const useId = sid || currentId;
+async function startTurn(useId: string, text: string, images?: string[]) {
   const agent = getAgent(useId);
   if (!agent) {
     send("evt:error", { sid: useId, message: "未初始化：缺少模型凭证。请确认 ~/.codex/auth.json 或设置 API key 后重启。" });
@@ -1263,6 +1262,22 @@ ipcMain.on("chat:send", async (_e, sid: string, text: string, images?: string[])
     persist(useId); // 该会话跑完落盘
     void emitAccount(); // 刷新余额/本会话已消耗(DeepSeek 等)
     if (useId === currentId && !ac.signal.aborted) void suggestNextAction(useId); // 仅当前会话、正常跑完才提建议
+  }
+}
+
+ipcMain.on("chat:send", (_e, sid: string, text: string, images?: string[]) => {
+  void startTurn(sid || currentId, text, images);
+});
+
+// 运行中注入新需求：正在跑→注入到当前循环边界(AI 综合权衡/优先处理，不必等整轮跑完)；没在跑→当普通发送
+ipcMain.on("chat:inject", (_e, sid: string, text: string, images?: string[]) => {
+  const useId = sid || currentId;
+  const agent = getAgent(useId);
+  if (agent && runs.has(useId)) {
+    agent.injectUser(text, images);
+    log("inject", useId.slice(0, 8), (text || "").slice(0, 40));
+  } else {
+    void startTurn(useId, text, images);
   }
 });
 

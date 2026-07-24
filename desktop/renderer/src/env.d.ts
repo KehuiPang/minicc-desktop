@@ -1,6 +1,7 @@
 // 渲染进程可见的 window.minicc 类型（来自 preload）
 export interface MiniccApi {
   send(sid: string, text: string, images?: string[]): void;
+  inject(sid: string, text: string, images?: string[]): void;
   stop(sid?: string): void;
   reset(): void;
   undoLast(): void;

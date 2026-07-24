@@ -46,6 +46,7 @@ export class Agent {
   };
   private compactThreshold: number;
   private keepRecent: number;
+  private pendingInject: { text: string; images: string[] }[] = []; // 运行中注入的新需求，循环边界取用
 
   constructor(
     private provider: Provider,
@@ -57,6 +58,23 @@ export class Agent {
   ) {
     this.compactThreshold = opts.compactThreshold ?? 60000;
     this.keepRecent = opts.keepRecent ?? 6;
+  }
+
+  // 运行中注入新需求：不打断当前步，在下一个循环边界并入历史，让模型综合权衡/优先处理
+  injectUser(text: string, images: string[] = []) {
+    if ((text && text.trim()) || images.length) this.pendingInject.push({ text, images });
+  }
+  private drainInject(): ContentBlock[] {
+    const blocks: ContentBlock[] = [];
+    for (const p of this.pendingInject) {
+      if (p.text && p.text.trim()) blocks.push({ type: "text", text: p.text });
+      for (const im of p.images) blocks.push({ type: "image", dataUrl: im });
+    }
+    this.pendingInject = [];
+    return blocks;
+  }
+  hasPendingInject(): boolean {
+    return this.pendingInject.length > 0;
   }
 
   getMessages(): Message[] {
@@ -134,6 +152,12 @@ export class Agent {
       );
 
       if (toolUses.length === 0) {
+        // 助手已给出无工具的回复：若期间用户注入了新需求，接着处理它(不结束本回合)
+        const inj = this.drainInject();
+        if (inj.length) {
+          this.messages.push({ role: "user", content: inj, ts: Date.now() });
+          continue;
+        }
         hooks.onAssistantDone?.();
         return;
       }
@@ -204,6 +228,9 @@ export class Agent {
         }
       }
 
+      // 运行中注入的新需求：并入本条 user 消息(tool_result + 文本/图片)，下一步模型即可看到并综合安排
+      const inj = this.drainInject();
+      if (inj.length) resultsBlocks.push(...inj);
       this.messages.push({ role: "user", content: resultsBlocks });
       if (signal?.aborted) return; // 中断：tool_result 已入队(历史合法)，就此结束
     }
