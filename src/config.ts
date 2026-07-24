@@ -40,7 +40,8 @@ function contextWindowFor(model: string): number {
   if (/deepseek-v4/.test(m)) return 1_000_000; // V4 Pro/Flash 均 1M
   if (/minimax-m3/.test(m)) return 1_000_000;
   if (/minimax/.test(m)) return 200_000;
-  if (/gpt-5|gpt-4\.1|\bo3\b|\bo4/.test(m)) return 400_000;
+  if (/gpt-5/.test(m)) return 1_000_000; // GPT-5.x 模型窗口 ~1M(Codex 通道会在 loadConfig 里封到 400k)
+  if (/gpt-4\.1|\bo3\b|\bo4/.test(m)) return 400_000;
   if (/qwen3?[.-]?(max|7)|qwen-max|qwen-plus/.test(m)) return 256_000;
   if (/doubao/.test(m)) return 256_000;
   if (/glm-5/.test(m)) return 1_000_000; // GLM-5.2/5.1 1M
@@ -111,7 +112,9 @@ export function loadConfig(): Config {
   const apiKey =
     provider === "anthropic" ? pick("ANTHROPIC_API_KEY") : pick("MINICC_API_KEY", "not-needed");
 
-  const ctxWindow = Number(pick("MINICC_CONTEXT_WINDOW")) || contextWindowFor(model);
+  let ctxWindow = Number(pick("MINICC_CONTEXT_WINDOW")) || contextWindowFor(model);
+  // Codex 订阅通道对 gpt-5.x 封顶 400k(OpenAI Codex 自身限制，模型本身支持 1M 需走 API key)
+  if (provider === "codex" && ctxWindow > 400_000) ctxWindow = 400_000;
 
   return {
     provider,

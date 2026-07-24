@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld("minicc", {
   claudeLogin: () => ipcRenderer.invoke("account:claude-login") as Promise<string | null>,
   // Codex 一键授权(应用内 ChatGPT OAuth，本地 1455 回环，写 ~/.codex/auth.json)
   codexLogin: () => ipcRenderer.invoke("account:codex-login") as Promise<boolean>,
+  fetchModels: () => ipcRenderer.invoke("models:fetch") as Promise<string[]>,
   // 系统浏览器授权：第1步开浏览器，第2步用授权码换 token
   claudeOauthOpen: () => ipcRenderer.invoke("account:claude-oauth-open") as Promise<boolean>,
   claudeOauthExchange: (code: string) =>

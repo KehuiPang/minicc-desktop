@@ -1744,6 +1744,39 @@ ipcMain.handle("account:codex-login", async () => {
   return true;
 });
 
+// 动态拉当前平台的实时模型列表(/models)：OpenAI 兼容用 Bearer，Anthropic 用 x-api-key。
+// 前端并入下拉(与预设去重)，新模型上线自动出现。订阅/无 key 的返回空、走预设。
+ipcMain.handle("models:fetch", async () => {
+  try {
+    const cfg = loadConfig();
+    if (cfg.provider === "codex") return []; // Codex 订阅无 models 接口
+    let url: string;
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (cfg.provider === "anthropic") {
+      if (cfg.authMode === "oauth" || !cfg.apiKey) return []; // 订阅 OAuth 无 x-api-key
+      url = "https://api.anthropic.com/v1/models?limit=100";
+      headers["x-api-key"] = cfg.apiKey;
+      headers["anthropic-version"] = "2023-06-01";
+    } else {
+      if (!cfg.apiKey || cfg.apiKey === "not-needed") return [];
+      const base = (cfg.baseUrl || "https://api.openai.com/v1").replace(/\/$/, "");
+      url = base + "/models";
+      headers.Authorization = "Bearer " + cfg.apiKey;
+    }
+    const r = await fetch(url, { headers });
+    if (!r.ok) return [];
+    const j: any = await r.json().catch(() => null);
+    const ids = (j?.data || j?.models || [])
+      .map((m: any) => (typeof m === "string" ? m : m?.id))
+      .filter((x: any) => typeof x === "string");
+    log("models:fetch", cfg.provider, "拿到", ids.length, "个模型");
+    return ids as string[];
+  } catch (e) {
+    log("models:fetch", "出错", String(e).slice(0, 80));
+    return [];
+  }
+});
+
 // 读系统剪贴板(供「完成授权」自动取授权码)
 ipcMain.handle("util:read-clipboard", () => clipboard.readText() || "");
 

@@ -43,6 +43,7 @@ export interface MiniccApi {
   webLogin(pid: string): Promise<boolean>;
   claudeLogin(): Promise<string | null>;
   codexLogin(): Promise<boolean>;
+  fetchModels(): Promise<string[]>;
   claudeOauthOpen(): Promise<boolean>;
   claudeOauthExchange(code: string): Promise<string | null>;
   readClipboard(): Promise<string>;

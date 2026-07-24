@@ -230,6 +230,7 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showAppSettings, setShowAppSettings] = useState(false);
   const [curProviderId, setCurProviderId] = useState("");
+  const [liveModels, setLiveModels] = useState<Record<string, string[]>>({}); // 各平台实时拉到的模型
   const [stations, setStations] = useState<Station[]>([]); // 自定义中转站
   const [providerOrder, setProviderOrder] = useState<string[]>([]); // 平台自定义顺序
   const [hiddenProviders, setHiddenProviders] = useState<string[]>([]); // 隐藏的平台
@@ -390,7 +391,10 @@ export function App() {
     false,
   );
   const curPreset = providerList.find((p) => p.id === curProviderId);
-  const quickModels = curPreset?.models ?? [];
+  // 动态实时模型(从平台 /models 拉)并入预设，去重；预设在前(保证旗舰置顶)，实时补充新模型
+  const quickModels = [
+    ...new Set([...(curPreset?.models ?? []), ...(liveModels[curProviderId] || [])]),
+  ];
   async function quickModel(m: string) {
     const r = await window.minicc.getSettings();
     const cur = r?.settings;
@@ -704,6 +708,17 @@ export function App() {
   useEffect(() => {
     setSuggestion(""); // 切换会话清掉上个会话的建议
   }, [currentId]);
+
+  // 平台切换后拉该平台实时模型列表(/models)，并入下拉；延迟一点等主进程 applySettings 落定
+  useEffect(() => {
+    if (!curProviderId) return;
+    const t = setTimeout(() => {
+      window.minicc.fetchModels().then((ids) => {
+        if (ids && ids.length) setLiveModels((m) => ({ ...m, [curProviderId]: ids }));
+      });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [curProviderId]);
 
   useEffect(() => {
     window.minicc.getAccount().then(setAccount);
