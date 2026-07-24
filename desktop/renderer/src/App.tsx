@@ -609,14 +609,15 @@ export function App() {
           if (payload.sid === currentIdRef.current) setSuggestion(payload.text || "");
           break;
         case "evt:assistant-replace":
-          // 兜底恢复泄漏工具调用后：把屏上那条 assistant 的 XML 文本换成干净正文
+          // 清理泄漏工具调用/噪音后：把屏上那条 assistant 换成干净正文(为空则移除该气泡)
           if (payload.sid !== currentIdRef.current) break;
           flushDelta(true);
           setItems((p) => {
             const c = [...p];
             for (let k = c.length - 1; k >= 0; k--) {
               if (c[k].type === "assistant") {
-                c[k] = { ...(c[k] as any), text: payload.text };
+                if ((payload.text || "").trim()) c[k] = { ...(c[k] as any), text: payload.text };
+                else c.splice(k, 1); // 清理后无正文→去掉空气泡
                 break;
               }
             }
@@ -2329,7 +2330,7 @@ function ItemView({
                 ))}
               </div>
             )}
-            {item.text}
+            {maskSecrets(item.text)}
           </div>
         </div>
         <div className="turn-foot user">
@@ -2364,6 +2365,16 @@ function ItemView({
 }
 
 // 把"松散列表"(列表项间有空行)转成紧凑列表，从源头消除列表大间距；段落空行保留
+// 显示层给密码/密钥打码：防止截图/上下文泄露(历史里保留原文供 AI 使用，仅屏上遮盖)。
+// 只遮盖「凭据类关键词 + 分隔符 + 值」，如 密码是 xxx / server_pass="xxx" / token=xxx。
+function maskSecrets(t: string): string {
+  if (!t) return t;
+  return t.replace(
+    /((?:密码|口令|密钥|私钥|凭据|凭证|password|passwd|pwd|pass|secret|token|api[_-]?key|access[_-]?key|secret[_-]?key|auth)\s*[为是:：=]{1,3}\s*["'`「」]?)([^\s"'`，,。；;）)「」]{3,})/gi,
+    (_m, pre: string) => pre + "••••••",
+  );
+}
+
 function tightenMarkdown(t: string): string {
   let s = t.replace(/\n{3,}/g, "\n\n");
   // AI 有时用 • ‣ ◦ · ▪ 等字符当项目符号(非标准 markdown → 被当普通段落，间距大)，归一成 -
@@ -2461,7 +2472,7 @@ const AssistantMsg = React.memo(function AssistantMsg({
   return (
     <div className="aimsg">
       {committed && <MarkdownView text={committed} highlight={false} />}
-      {tail && <div className="md md-streaming">{tail}</div>}
+      {tail && <div className="md md-streaming">{maskSecrets(tail)}</div>}
     </div>
   );
 });
@@ -2495,7 +2506,7 @@ const MarkdownView = React.memo(function MarkdownView({
   text: string;
   highlight?: boolean;
 }) {
-  const clean = tightenMarkdown(text);
+  const clean = maskSecrets(tightenMarkdown(text));
   return (
     <div className="md">
       <Markdown

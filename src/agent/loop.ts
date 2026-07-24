@@ -37,6 +37,15 @@ export interface AgentHooks {
   onRecover?(cleanedText: string): void; // 模型把工具调用当文本吐出→兜底解析后，回传清理后的正文供前端修正显示
 }
 
+// 去掉落单的短英文噪音文本块(如 "count")：模型偶发把杂词和工具调用一起吐出。
+// 只删「纯 1-15 个英文字母、无空格无标点无中文」的独立文本块，正常正文(含中文/标点/空格)不动。
+function stripStrayText(content: ContentBlock[]): ContentBlock[] {
+  const kept = content.filter(
+    (b) => !(b.type === "text" && /^[A-Za-z]{1,15}$/.test(((b as any).text || "").trim())),
+  );
+  return kept.length === content.length ? content : kept;
+}
+
 // 兜底：模型偶尔把工具调用写成文本(<invoke name="x"><parameter name="y">…</parameter></invoke>)，
 // 导致没有结构化 tool_use → 循环判定"结束"而自动停止，且屏上留一堆 XML 符号。
 // 这里把这种泄漏的调用解析回来，转成真正的 tool_use 去执行，并给出去掉 XML 的干净正文。
@@ -211,20 +220,31 @@ export class Agent {
       let toolUses = result.content.filter(
         (b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use",
       );
+      let finalContent: ContentBlock[] = result.content;
 
-      // 兜底：没有结构化 tool_use 时，看是否把工具调用当文本写出来了(<invoke …>)，是则解析回来执行、继续跑
+      // 兜底1：没有结构化 tool_use 时，看是否把工具调用当文本写出来了(<invoke …>)，是则解析回来执行、继续跑
       if (toolUses.length === 0) {
         const recovered = recoverLeakedToolCalls(result.content);
         if (recovered) {
           toolUses = recovered.toolUses;
-          this.messages[this.messages.length - 1] = {
-            role: "assistant",
-            content: recovered.newContent,
-            ts: Date.now(),
-          };
-          const cleaned = recovered.newContent.find((b) => b.type === "text") as any;
-          hooks.onRecover?.(cleaned?.text || ""); // 让前端把屏上那串 XML 换成干净正文
+          finalContent = recovered.newContent;
         }
+      }
+      // 兜底2：有工具调用时，去掉像 "count" 这种落单短英文噪音文本块(模型偶发把杂词跟工具调用一起吐出)
+      if (toolUses.length > 0) finalContent = stripStrayText(finalContent);
+
+      // 内容被清理过 → 替换历史里那条 + 通知前端修正屏上显示
+      if (finalContent !== result.content) {
+        this.messages[this.messages.length - 1] = {
+          role: "assistant",
+          content: finalContent,
+          ts: Date.now(),
+        };
+        const t = finalContent
+          .filter((b) => b.type === "text")
+          .map((b: any) => b.text)
+          .join("");
+        hooks.onRecover?.(t);
       }
 
       if (toolUses.length === 0) {
