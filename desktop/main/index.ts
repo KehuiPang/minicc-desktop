@@ -58,6 +58,9 @@ import {
 import { getAccount, logout } from "./account.js";
 import { claudeOAuthLogin, claudeOAuthOpenBrowser, claudeOAuthExchange } from "./claude-oauth.js";
 import { codexOAuthLogin } from "./codex-oauth.js";
+import { wuweiLogin, wuweiRefresh, wuweiFetchMe } from "./wuwei-auth.js";
+import { saveWuweiSession, loadWuweiSession, clearWuweiSession } from "./wuwei-session.js";
+import { getDeviceId } from "../../src/device-id.js";
 import { log, LOG_FILE } from "./logger.js";
 
 log("boot", "minicc 主进程启动", "日志文件:", LOG_FILE);
@@ -1743,6 +1746,39 @@ ipcMain.handle("account:codex-login", async () => {
   }
   return true;
 });
+
+// —— 无为账号登录（B2：登录闭环，独立于 codex/claude 账号态，不动 account.ts）——
+// 登录 → 拿 /api/me(user+coin) → 明文持久化 ~/.wuwei/auth.json（B3 改 safeStorage 加密）。
+ipcMain.handle("account:wuwei-login", async () => {
+  const sess = await wuweiLogin();
+  if (!sess) return null;
+  saveWuweiSession(sess);
+  const me = await wuweiFetchMe(sess.accessToken);
+  if (me === "unauthorized" || !me) return null;
+  return me;
+});
+// 冷启动/刷新：读本地会话 → /api/me；401 走 /api/refresh 续期后重试。
+ipcMain.handle("account:wuwei-me", async () => {
+  const sess = loadWuweiSession();
+  if (!sess) return null;
+  let me = await wuweiFetchMe(sess.accessToken);
+  if (me === "unauthorized") {
+    const fresh = await wuweiRefresh(sess.refreshToken);
+    if (!fresh) {
+      clearWuweiSession();
+      return null;
+    }
+    saveWuweiSession(fresh);
+    me = await wuweiFetchMe(fresh.accessToken);
+  }
+  return me === "unauthorized" || !me ? null : me;
+});
+ipcMain.handle("account:wuwei-logout", () => {
+  clearWuweiSession();
+  return true;
+});
+// 稳定设备指纹（灰度开关 & 免费试用额度共用）
+ipcMain.handle("account:wuwei-device-id", () => getDeviceId());
 
 // 动态拉当前平台的实时模型列表(/models)：OpenAI 兼容用 Bearer，Anthropic 用 x-api-key。
 // 前端并入下拉(与预设去重)，新模型上线自动出现。订阅/无 key 的返回空、走预设。

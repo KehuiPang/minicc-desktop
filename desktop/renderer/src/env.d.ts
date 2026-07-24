@@ -1,4 +1,6 @@
 // 渲染进程可见的 window.minicc 类型（来自 preload）
+import type { WuweiMe } from "../../main/wuwei-auth.js";
+
 export interface MiniccApi {
   send(sid: string, text: string, images?: string[]): void;
   inject(sid: string, text: string, images?: string[]): void;
@@ -43,6 +45,10 @@ export interface MiniccApi {
   webLogin(pid: string): Promise<boolean>;
   claudeLogin(): Promise<string | null>;
   codexLogin(): Promise<boolean>;
+  wuweiLogin(): Promise<WuweiMe | null>;
+  wuweiMe(): Promise<WuweiMe | null>;
+  wuweiLogout(): Promise<boolean>;
+  wuweiDeviceId(): Promise<string>;
   fetchModels(): Promise<string[]>;
   claudeOauthOpen(): Promise<boolean>;
   claudeOauthExchange(code: string): Promise<string | null>;

@@ -1,0 +1,154 @@
+// 无为账号登录（本地回环中转）：
+//   1) 起临时本地 http server(127.0.0.1:随机端口)
+//   2) 系统浏览器打开 官网/auth/desktop?port=PORT&state=STATE（复用官网 Google/邮箱登录 UI）
+//   3) 官网登录后把 supabase session 经 fragment(#) 302 回 127.0.0.1:PORT/cb
+//   4) 本地页用一小段 JS 把 #token 转成对本地的 /cb?token 二次请求，server 收下 token
+// 客户端只跟官网通信：不接 Supabase SDK、不持有任何 key。token 续期走官网 /api/refresh。
+// —— 从 wuwei-pro 移植（B2）。与 codex/claude 登录(account.ts)互不干扰，是独立的「无为账号态」。
+import http from "node:http";
+import { shell } from "electron";
+import { randomBytes } from "node:crypto";
+import { log } from "./logger.js";
+
+const SITE = process.env.WUWEI_SITE_URL ?? "https://wuweiai.io";
+
+export interface WuweiSession {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number; // epoch 毫秒（0=未知）
+}
+
+export interface WuweiMe {
+  user: { id: string; email: string | null; name: string | null; avatar: string | null };
+  coin: { balance: number };
+}
+
+// 本地 /cb 页面：把 URL fragment 里的 token 转成对本地的 query 请求（浏览器不把 # 发给 server）
+const HASH_BRIDGE_HTML = `<!doctype html><meta charset="utf-8"><title>无为登录</title>
+<body style="font-family:system-ui;background:#16191E;color:#F4F6F8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+<div style="text-align:center"><div style="font-size:32px">⏳</div><p>正在完成登录…</p></div>
+<script>location.replace("/cb?"+location.hash.slice(1))</script></body>`;
+
+const DONE_HTML = `<!doctype html><meta charset="utf-8"><title>无为登录</title>
+<body style="font-family:system-ui;background:#16191E;color:#F4F6F8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+<div style="text-align:center"><div style="font-size:32px">✅</div><p>登录完成，请回到无为客户端。本页可关闭。</p></div></body>`;
+
+/** 弹系统浏览器走完整登录，成功返回会话；用户放弃/超时返回 null。 */
+export function wuweiLogin(): Promise<WuweiSession | null> {
+  const state = randomBytes(16).toString("hex");
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v: WuweiSession | null) => {
+      if (done) return;
+      done = true;
+      clearTimeout(killer);
+      try {
+        server.close();
+      } catch {
+        /* ignore */
+      }
+      resolve(v);
+    };
+
+    const server = http.createServer((req, res) => {
+      let u: URL;
+      try {
+        u = new URL(req.url ?? "/", "http://127.0.0.1");
+      } catch {
+        res.writeHead(400).end();
+        return;
+      }
+      if (u.pathname !== "/cb") {
+        res.writeHead(404).end();
+        return;
+      }
+      const access = u.searchParams.get("access_token");
+      if (!access) {
+        // 第一跳：还没带 token（token 在 fragment 里）→ 回 JS 把 # 转成 query 再打回来
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(HASH_BRIDGE_HTML);
+        return;
+      }
+      // 第二跳：拿到 token
+      const gotState = u.searchParams.get("state") ?? "";
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(DONE_HTML);
+      if (gotState !== state) {
+        log("wuweiAuth", "state 不匹配，拒绝");
+        finish(null);
+        return;
+      }
+      const sess: WuweiSession = {
+        accessToken: access,
+        refreshToken: u.searchParams.get("refresh_token") ?? "",
+        expiresAt: (Number(u.searchParams.get("expires_at")) || 0) * 1000,
+      };
+      log("wuweiAuth", "✓ 收到会话 token", access.slice(0, 10) + "…");
+      finish(sess);
+    });
+
+    server.on("error", (e) => {
+      log("wuweiAuth", "本地 server 出错", String(e));
+      finish(null);
+    });
+
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      if (!port) {
+        finish(null);
+        return;
+      }
+      const authUrl = `${SITE}/auth/desktop?port=${port}&state=${state}`;
+      // 直接开中转页：已登录直接回传、未登录中转页会自跳 /login?next=
+      log("wuweiAuth", "打开浏览器登录", authUrl);
+      void shell.openExternal(authUrl);
+    });
+
+    const killer = setTimeout(() => {
+      log("wuweiAuth", "5 分钟超时");
+      finish(null);
+    }, 300000);
+  });
+}
+
+/** token 静默续期：走官网 /api/refresh。成功返回新会话，失败返回 null（需重新登录）。 */
+export async function wuweiRefresh(refreshToken: string): Promise<WuweiSession | null> {
+  if (!refreshToken) return null;
+  try {
+    const res = await fetch(`${SITE}/api/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!res.ok) return null;
+    const j = (await res.json()) as {
+      access_token: string;
+      refresh_token: string;
+      expires_at: number | null;
+    };
+    return {
+      accessToken: j.access_token,
+      refreshToken: j.refresh_token,
+      expiresAt: (j.expires_at || 0) * 1000,
+    };
+  } catch (e) {
+    log("wuweiAuth", "refresh 异常", String(e));
+    return null;
+  }
+}
+
+/** 查账号 + 无为币余额。401 视为 token 失效由调用方决定是否 refresh。 */
+export async function wuweiFetchMe(accessToken: string): Promise<WuweiMe | "unauthorized" | null> {
+  try {
+    const res = await fetch(`${SITE}/api/me`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (res.status === 401) return "unauthorized";
+    if (!res.ok) return null;
+    return (await res.json()) as WuweiMe;
+  } catch (e) {
+    log("wuweiAuth", "fetchMe 异常", String(e));
+    return null;
+  }
+}

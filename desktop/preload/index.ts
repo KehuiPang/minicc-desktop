@@ -1,5 +1,6 @@
 // preload：用 contextBridge 暴露最小安全 API 给渲染进程（隔离，不开 nodeIntegration）。
 import { contextBridge, ipcRenderer } from "electron";
+import type { WuweiMe } from "../main/wuwei-auth.js";
 
 const EVENTS = [
   "evt:ready",
@@ -93,6 +94,11 @@ contextBridge.exposeInMainWorld("minicc", {
   claudeLogin: () => ipcRenderer.invoke("account:claude-login") as Promise<string | null>,
   // Codex 一键授权(应用内 ChatGPT OAuth，本地 1455 回环，写 ~/.codex/auth.json)
   codexLogin: () => ipcRenderer.invoke("account:codex-login") as Promise<boolean>,
+  // 无为账号登录(B2：本地回环中转 → /api/me 拿 user+coin，独立于 codex/claude)
+  wuweiLogin: () => ipcRenderer.invoke("account:wuwei-login") as Promise<WuweiMe | null>,
+  wuweiMe: () => ipcRenderer.invoke("account:wuwei-me") as Promise<WuweiMe | null>,
+  wuweiLogout: () => ipcRenderer.invoke("account:wuwei-logout") as Promise<boolean>,
+  wuweiDeviceId: () => ipcRenderer.invoke("account:wuwei-device-id") as Promise<string>,
   fetchModels: () => ipcRenderer.invoke("models:fetch") as Promise<string[]>,
   // 系统浏览器授权：第1步开浏览器，第2步用授权码换 token
   claudeOauthOpen: () => ipcRenderer.invoke("account:claude-oauth-open") as Promise<boolean>,
