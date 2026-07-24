@@ -243,6 +243,7 @@ export function App() {
   const autoRef = useRef(autoMode);
   autoRef.current = autoMode;
   const streamRef = useRef<HTMLDivElement>(null);
+  const atBottomRef = useRef(true); // 用户是否贴着底部：滚上去看历史时暂停自动吸底，滚回底部再恢复
   const taRef = useRef<HTMLTextAreaElement>(null);
   const history = useRef<string[]>([]);
   const histIdx = useRef<number>(-1);
@@ -583,7 +584,8 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight });
+    // 只有用户本来就贴着底部时才自动吸底；往上滚看历史时不打扰
+    if (atBottomRef.current) streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight });
   }, [items, busy, pending]);
 
   useEffect(() => {
@@ -951,7 +953,15 @@ export function App() {
           </div>
         )}
 
-        <div className="stream" ref={streamRef}>
+        <div
+          className="stream"
+          ref={streamRef}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            // 距底 ≤40px 视为"贴底"→继续自动吸底；否则用户在往上看→暂停
+            atBottomRef.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
+          }}
+        >
           {items.length === 0 && (
             <div className="welcome">
               <h1>
