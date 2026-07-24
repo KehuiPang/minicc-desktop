@@ -55,6 +55,9 @@ const PRIO_TITLE: Record<string, string> = Object.fromEntries(
   [...PRIO_HL, ...PRIO_QUAD].map((p) => [p.tag, p.label]),
 );
 
+// 图片放大预览：模块级 opener，供 ItemView(消息里的图) 调用，避免逐层传 props
+let openImageLightbox: ((src: string) => void) | null = null;
+
 const CTX_MAX = 1_000_000; // gpt-5.5 上下文窗口估算，用于占用条
 
 // 把持久化的 messages 还原成展示用 items
@@ -174,6 +177,8 @@ export function App() {
   const [usage, setUsage] = useState<Usage>({ totalInput: 0, totalOutput: 0, lastInput: 0 });
   const [rate, setRate] = useState<any>(null);
   const [input, setInput] = useState("");
+  const [lightbox, setLightbox] = useState<string | null>(null); // 图片放大预览的 src
+  openImageLightbox = setLightbox; // 供 ItemView 里的图调用
   const [suggestion, setSuggestion] = useState(""); // 输入框幽灵提示：下一步动作建议(Tab 补全)
   const [autoMode, setAutoMode] = useState(true);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
@@ -1693,7 +1698,12 @@ export function App() {
             <div className="img-strip">
               {pendingImages.map((src, i) => (
                 <div className="thumb" key={i}>
-                  <img src={src} alt="" />
+                  <img
+                    src={src}
+                    alt=""
+                    style={{ cursor: "zoom-in" }}
+                    onClick={() => setLightbox(src)}
+                  />
                   <button onClick={() => setPendingImages((p) => p.filter((_, j) => j !== i))}>
                     ×
                   </button>
@@ -2093,6 +2103,14 @@ export function App() {
           onKeepRecent={changeKeepRecent}
         />
       )}
+      {lightbox && (
+        <div className="lightbox" onClick={() => setLightbox(null)}>
+          <img src={lightbox} alt="" onClick={(e) => e.stopPropagation()} />
+          <button className="lightbox-close" title="关闭" onClick={() => setLightbox(null)}>
+            ×
+          </button>
+        </div>
+      )}
 
       {pending && (
         <div className="perm-overlay">
@@ -2343,7 +2361,13 @@ function ItemView({
             {item.images && item.images.length > 0 && (
               <div className="msg-imgs">
                 {item.images.map((src, i) => (
-                  <img key={i} src={src} alt="" />
+                  <img
+                    key={i}
+                    src={src}
+                    alt=""
+                    style={{ cursor: "zoom-in" }}
+                    onClick={() => openImageLightbox?.(src)}
+                  />
                 ))}
               </div>
             )}
