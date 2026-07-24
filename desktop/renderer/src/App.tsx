@@ -2422,9 +2422,10 @@ function CopyBtn({ text }: { text: string }) {
 }
 
 // 助手文字块：无头像、整块左对齐、纯 markdown 渲染
-// memo：只有 text/streaming 变的那条才重渲染，其余消息跳过——流式不卡的关键
-// streaming=true(正在流)：渲染纯文本(零 Markdown 解析开销，避免越长越卡 O(n²))；
-// 流完那一刻(streaming=false)才做完整 Markdown + 代码高亮。
+// memo：只有 text/streaming 变的那条才重渲染，其余消息跳过——流式不卡的关键。
+// 流式中「按段提交」：以最后一个空行(\n\n)为界，前面已完成的段落即时渲染 Markdown
+// (MarkdownView 有 memo，committed 不变就不重解析→只在跨段时解析一次)，最后没写完的一段用纯文本。
+// 流完(streaming=false)整体走完整 Markdown + 代码高亮。
 const AssistantMsg = React.memo(function AssistantMsg({
   text,
   streaming,
@@ -2432,13 +2433,20 @@ const AssistantMsg = React.memo(function AssistantMsg({
   text: string;
   streaming?: boolean;
 }) {
+  if (!streaming) {
+    return (
+      <div className="aimsg">
+        <MarkdownView text={text} highlight={true} />
+      </div>
+    );
+  }
+  const cut = text.lastIndexOf("\n\n"); // 最后一个段落边界
+  const committed = cut >= 0 ? text.slice(0, cut) : "";
+  const tail = cut >= 0 ? text.slice(cut + 2) : text;
   return (
     <div className="aimsg">
-      {streaming ? (
-        <div className="md md-streaming">{text}</div>
-      ) : (
-        <MarkdownView text={text} highlight={true} />
-      )}
+      {committed && <MarkdownView text={committed} highlight={false} />}
+      {tail && <div className="md md-streaming">{tail}</div>}
     </div>
   );
 });
@@ -2464,7 +2472,14 @@ function CodeBlock({ children }: { children?: React.ReactNode }) {
   );
 }
 
-function MarkdownView({ text, highlight = true }: { text: string; highlight?: boolean }) {
+// memo：text/highlight 不变就不重新解析——流式「按段提交」时已完成段落不会每帧重解析的关键
+const MarkdownView = React.memo(function MarkdownView({
+  text,
+  highlight = true,
+}: {
+  text: string;
+  highlight?: boolean;
+}) {
   const clean = tightenMarkdown(text);
   return (
     <div className="md">
@@ -2490,7 +2505,7 @@ function MarkdownView({ text, highlight = true }: { text: string; highlight?: bo
       </Markdown>
     </div>
   );
-}
+});
 
 function baseName(p: string): string {
   return p.split("/").pop() || p;
