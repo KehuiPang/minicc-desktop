@@ -4088,14 +4088,10 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
               )}
 
               {preset.kind === "codex" && (
-                <div className="field">
-                  <span>ChatGPT 授权</span>
-                  <p className="s-note">
-                    应用内一键登录 ChatGPT（走本地回环，无需安装 codex CLI）。授权成功即写入本机 ~/.codex，可直接对话。
-                  </p>
+                <>
                   <button
                     type="button"
-                    className="allow"
+                    className="allow oauth-login-btn"
                     disabled={sCodexBusy}
                     onClick={async () => {
                       setSCodexBusy(true);
@@ -4108,9 +4104,12 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                       }
                     }}
                   >
-                    {sCodexBusy ? "授权中…（浏览器完成登录）" : "一键授权（ChatGPT 登录）"}
+                    {sCodexBusy ? "🔑 授权中…（浏览器完成登录）" : "🔑 一键授权（ChatGPT 登录）"}
                   </button>
-                </div>
+                  <p className="s-note">
+                    用系统默认浏览器打开 ChatGPT 登录（走本地回环，无需安装 codex CLI）。登录并同意后自动回来完成，授权写入本机 ~/.codex，可直接对话（走订阅额度）。
+                  </p>
+                </>
               )}
 
               {(preset.kind === "anthropic-apikey" || preset.kind === "openai") && (
