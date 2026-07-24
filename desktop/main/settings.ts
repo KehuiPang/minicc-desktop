@@ -126,6 +126,7 @@ export interface Settings {
   groupMode?: "manual" | "date" | "project"; // 侧栏分组模式：手动/按日期/按项目智能分组(默认 manual)
   streamMode?: "typewriter" | "stream" | "instant"; // 输出方式：打字机(匀速)/流式(一下出)/回完一次性
   streamSpeed?: number; // 打字机速度(字符/秒)，默认 400
+  keepRecent?: number; // 上下文压缩时保留最近多少条原始消息(默认 12)
 }
 
 // 自定义中转站：名称 + OpenAI 兼容端点(key 存 creds[id] 槽，同其它平台)

@@ -48,7 +48,8 @@ function contextWindowFor(model: string): number {
   if (/moonshot-v1-8k/.test(m)) return 8_192;
   if (/moonshot-v1-32k/.test(m)) return 32_000;
   if (/moonshot-v1-128k/.test(m)) return 128_000;
-  if (/kimi/.test(m)) return 256_000; // K2.x / kimi-latest
+  if (/\bk3\b|kimi-k3/.test(m)) return 1_000_000; // Kimi K3 旗舰 1M(订阅端 model id 就叫 k3)
+  if (/kimi-for-coding|kimi/.test(m)) return 256_000; // Kimi Code K2.7 / K2.x / kimi-latest
   if (/hunyuan/.test(m)) return 256_000;
   if (/grok-4\.[35]/.test(m)) return 1_000_000; // grok-4.3/4.5 旗舰
   if (/grok/.test(m)) return 256_000;
@@ -134,6 +135,6 @@ export function loadConfig(): Config {
     compactThreshold: pick("MINICC_COMPACT_THRESHOLD")
       ? Number(pick("MINICC_COMPACT_THRESHOLD"))
       : Math.floor(ctxWindow * 0.8),
-    keepRecentTurns: Number(pick("MINICC_KEEP_RECENT", "6")),
+    keepRecentTurns: Number(pick("MINICC_KEEP_RECENT", "12")),
   };
 }

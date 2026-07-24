@@ -181,6 +181,7 @@ export function App() {
   const [groupMode, setGroupMode] = useState<"manual" | "date" | "project">("manual"); // 分组模式
   const [streamMode, setStreamMode] = useState<"typewriter" | "stream" | "instant">("stream"); // 输出方式
   const [streamSpeed, setStreamSpeed] = useState(400); // 打字机速度(字符/秒)
+  const [keepRecent, setKeepRecent] = useState(12); // 上下文压缩保留最近N条
   const streamModeRef = useRef(streamMode);
   streamModeRef.current = streamMode;
   const streamSpeedRef = useRef(streamSpeed);
@@ -354,6 +355,7 @@ export function App() {
       setGroupMode((r?.settings as any)?.groupMode || "manual");
       setStreamMode((r?.settings as any)?.streamMode || "stream");
       setStreamSpeed((r?.settings as any)?.streamSpeed || 400);
+      setKeepRecent((r?.settings as any)?.keepRecent || 12);
       // 应用主题(默认暗色·minicc客户端默认深色)
       const theme = (r?.settings as any)?.theme || "dark";
       document.documentElement.setAttribute("data-theme", theme);
@@ -897,6 +899,10 @@ export function App() {
     setStreamMode(mode);
     setStreamSpeed(speed);
     window.minicc.setStreamOutput(mode, speed);
+  }
+  function changeKeepRecent(n: number) {
+    setKeepRecent(n);
+    window.minicc.setKeepRecent(n);
   }
 
   function answerPerm(decision: "allow" | "deny") {
@@ -2083,6 +2089,8 @@ export function App() {
           streamMode={streamMode}
           streamSpeed={streamSpeed}
           onStream={changeStream}
+          keepRecent={keepRecent}
+          onKeepRecent={changeKeepRecent}
         />
       )}
 
@@ -4567,6 +4575,8 @@ function AppSettingsModal({
   streamMode: "typewriter" | "stream" | "instant";
   streamSpeed: number;
   onStream: (mode: "typewriter" | "stream" | "instant", speed: number) => void;
+  keepRecent: number;
+  onKeepRecent: (n: number) => void;
 }) {
   const [theme, setTheme] = useState("dark");
   useEffect(() => {
@@ -4641,6 +4651,27 @@ function AppSettingsModal({
         )}
         <div className="app-set-hint" style={{ marginBottom: "14px" }}>
           流式=收到即刻整批显示；打字机=匀速逐字，最丝滑；回完一次性=回复期间不显示、完成后整段出。
+        </div>
+        <div className="app-set-group">上下文压缩</div>
+        <div className="app-set-row" style={{ cursor: "default", gap: "10px" }}>
+          <div className="app-set-label" style={{ whiteSpace: "nowrap" }}>
+            保留最近条数
+          </div>
+          <input
+            type="range"
+            min={4}
+            max={40}
+            step={2}
+            value={keepRecent}
+            onChange={(e) => onKeepRecent(Number(e.target.value))}
+            style={{ flex: 1 }}
+          />
+          <div className="app-set-hint" style={{ minWidth: 40, textAlign: "right" }}>
+            {keepRecent} 条
+          </div>
+        </div>
+        <div className="app-set-hint" style={{ marginBottom: "14px" }}>
+          上下文超限时，会把更早的消息总结成要点摘要、保留最近这么多条原文。数字越大越不易“失忆”，但更费上下文。
         </div>
         <div className="app-set-group">界面主题</div>
         <div className="theme-pick" style={{ marginBottom: "14px" }}>

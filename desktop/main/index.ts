@@ -802,7 +802,10 @@ function initProvider() {
   modelLabel = cfg.model;
   ctxWindow = cfg.contextWindow;
   sysPrompt = buildSysPrompt(cwd, modelLabel, st?.providerId);
-  agentOpts = { compactThreshold: cfg.compactThreshold, keepRecent: cfg.keepRecentTurns };
+  agentOpts = {
+    compactThreshold: cfg.compactThreshold,
+    keepRecent: st?.keepRecent && st.keepRecent > 0 ? st.keepRecent : cfg.keepRecentTurns,
+  };
   backendLabel = labelFor(cfg, st?.providerId);
   subFlag = isSub(st?.providerId) || (!st && cfg.provider === "codex");
 }
@@ -1567,6 +1570,16 @@ ipcMain.on(
     saveSettings({ ...s, streamMode: mode, streamSpeed: speed });
   },
 );
+
+// 上下文压缩：保留最近 N 条(热更所有会话，不重启 provider)
+ipcMain.on("settings:set-keep-recent", (_e, n: number) => {
+  const keep = Number(n);
+  if (!Number.isFinite(keep) || keep <= 0) return;
+  const s = loadSettings() || ({} as Settings);
+  saveSettings({ ...s, keepRecent: keep });
+  agentOpts = { ...agentOpts, keepRecent: keep };
+  for (const a of agents.values()) a.setCompactOpts({ keepRecent: keep });
+});
 
 // —— 全局记忆(设置里手动编辑) ——
 ipcMain.handle("memory:get", () => loadMemory());

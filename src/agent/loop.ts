@@ -170,6 +170,12 @@ export class Agent {
     this.toolMap = toolMap;
   }
 
+  // 运行时调整压缩参数(设置里改"保留最近N条"/阈值时热更)
+  setCompactOpts(opts: { compactThreshold?: number; keepRecent?: number }): void {
+    if (typeof opts.compactThreshold === "number") this.compactThreshold = opts.compactThreshold;
+    if (typeof opts.keepRecent === "number" && opts.keepRecent > 0) this.keepRecent = opts.keepRecent;
+  }
+
   getUsage(): SessionUsage {
     return this.usage;
   }
@@ -365,28 +371,54 @@ export class Agent {
     const recent = this.messages.slice(cut);
     const before = this.messages.length;
 
-    // 让模型把旧历史总结成要点（单独一次调用，不带工具）
-    const summaryPrompt =
-      "把下面这段对话历史压缩成简洁的要点摘要，保留：用户目标、已做的关键操作、涉及的文件/命令、当前进展与未决事项。用中文，条列式。";
-    const res = await this.provider.complete(
-      summaryPrompt,
-      older,
-      [],
-      {}, // 不流式回显摘要生成
-    );
-    if (res.usage) {
-      this.usage.totalInput += res.usage.inputTokens;
-      this.usage.totalOutput += res.usage.outputTokens;
-      this.usage.totalCacheHit += res.usage.cacheHitTokens ?? 0;
-      this.usage.totalCacheMiss +=
-        res.usage.cacheMissTokens ??
-        Math.max(0, res.usage.inputTokens - (res.usage.cacheHitTokens ?? 0));
-    }
-    const summaryText =
-      res.content
+    // 把旧历史摊平成文本摘录(含工具调用/结果的要点)，作为单条 user 消息去总结——
+    // 比直接把原始消息(可能含未配对工具块)喂给模型稳得多，也更信息量足。
+    const transcript = older
+      .map((m) => {
+        const parts = (m.content || [])
+          .map((b: any) => {
+            if (b.type === "text") return b.text;
+            if (b.type === "tool_use") return `[调用 ${b.name}: ${JSON.stringify(b.input).slice(0, 300)}]`;
+            if (b.type === "tool_result") return `[结果: ${String(b.content).slice(0, 500)}]`;
+            if (b.type === "image") return "[图片]";
+            return "";
+          })
+          .filter(Boolean)
+          .join("\n");
+        return parts ? `${m.role === "user" ? "用户" : "助手"}：${parts}` : "";
+      })
+      .filter((s) => s.length > 3)
+      .join("\n\n");
+
+    let summaryText = "";
+    try {
+      const res = await this.provider.complete(
+        "你是对话摘要器。把下面这段对话历史压缩成简洁但具体的中文要点摘要，务必保留：用户目标、" +
+          "已完成的关键操作、涉及的文件/命令/参数/机器、关键结论与数据、当前进展、未决事项与下一步。" +
+          "条列式，带上具体名字(别泛泛而谈)。只输出摘要本身。",
+        [{ role: "user", content: [{ type: "text", text: `对话历史：\n${transcript}\n\n请输出要点摘要：` }] }],
+        [],
+        {},
+      );
+      if (res.usage) {
+        this.usage.totalInput += res.usage.inputTokens;
+        this.usage.totalOutput += res.usage.outputTokens;
+        this.usage.totalCacheHit += res.usage.cacheHitTokens ?? 0;
+        this.usage.totalCacheMiss +=
+          res.usage.cacheMissTokens ??
+          Math.max(0, res.usage.inputTokens - (res.usage.cacheHitTokens ?? 0));
+      }
+      summaryText = res.content
         .filter((b) => b.type === "text")
         .map((b) => (b as { text: string }).text)
-        .join("") || "(摘要为空)";
+        .join("")
+        .trim();
+    } catch {
+      summaryText = ""; // 生成失败 → 下面直接放弃本次压缩，绝不丢历史
+    }
+
+    // ⚠ 摘要为空/失败：宁可不压、也不能把历史丢成空摘要(否则 AI 直接失忆)
+    if (!summaryText) return;
 
     this.messages = [
       { role: "user", content: [{ type: "text", text: `【之前对话摘要】\n${summaryText}` }] },
@@ -397,16 +429,14 @@ export class Agent {
     hooks.onCompact?.(before, this.messages.length);
   }
 
-  // 找一个安全切点：保留最近 keepRecent 条，且切点落在一个"真正的用户输入"上，
-  // 不能把 assistant 的 tool_use 与其对应的 tool_result 拆开。
+  // 找安全切点：从"倒数第 keepRecent 条"往前找最近的"真正用户输入"边界，
+  // 保证保留 >= keepRecent 条最近消息(不会像以前往后找越留越少)，且不拆散 tool_use/tool_result。
   private findCutIndex(): number {
-    const target = this.messages.length - this.keepRecent;
-    for (let i = target; i < this.messages.length; i++) {
+    const target = Math.min(this.messages.length - this.keepRecent, this.messages.length - 1);
+    for (let i = target; i >= 1; i--) {
       const m = this.messages[i];
-      const isRealUser =
-        m.role === "user" && m.content.every((b) => b.type === "text");
-      if (isRealUser) return i;
+      if (m.role === "user" && m.content.every((b) => b.type === "text")) return i;
     }
-    return -1; // 最近段里没有干净的用户边界，放弃本次压缩
+    return -1; // 前面没有干净的用户边界(极少)，放弃本次压缩
   }
 }

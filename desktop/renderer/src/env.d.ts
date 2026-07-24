@@ -17,6 +17,7 @@ export interface MiniccApi {
   generateReport(group: string, sessionIds: string[]): void;
   setGroupMode(mode: "manual" | "date" | "project"): void;
   setStreamOutput(mode: "typewriter" | "stream" | "instant", speed: number): void;
+  setKeepRecent(n: number): void;
   deleteExchange(sid: string, ordinal: number): void;
   bootstrap(): Promise<{ sessions: any[]; groups?: string[]; currentId: string; messages: any[]; usage?: any; rateLimits?: any }>;
   getSettings(): Promise<{ settings: any; backend: string; model: string; defaultPrompt?: string }>;
