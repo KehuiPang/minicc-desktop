@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld("minicc", {
     ipcRenderer.send("chat:send", sid, text, images),
   inject: (sid: string, text: string, images?: string[]) =>
     ipcRenderer.send("chat:inject", sid, text, images),
+  recallInject: (sid: string, text: string) =>
+    ipcRenderer.invoke("chat:recall-inject", sid, text) as Promise<boolean>,
   stop: (sid?: string) => ipcRenderer.send("chat:stop", sid),
   reset: () => ipcRenderer.send("chat:reset"),
   undoLast: () => ipcRenderer.send("chat:undo-last"),

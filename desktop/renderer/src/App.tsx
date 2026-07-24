@@ -1464,17 +1464,38 @@ export function App() {
               if (ord < 0) return;
               window.minicc.deleteExchange(currentId, ord);
             };
+            // 撤回一条用户消息(像微信撤回)：收回 + 文字放回输入框可改可重发
+            const recallUser = async (it: Extract<Item, { type: "user" }>, ord: number) => {
+              if (busy) {
+                // 运行中：只有还没被 AI 处理(仍在注入缓冲)的才能干净撤回
+                const ok = await window.minicc.recallInject(currentId, it.text);
+                if (ok) {
+                  setItems((p) => p.filter((x) => x !== it));
+                  setInput((cur) => cur || it.text);
+                } else {
+                  push({
+                    type: "notice",
+                    text: "这条已开始处理，无法撤回；可按 Esc 停止后再撤回编辑。",
+                  });
+                }
+              } else {
+                setInput((cur) => cur || it.text);
+                delExchange(ord); // 闲时：删掉这轮(含回复)，文字回到输入框
+              }
+            };
             return turns.map((t, i) => {
               if (t.kind === "solo") {
                 if (t.item.type === "user") {
                   userOrd++;
                   const ord = userOrd;
+                  const uItem = t.item;
                   return (
                     <ItemView
                       key={i}
-                      item={t.item}
+                      item={uItem}
                       now={now}
                       onDelete={canDel ? () => delExchange(ord) : undefined}
+                      onEdit={() => recallUser(uItem, ord)}
                     />
                   );
                 }
@@ -2259,7 +2280,17 @@ function BrowserPanel({
   );
 }
 
-function ItemView({ item, now, onDelete }: { item: Item; now: number; onDelete?: () => void }) {
+function ItemView({
+  item,
+  now,
+  onDelete,
+  onEdit,
+}: {
+  item: Item;
+  now: number;
+  onDelete?: () => void;
+  onEdit?: () => void;
+}) {
   if (item.type === "user")
     return (
       <div className="user-block">
@@ -2278,6 +2309,15 @@ function ItemView({ item, now, onDelete }: { item: Item; now: number; onDelete?:
         <div className="turn-foot user">
           <div className="tf-actions">
             <CopyBtn text={item.text} />
+            {onEdit && (
+              <button
+                className="tf-icon"
+                title="撤回并编辑（收回这条，文字回到输入框可改可重发）"
+                onClick={onEdit}
+              >
+                ↩
+              </button>
+            )}
             {onDelete && (
               <button className="tf-icon del" title="删除这轮问答(含提问与回复)" onClick={onDelete}>
                 <TrashIcon />
@@ -2392,6 +2432,27 @@ const AssistantMsg = React.memo(function AssistantMsg({
   );
 });
 
+// 代码块：右上角一键复制(取 <pre> 的纯文本)
+function CodeBlock({ children }: { children?: React.ReactNode }) {
+  const ref = useRef<HTMLPreElement>(null);
+  const [done, setDone] = useState(false);
+  const copy = () => {
+    const t = ref.current?.textContent ?? "";
+    navigator.clipboard.writeText(t).then(() => {
+      setDone(true);
+      setTimeout(() => setDone(false), 1200);
+    });
+  };
+  return (
+    <div className="code-wrap">
+      <button className={"code-copy" + (done ? " ok" : "")} onClick={copy} title="复制代码">
+        {done ? "✓ 已复制" : "复制"}
+      </button>
+      <pre ref={ref}>{children}</pre>
+    </div>
+  );
+}
+
 function MarkdownView({ text, highlight = true }: { text: string; highlight?: boolean }) {
   const clean = tightenMarkdown(text);
   return (
@@ -2411,6 +2472,7 @@ function MarkdownView({ text, highlight = true }: { text: string; highlight?: bo
               {children}
             </a>
           ),
+          pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
         }}
       >
         {clean}

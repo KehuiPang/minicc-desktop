@@ -2,6 +2,7 @@
 export interface MiniccApi {
   send(sid: string, text: string, images?: string[]): void;
   inject(sid: string, text: string, images?: string[]): void;
+  recallInject(sid: string, text: string): Promise<boolean>;
   stop(sid?: string): void;
   reset(): void;
   undoLast(): void;

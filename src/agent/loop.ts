@@ -76,6 +76,15 @@ export class Agent {
   hasPendingInject(): boolean {
     return this.pendingInject.length > 0;
   }
+  // 撤回一条尚未处理的注入消息(还在缓冲里)：命中返回 true，AI 从未看到它
+  recallPendingInject(text: string): boolean {
+    const i = this.pendingInject.findIndex((p) => p.text === text);
+    if (i >= 0) {
+      this.pendingInject.splice(i, 1);
+      return true;
+    }
+    return false;
+  }
 
   getMessages(): Message[] {
     return this.messages;

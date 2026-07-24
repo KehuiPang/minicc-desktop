@@ -1282,6 +1282,11 @@ ipcMain.on("chat:inject", (_e, sid: string, text: string, images?: string[]) => 
   }
 });
 
+// 撤回一条尚未被处理的注入消息(还在缓冲里)；命中=干净撤回，AI 没看到
+ipcMain.handle("chat:recall-inject", (_e, sid: string, text: string) => {
+  return agents.get(sid || currentId)?.recallPendingInject(text) ?? false;
+});
+
 ipcMain.on("chat:stop", (_e, sid?: string) => {
   const id = sid || currentId;
   // 只 abort，不立即删 runs——留给 agent.send 的 finally 结算后清理。
