@@ -31,6 +31,8 @@ interface SessionMeta {
   id: string;
   title: string;
   updatedAt: number;
+  group?: string;
+  priority?: number;
 }
 
 const CTX_MAX = 1_000_000; // gpt-5.5 上下文窗口估算，用于占用条
@@ -153,8 +155,14 @@ export function App() {
   const [rate, setRate] = useState<any>(null);
   const [input, setInput] = useState("");
   const [suggestion, setSuggestion] = useState(""); // 输入框幽灵提示：下一步动作建议(Tab 补全)
+  const [queued, setQueued] = useState<{ sid: string; text: string; images: string[] }[]>([]); // 跑动中排队的待发消息
   const [autoMode, setAutoMode] = useState(true);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
+  const [groups, setGroups] = useState<string[]>([]); // 分组顺序(新组置顶)
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
+  const [ctxMenu, setCtxMenu] = useState<{ sid: string; x: number; y: number } | null>(null); // 会话右键菜单
+  const [groupInputSid, setGroupInputSid] = useState<string | null>(null); // 正在为哪个会话输入新组名
+  const [newGroupName, setNewGroupName] = useState("");
   const [currentId, setCurrentId] = useState("");
   const busy = runningSet.has(currentId); // 当前可见会话是否在跑(多任务:各会话独立)
   const currentIdRef = useRef(currentId); // 事件回调里读最新 currentId(判是否本会话的更新)
@@ -484,6 +492,9 @@ export function App() {
         case "evt:sessions":
           setSessions(payload);
           break;
+        case "evt:groups":
+          setGroups(Array.isArray(payload) ? payload : []);
+          break;
         case "evt:account":
           setAccount(payload);
           break;
@@ -596,6 +607,20 @@ export function App() {
     setSuggestion(""); // 切换会话清掉上个会话的建议
   }, [currentId]);
 
+  // 排队冲刷：当前会话回复跑完(busy true→false)且有排队消息，自动发下一条
+  const prevBusyRef = useRef(busy);
+  useEffect(() => {
+    if (prevBusyRef.current && !busy) {
+      const idx = queued.findIndex((q) => q.sid === currentId);
+      if (idx >= 0) {
+        const item = queued[idx];
+        setQueued((q) => q.filter((_, i) => i !== idx));
+        doSend(item.text, item.images);
+      }
+    }
+    prevBusyRef.current = busy;
+  }, [busy, queued, currentId]);
+
   useEffect(() => {
     window.minicc.getAccount().then(setAccount);
     // 主动拉取当前后端/模型，避免 evt:ready 推送早于订阅被丢导致显示「…」
@@ -606,6 +631,7 @@ export function App() {
     window.minicc.bootstrap().then((r) => {
       if (!r) return;
       setSessions(r.sessions || []);
+      setGroups(r.groups || []);
       if (r.currentId) setCurrentId(r.currentId);
       setItems(messagesToItems(r.messages || []));
       if (r.usage) setUsage(r.usage);
@@ -671,17 +697,8 @@ export function App() {
     }
   }
 
-  function submit() {
-    const text = input.trim();
-    if (busy) return;
-    setSuggestion(""); // 发送后清掉旧的下一步建议(回复完会重新生成)
-    if (!text && pendingImages.length === 0) return;
-    if (text === "/reset") {
-      window.minicc.reset();
-      setInput("");
-      return;
-    }
-    const imgs = pendingImages;
+  // 真正发送一条(立即入队跑)
+  function doSend(text: string, imgs: string[]) {
     if (text) {
       history.current.push(text);
       histIdx.current = history.current.length;
@@ -691,9 +708,36 @@ export function App() {
     thinkStartRef.current = Date.now();
     charsRef.current = 0;
     window.minicc.send(currentId, text, imgs.length ? imgs : undefined);
+  }
+
+  function clearComposer() {
     setInput("");
     setPendingImages([]);
     if (taRef.current) taRef.current.style.height = "auto";
+  }
+
+  function submit() {
+    const text = input.trim();
+    if (!text && pendingImages.length === 0) return;
+    if (text === "/reset") {
+      window.minicc.reset();
+      setInput("");
+      return;
+    }
+    setSuggestion(""); // 发送后清掉旧的下一步建议(回复完会重新生成)
+    const imgs = pendingImages;
+    if (busy) {
+      // 跑动中：排队。当前回复完成后自动发送，AI 带着刚做完的上下文自己判断怎么接
+      setQueued((q) => [...q, { sid: currentId, text, images: imgs }]);
+      if (text) {
+        history.current.push(text);
+        histIdx.current = history.current.length;
+      }
+      clearComposer();
+      return;
+    }
+    doSend(text, imgs);
+    clearComposer();
   }
 
   const stop = () => window.minicc.stop(currentId);
@@ -766,26 +810,164 @@ export function App() {
         </button>
         <div className="session-list">
           {sessions.length === 0 && <div className="empty">暂无历史对话</div>}
-          {sessions.map((s) => (
-            <div
-              key={s.id}
-              className={"session-item" + (s.id === currentId ? " active" : "")}
-              onClick={() => window.minicc.switchSession(s.id)}
-            >
-              {runningSet.has(s.id) && <span className="s-run" title="运行中" />}
-              <span className="s-title">{s.title}</span>
-              <button
-                className="s-del"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  window.minicc.deleteSession(s.id);
+          {(() => {
+            // 组内排序：优先级(数字大在前) → 最近更新
+            const sortRows = (arr: SessionMeta[]) =>
+              [...arr].sort(
+                (a, b) => (b.priority || 0) - (a.priority || 0) || b.updatedAt - a.updatedAt,
+              );
+            const byGroup = new Map<string, SessionMeta[]>();
+            for (const s of sessions) {
+              const g = s.group || "";
+              if (!byGroup.has(g)) byGroup.set(g, []);
+              byGroup.get(g)!.push(s);
+            }
+            const renderRow = (s: SessionMeta) => (
+              <div
+                key={s.id}
+                className={"session-item" + (s.id === currentId ? " active" : "")}
+                onClick={() => window.minicc.switchSession(s.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setGroupInputSid(null);
+                  setCtxMenu({ sid: s.id, x: e.clientX, y: e.clientY });
                 }}
               >
-                ×
-              </button>
-            </div>
-          ))}
+                {runningSet.has(s.id) && <span className="s-run" title="运行中" />}
+                {!!s.priority && (
+                  <span className="s-prio" title={"优先级 " + s.priority}>
+                    {s.priority}
+                  </span>
+                )}
+                <span className="s-title">{s.title}</span>
+                <button
+                  className="s-del"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.minicc.deleteSession(s.id);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            );
+            const orderedGroups = groups.filter((g) => byGroup.has(g)); // 有会话的组，按组顺序(新组置顶)
+            return (
+              <>
+                {orderedGroups.map((g) => {
+                  const collapsed = collapsedGroups.has(g);
+                  const rows = sortRows(byGroup.get(g)!);
+                  return (
+                    <div key={"g:" + g} className="session-group">
+                      <div
+                        className="group-head"
+                        onClick={() =>
+                          setCollapsedGroups((prev) => {
+                            const n = new Set(prev);
+                            if (n.has(g)) n.delete(g);
+                            else n.add(g);
+                            return n;
+                          })
+                        }
+                      >
+                        <span className="group-caret">{collapsed ? "▸" : "▾"}</span>
+                        <span className="group-name" title={g}>
+                          {g}
+                        </span>
+                        <span className="group-count">{rows.length}</span>
+                      </div>
+                      {!collapsed && rows.map(renderRow)}
+                    </div>
+                  );
+                })}
+                {sortRows(byGroup.get("") || []).map(renderRow)}
+              </>
+            );
+          })()}
         </div>
+        {ctxMenu &&
+          (() => {
+            const s = sessions.find((x) => x.id === ctxMenu.sid);
+            if (!s) return null;
+            const close = () => {
+              setCtxMenu(null);
+              setGroupInputSid(null);
+              setNewGroupName("");
+            };
+            const move = (g: string | null) => {
+              window.minicc.setSessionGroup(ctxMenu.sid, g);
+              close();
+            };
+            return (
+              <>
+                <div
+                  className="ctx-overlay"
+                  onClick={close}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    close();
+                  }}
+                />
+                <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
+                  <div className="ctx-head">移动到分组</div>
+                  {groups
+                    .filter((g) => g !== s.group)
+                    .map((g) => (
+                      <button key={g} className="ctx-item" onClick={() => move(g)}>
+                        {g}
+                      </button>
+                    ))}
+                  {s.group && (
+                    <button className="ctx-item" onClick={() => move(null)}>
+                      移出「{s.group}」
+                    </button>
+                  )}
+                  {groupInputSid === ctxMenu.sid ? (
+                    <input
+                      className="ctx-input"
+                      autoFocus
+                      placeholder="新组名，回车创建"
+                      value={newGroupName}
+                      onChange={(e) => setNewGroupName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && newGroupName.trim()) move(newGroupName.trim());
+                        if (e.key === "Escape") {
+                          setGroupInputSid(null);
+                          setNewGroupName("");
+                        }
+                      }}
+                    />
+                  ) : (
+                    <button
+                      className="ctx-item ctx-new"
+                      onClick={() => {
+                        setGroupInputSid(ctxMenu.sid);
+                        setNewGroupName("");
+                      }}
+                    >
+                      ＋ 新建分组…
+                    </button>
+                  )}
+                  <div className="ctx-sep" />
+                  <div className="ctx-head">优先级（数字大靠前）</div>
+                  <div className="ctx-prio">
+                    {[0, 1, 2, 3, 5].map((n) => (
+                      <button
+                        key={n}
+                        className={"ctx-prio-b" + ((s.priority || 0) === n ? " on" : "")}
+                        onClick={() => {
+                          window.minicc.setSessionPriority(ctxMenu.sid, n);
+                          close();
+                        }}
+                      >
+                        {n === 0 ? "无" : n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            );
+          })()}
         {(() => {
           const name =
             account.nickname || account.email || account.label || (account.loggedIn ? "已登录" : "未登录");
@@ -1065,6 +1247,27 @@ export function App() {
         </div>
 
         <div className="composer" ref={composerRef}>
+          {/* 跑动中排队的待发消息：回复完成后自动依次发送 */}
+          {queued.some((q) => q.sid === currentId) && (
+            <div className="queued-row">
+              <span className="queued-hint">
+                ⏳ 已排队 {queued.filter((q) => q.sid === currentId).length} 条 · 回复后自动发送
+              </span>
+              {queued.map((q, i) =>
+                q.sid === currentId ? (
+                  <span className="queued-chip" key={i} title={q.text}>
+                    {q.text.slice(0, 24) || "[图片]"}
+                    <button
+                      className="queued-x"
+                      onClick={() => setQueued((list) => list.filter((_, j) => j !== i))}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ) : null,
+              )}
+            </div>
+          )}
           {/* 鉴权提示条：检测到缺授权后常驻，直到授权成功或用户手动 × 关闭 */}
           {needAuth && !authDismissed && (
             <div className="err-fix err-auth">
@@ -1194,7 +1397,6 @@ export function App() {
                   : "描述你的需求…（可直接粘贴图片；/reset 清空对话）"
               }
               value={input}
-              disabled={busy}
               onChange={(e) => {
                 setInput(e.target.value);
                 e.target.style.height = "auto";

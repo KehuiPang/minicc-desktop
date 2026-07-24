@@ -22,6 +22,7 @@ const EVENTS = [
   "evt:browser-activity",
   "evt:browser-detached",
   "evt:suggest",
+  "evt:groups",
 ] as const;
 
 contextBridge.exposeInMainWorld("minicc", {
@@ -33,6 +34,10 @@ contextBridge.exposeInMainWorld("minicc", {
   newSession: () => ipcRenderer.send("session:new"),
   switchSession: (id: string) => ipcRenderer.send("session:switch", id),
   deleteSession: (id: string) => ipcRenderer.send("session:delete", id),
+  setSessionGroup: (id: string, group?: string | null) =>
+    ipcRenderer.send("session:set-group", id, group),
+  setSessionPriority: (id: string, priority: number) =>
+    ipcRenderer.send("session:set-priority", id, priority),
   deleteExchange: (sid: string, ordinal: number) =>
     ipcRenderer.send("session:delete-exchange", sid, ordinal),
   bootstrap: () => ipcRenderer.invoke("session:bootstrap") as Promise<any>,

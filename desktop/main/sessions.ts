@@ -12,12 +12,15 @@ import type { Message } from "../../src/types.js";
 const DIR = join(homedir(), ".minicc");
 const SDIR = join(DIR, "sessions");
 const META = join(DIR, "sessions.json");
+const GROUPS = join(DIR, "groups.json"); // 分组顺序(手动),新组前插=置顶
 
 export interface SessionMeta {
   id: string;
   title: string;
   updatedAt: number;
   usage?: { totalInput: number; totalOutput: number; lastInput: number };
+  group?: string; // 所属分组名；空=未分组
+  priority?: number; // 优先级：数字越大越靠前(默认 0)
 }
 
 function ensure() {
@@ -36,6 +39,50 @@ export function listSessions(): SessionMeta[] {
 function saveList(l: SessionMeta[]) {
   ensure();
   writeFileSync(META, JSON.stringify(l));
+}
+
+// —— 分组顺序(手动) ——
+export function listGroups(): string[] {
+  ensure();
+  try {
+    const g = JSON.parse(readFileSync(GROUPS, "utf8"));
+    return Array.isArray(g) ? g.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+function saveGroups(g: string[]) {
+  ensure();
+  writeFileSync(GROUPS, JSON.stringify(g));
+}
+// 清掉没有任何会话在用的空组(保持组列表干净)
+function pruneGroups() {
+  const used = new Set(listSessions().map((s) => s.group).filter(Boolean) as string[]);
+  const kept = listGroups().filter((g) => used.has(g));
+  saveGroups(kept);
+}
+
+// 把会话移动到分组(group 为空/未定义=移出分组)；新组名前插到组顺序=置顶
+export function setSessionGroup(id: string, group?: string | null) {
+  const name = (group || "").trim();
+  const l = listSessions();
+  const s = l.find((x) => x.id === id);
+  if (!s) return;
+  s.group = name || undefined;
+  saveList(l);
+  if (name) {
+    const g = listGroups();
+    if (!g.includes(name)) saveGroups([name, ...g]); // 新组置顶
+  }
+  pruneGroups();
+}
+
+export function setSessionPriority(id: string, priority: number) {
+  const l = listSessions();
+  const s = l.find((x) => x.id === id);
+  if (!s) return;
+  s.priority = Number.isFinite(priority) ? priority : 0;
+  saveList(l);
 }
 
 // 历史是否合法：user/assistant 交替 + 每个 tool_use 都有紧跟的配对 tool_result
@@ -110,8 +157,10 @@ export function saveSession(
 ) {
   ensure();
   writeFileSync(join(SDIR, id + ".json"), JSON.stringify(messages));
-  const l = listSessions().filter((s) => s.id !== id);
-  l.unshift({ id, title, updatedAt: now, usage });
+  const all = listSessions();
+  const prev = all.find((s) => s.id === id); // 保留已设的分组/优先级，别被每轮落盘抹掉
+  const l = all.filter((s) => s.id !== id);
+  l.unshift({ id, title, updatedAt: now, usage, group: prev?.group, priority: prev?.priority });
   saveList(l);
 }
 
@@ -122,6 +171,7 @@ export function deleteSession(id: string) {
     /* ignore */
   }
   saveList(listSessions().filter((s) => s.id !== id));
+  pruneGroups();
 }
 
 // 从首条用户消息推导标题

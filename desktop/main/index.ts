@@ -34,6 +34,9 @@ import {
   saveSession,
   deleteSession,
   deriveTitle,
+  listGroups,
+  setSessionGroup,
+  setSessionPriority,
 } from "./sessions.js";
 import {
   loadSettings,
@@ -1305,6 +1308,20 @@ ipcMain.on("session:delete", (_e, id: string) => {
     sendUsageFor(currentId);
   }
   send("evt:sessions", listSessions());
+  send("evt:groups", listGroups());
+});
+
+// 会话分组：移动到分组(group 空=移出)；新组自动创建并置顶
+ipcMain.on("session:set-group", (_e, id: string, group?: string | null) => {
+  setSessionGroup(id, group);
+  send("evt:sessions", listSessions());
+  send("evt:groups", listGroups());
+});
+
+// 会话优先级：数字越大越靠前
+ipcMain.on("session:set-priority", (_e, id: string, priority: number) => {
+  setSessionPriority(id, priority);
+  send("evt:sessions", listSessions());
 });
 
 // 删除某一轮问答(第 ordinal 条用户输入及其后到下一条用户输入之间的全部消息=该轮回复)
@@ -1389,6 +1406,7 @@ ipcMain.handle("session:bootstrap", () => {
   const a = getAgent(currentId);
   return {
     sessions: listSessions(),
+    groups: listGroups(),
     currentId,
     messages: a ? a.getMessages() : [],
     usage: a ? a.getUsage() : EMPTY_USAGE,
