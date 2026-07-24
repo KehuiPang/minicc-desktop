@@ -266,7 +266,10 @@ export function App() {
   const [wuwei, setWuwei] = useState<{
     user: { id: string; email: string | null; name: string | null; avatar: string | null };
     coin: { balance: number };
+    flags?: string[];
   } | null>(null);
+  // 灰度开关（C2）：订阅版是否显示，完全由后端 flags 决定，默认隐藏。客户端只渲染不判定。
+  const showSubscription = !!wuwei?.flags?.includes("subscription");
   const [wuweiBusy, setWuweiBusy] = useState(false);
   async function doWuweiLogin() {
     setWuweiBusy(true);
@@ -1413,6 +1416,29 @@ export function App() {
                   </button>
                 )}
               </div>
+              {/* 订阅版入口（C2 占位）：默认隐藏，仅当后端 flags 含 "subscription" 才出现。
+                  后台可按用户名/机器指纹对指定客户端单独放开——判定全在后端，客户端只渲染。 */}
+              {showSubscription && (
+                <button
+                  onClick={() => push({ type: "notice", text: "订阅版入口（灰度已放开）。具体订阅页/权益后续接入。" })}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    width: "100%",
+                    padding: "6px 8px",
+                    marginBottom: 6,
+                    borderRadius: 8,
+                    background: "none",
+                    border: "1px solid #C05F3C",
+                    color: "#F4F6F8",
+                    cursor: "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  <span style={{ color: "#C05F3C" }}>✨</span> 订阅版
+                </button>
+              )}
               <button className="acct-btn" onClick={() => setShowAcctMenu((v) => !v)}>
                 <div className={"acct-av" + (account.loggedIn ? "" : " off")}>
                   {account.avatar ? (

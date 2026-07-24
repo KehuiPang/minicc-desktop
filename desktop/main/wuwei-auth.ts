@@ -9,6 +9,7 @@ import http from "node:http";
 import { shell } from "electron";
 import { randomBytes } from "node:crypto";
 import { log } from "./logger.js";
+import { getDeviceId } from "../../src/device-id.js";
 
 const SITE = process.env.WUWEI_SITE_URL ?? "https://wuweiai.io";
 
@@ -21,6 +22,9 @@ export interface WuweiSession {
 export interface WuweiMe {
   user: { id: string; email: string | null; name: string | null; avatar: string | null };
   coin: { balance: number };
+  // 灰度开关（C2）：后端按 用户+设备指纹 返回的功能白名单，如 ["subscription"]。
+  // 缺省/未含对应项 = 隐藏。客户端只渲染、不判定；判定全在后端。
+  flags?: string[];
 }
 
 // 本地 /cb 页面：把 URL fragment 里的 token 转成对本地的 query 请求（浏览器不把 # 发给 server）
@@ -141,8 +145,9 @@ export async function wuweiRefresh(refreshToken: string): Promise<WuweiSession |
 /** 查账号 + 无为币余额。401 视为 token 失效由调用方决定是否 refresh。 */
 export async function wuweiFetchMe(accessToken: string): Promise<WuweiMe | "unauthorized" | null> {
   try {
+    // 上报身份：Bearer=用户身份，X-Device-Id=稳定机器指纹，供后端按 用户/设备 决策灰度 flags。
     const res = await fetch(`${SITE}/api/me`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: { Authorization: `Bearer ${accessToken}`, "X-Device-Id": getDeviceId() },
     });
     if (res.status === 401) return "unauthorized";
     if (!res.ok) return null;
