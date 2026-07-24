@@ -2904,9 +2904,9 @@ body {
 .s-time {
   flex: 0 0 auto;
   margin-left: auto; /* 吸收左侧空白 → 时间靠右 */
-  padding-left: 8px; padding-right: 2px; /* 与标题留空隙 + 离右边一点 */
+  padding-left: 8px; /* 与标题留空隙 */
   font-size: 10px; color: var(--text-muted); opacity: 0.5;
   white-space: nowrap;
 }
-/* hover 出删除按钮时，让位给它(时间先隐) */
-.session-item:hover .s-time { display: none; }
+/* hover 出删除按钮时，时间仍保留(与删除按钮并排)，稍加深 */
+.session-item:hover .s-time { opacity: 0.75; }
