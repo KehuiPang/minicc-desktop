@@ -178,6 +178,12 @@ export function App() {
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [groups, setGroups] = useState<string[]>([]); // 分组顺序(新组置顶)
   const [groupMode, setGroupMode] = useState<"manual" | "date" | "project">("manual"); // 分组模式
+  const [streamMode, setStreamMode] = useState<"typewriter" | "stream" | "instant">("stream"); // 输出方式
+  const [streamSpeed, setStreamSpeed] = useState(400); // 打字机速度(字符/秒)
+  const streamModeRef = useRef(streamMode);
+  streamModeRef.current = streamMode;
+  const streamSpeedRef = useRef(streamSpeed);
+  streamSpeedRef.current = streamSpeed;
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [ctxMenu, setCtxMenu] = useState<{ sid: string; x: number; y: number } | null>(null); // 会话右键菜单
   const [dragId, setDragId] = useState<string | null>(null); // 正在拖拽的会话 id
@@ -282,25 +288,42 @@ export function App() {
 
   const push = (it: Item) => setItems((p) => [...p, it]);
 
-  // 流式增量批处理：累积到 ref，节流 flush。流式那条现在渲染纯文本(不再重解析 markdown)，
-  // 每次 flush 极轻，故降到 ~30ms(~33fps) 让出字更顺滑；流完再切完整 Markdown。
+  // 流式出字：把到手文本先缓冲，再按「输出方式」揭示。
+  //  stream=每 30ms 把缓冲一次性吐出(唰的一下)；typewriter=每 ~16ms 匀速吐 speed 字/秒；
+  //  instant=流式期间不吐，攒到段落边界(工具/结束)一次性整段出。
+  //  正在流的那条渲染纯文本(不重解析 markdown)，流完再切完整 Markdown。
   const pendingDeltaRef = useRef("");
   const flushTimerRef = useRef<number | null>(null);
+  const TW_TICK = 16;
   function scheduleFlush() {
     if (flushTimerRef.current != null) return;
+    const delay = streamModeRef.current === "typewriter" ? TW_TICK : 30;
     flushTimerRef.current = window.setTimeout(() => {
       flushTimerRef.current = null;
-      flushDelta();
-    }, 30);
+      flushDelta(false);
+    }, delay);
   }
-  function flushDelta() {
+  // force=true：段落边界(工具开始/回合结束)整段吐出，无视模式，别把内容卡在缓冲里
+  function flushDelta(force = false) {
     if (flushTimerRef.current != null) {
       clearTimeout(flushTimerRef.current);
       flushTimerRef.current = null;
     }
-    const chunk = pendingDeltaRef.current;
-    if (!chunk) return;
-    pendingDeltaRef.current = "";
+    const buf = pendingDeltaRef.current;
+    if (!buf) return;
+    const mode = streamModeRef.current;
+    let chunk: string;
+    if (force || mode === "stream") {
+      chunk = buf;
+      pendingDeltaRef.current = "";
+    } else if (mode === "instant") {
+      return; // 流式期间不揭示，等边界 force 整段出
+    } else {
+      // typewriter：按速度取前 N 字，其余留缓冲，继续排下一次
+      const n = Math.max(1, Math.round((streamSpeedRef.current * TW_TICK) / 1000));
+      chunk = buf.slice(0, n);
+      pendingDeltaRef.current = buf.slice(n);
+    }
     setItems((p) => {
       const last = p[p.length - 1];
       if (last && last.type === "assistant") {
@@ -310,6 +333,7 @@ export function App() {
       }
       return [...p, { type: "assistant", text: chunk, ts: Date.now() }];
     });
+    if (pendingDeltaRef.current) scheduleFlush(); // 还有剩(typewriter)继续吐
   }
 
   // 每 15s 刷新一次「多久之前」相对时间(实时递增)
@@ -326,6 +350,8 @@ export function App() {
       setProviderOrder(r?.settings?.providerOrder || []);
       setHiddenProviders(r?.settings?.hiddenProviders || []);
       setGroupMode((r?.settings as any)?.groupMode || "manual");
+      setStreamMode((r?.settings as any)?.streamMode || "stream");
+      setStreamSpeed((r?.settings as any)?.streamSpeed || 400);
       // 应用主题(默认暗色·minicc客户端默认深色)
       const theme = (r?.settings as any)?.theme || "dark";
       document.documentElement.setAttribute("data-theme", theme);
@@ -505,7 +531,7 @@ export function App() {
   useEffect(() => {
     const off = window.minicc.onEvent((ch, payload: any) => {
       // 结构性事件(工具/完成/切换…)前先把累积的流式文本落定，保证顺序不乱
-      if (ch !== "evt:assistant-delta" && pendingDeltaRef.current) flushDelta();
+      if (ch !== "evt:assistant-delta" && pendingDeltaRef.current) flushDelta(true); // 段落边界整段吐
       switch (ch) {
         case "evt:ready":
           setMeta(payload);
@@ -834,6 +860,11 @@ export function App() {
   function changeGroupMode(m: "manual" | "date" | "project") {
     setGroupMode(m);
     window.minicc.setGroupMode(m);
+  }
+  function changeStream(mode: "typewriter" | "stream" | "instant", speed: number) {
+    setStreamMode(mode);
+    setStreamSpeed(speed);
+    window.minicc.setStreamOutput(mode, speed);
   }
 
   function answerPerm(decision: "allow" | "deny") {
@@ -1940,6 +1971,9 @@ export function App() {
           onClose={() => setShowAppSettings(false)}
           groupMode={groupMode}
           onGroupMode={changeGroupMode}
+          streamMode={streamMode}
+          streamSpeed={streamSpeed}
+          onStream={changeStream}
         />
       )}
 
@@ -4348,10 +4382,16 @@ function AppSettingsModal({
   onClose,
   groupMode,
   onGroupMode,
+  streamMode,
+  streamSpeed,
+  onStream,
 }: {
   onClose: () => void;
   groupMode: "manual" | "date" | "project";
   onGroupMode: (m: "manual" | "date" | "project") => void;
+  streamMode: "typewriter" | "stream" | "instant";
+  streamSpeed: number;
+  onStream: (mode: "typewriter" | "stream" | "instant", speed: number) => void;
 }) {
   const [theme, setTheme] = useState("dark");
   useEffect(() => {
@@ -4387,6 +4427,45 @@ function AppSettingsModal({
         </div>
         <div className="app-set-hint" style={{ marginBottom: "14px" }}>
           手动：右键会话移动/新建分组、可拖拽排序；按日期/按项目：自动分组（项目名由 AI 按会话内容归纳）。
+        </div>
+        <div className="app-set-group">输出方式</div>
+        <div className="theme-pick" style={{ marginBottom: "6px" }}>
+          {[
+            { id: "stream", label: "流式（一下出）" },
+            { id: "typewriter", label: "打字机（匀速）" },
+            { id: "instant", label: "回完一次性" },
+          ].map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              className={"theme-opt" + (streamMode === m.id ? " on" : "")}
+              onClick={() => onStream(m.id as any, streamSpeed)}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+        {streamMode === "typewriter" && (
+          <div className="app-set-row" style={{ cursor: "default", gap: "10px" }}>
+            <div className="app-set-label" style={{ whiteSpace: "nowrap" }}>
+              打字机速度
+            </div>
+            <input
+              type="range"
+              min={80}
+              max={2000}
+              step={20}
+              value={streamSpeed}
+              onChange={(e) => onStream("typewriter", Number(e.target.value))}
+              style={{ flex: 1 }}
+            />
+            <div className="app-set-hint" style={{ minWidth: 66, textAlign: "right" }}>
+              {streamSpeed} 字/秒
+            </div>
+          </div>
+        )}
+        <div className="app-set-hint" style={{ marginBottom: "14px" }}>
+          流式=收到即刻整批显示；打字机=匀速逐字，最丝滑；回完一次性=回复期间不显示、完成后整段出。
         </div>
         <div className="app-set-group">界面主题</div>
         <div className="theme-pick" style={{ marginBottom: "14px" }}>

@@ -45,6 +45,8 @@ contextBridge.exposeInMainWorld("minicc", {
   reorderGroups: (names: string[]) => ipcRenderer.send("session:reorder-groups", names),
   setGroupMode: (mode: "manual" | "date" | "project") =>
     ipcRenderer.send("settings:set-group-mode", mode),
+  setStreamOutput: (mode: "typewriter" | "stream" | "instant", speed: number) =>
+    ipcRenderer.send("settings:set-stream", mode, speed),
   deleteExchange: (sid: string, ordinal: number) =>
     ipcRenderer.send("session:delete-exchange", sid, ordinal),
   bootstrap: () => ipcRenderer.invoke("session:bootstrap") as Promise<any>,

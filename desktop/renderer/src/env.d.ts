@@ -13,6 +13,7 @@ export interface MiniccApi {
   setSessionOrder(id: string, order: number): void;
   reorderGroups(names: string[]): void;
   setGroupMode(mode: "manual" | "date" | "project"): void;
+  setStreamOutput(mode: "typewriter" | "stream" | "instant", speed: number): void;
   deleteExchange(sid: string, ordinal: number): void;
   bootstrap(): Promise<{ sessions: any[]; groups?: string[]; currentId: string; messages: any[]; usage?: any; rateLimits?: any }>;
   getSettings(): Promise<{ settings: any; backend: string; model: string; defaultPrompt?: string }>;

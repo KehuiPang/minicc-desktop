@@ -1471,6 +1471,15 @@ ipcMain.on("settings:set-group-mode", (_e, mode: "manual" | "date" | "project") 
   saveSettings({ ...s, groupMode: mode });
 });
 
+// 纯 UI 设置(输出方式/速度)：只落盘，不重启 provider
+ipcMain.on(
+  "settings:set-stream",
+  (_e, mode: "typewriter" | "stream" | "instant", speed: number) => {
+    const s = loadSettings() || ({} as Settings);
+    saveSettings({ ...s, streamMode: mode, streamSpeed: speed });
+  },
+);
+
 // —— 全局记忆(设置里手动编辑) ——
 ipcMain.handle("memory:get", () => loadMemory());
 ipcMain.on("memory:set", (_e, text: string) => {
