@@ -564,6 +564,7 @@ export function App() {
           break;
         case "evt:session-loaded":
           setCurrentId(payload.id);
+          atBottomRef.current = true; // 打开/切换会话：定位到最新(底部)，不用手滚
           setItems(messagesToItems(payload.messages));
           break;
         case "evt:assistant-delta":
@@ -668,7 +669,14 @@ export function App() {
 
   useEffect(() => {
     // 只有用户本来就贴着底部时才自动吸底；往上滚看历史时不打扰
-    if (atBottomRef.current) streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight });
+    if (!atBottomRef.current) return;
+    const el = streamRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight });
+    // 二次校正：长会话/代码高亮/图片会在下一帧改变高度，再吸一次确保真到底
+    requestAnimationFrame(() => {
+      if (atBottomRef.current) el.scrollTo({ top: el.scrollHeight });
+    });
   }, [items, busy, pending]);
 
   useEffect(() => {
@@ -687,6 +695,7 @@ export function App() {
       setSessions(r.sessions || []);
       setGroups(r.groups || []);
       if (r.currentId) setCurrentId(r.currentId);
+      atBottomRef.current = true; // 初次打开：定位到最新(底部)
       setItems(messagesToItems(r.messages || []));
       if (r.usage) setUsage(r.usage);
       if (r.rateLimits) setRate(r.rateLimits);
