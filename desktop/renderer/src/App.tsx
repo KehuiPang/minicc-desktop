@@ -152,6 +152,7 @@ export function App() {
   const [usage, setUsage] = useState<Usage>({ totalInput: 0, totalOutput: 0, lastInput: 0 });
   const [rate, setRate] = useState<any>(null);
   const [input, setInput] = useState("");
+  const [suggestion, setSuggestion] = useState(""); // 输入框幽灵提示：下一步动作建议(Tab 补全)
   const [autoMode, setAutoMode] = useState(true);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [currentId, setCurrentId] = useState("");
@@ -541,6 +542,9 @@ export function App() {
         case "evt:ratelimits":
           setRate(payload);
           break;
+        case "evt:suggest":
+          if (payload.sid === currentIdRef.current) setSuggestion(payload.text || "");
+          break;
         case "evt:compact":
           if (payload.sid !== currentIdRef.current) break;
           push({ type: "notice", text: `上下文已压缩：${payload.before} → ${payload.after} 条消息` });
@@ -587,6 +591,10 @@ export function App() {
     // 只有用户本来就贴着底部时才自动吸底；往上滚看历史时不打扰
     if (atBottomRef.current) streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight });
   }, [items, busy, pending]);
+
+  useEffect(() => {
+    setSuggestion(""); // 切换会话清掉上个会话的建议
+  }, [currentId]);
 
   useEffect(() => {
     window.minicc.getAccount().then(setAccount);
@@ -666,6 +674,7 @@ export function App() {
   function submit() {
     const text = input.trim();
     if (busy) return;
+    setSuggestion(""); // 发送后清掉旧的下一步建议(回复完会重新生成)
     if (!text && pendingImages.length === 0) return;
     if (text === "/reset") {
       window.minicc.reset();
@@ -704,6 +713,13 @@ export function App() {
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Tab" && input === "" && suggestion) {
+      // 幽灵提示补全：输入框为空且有建议时，Tab 把建议填进输入框
+      e.preventDefault();
+      setInput(suggestion);
+      setSuggestion("");
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
@@ -1172,7 +1188,11 @@ export function App() {
             <textarea
               ref={taRef}
               rows={1}
-              placeholder="描述你的需求…（可直接粘贴图片；/reset 清空对话）"
+              placeholder={
+                input === "" && suggestion
+                  ? `${suggestion}      ⇥ Tab 采纳`
+                  : "描述你的需求…（可直接粘贴图片；/reset 清空对话）"
+              }
               value={input}
               disabled={busy}
               onChange={(e) => {

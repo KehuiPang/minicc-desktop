@@ -1038,6 +1038,51 @@ async function maybeSmartTitle(id: string) {
   }
 }
 
+// 输入框「下一步动作」建议：回复完后，用模型根据对话(尤其助手最后回复常以问题/建议结尾)
+// 预测用户接下来最可能输入的一句话，发给前端做幽灵提示(Tab 补全)。无明确下一步则清空。
+const suggestInFlight = new Set<string>();
+async function suggestNextAction(id: string) {
+  if (suggestInFlight.has(id) || !provider) return;
+  const a0 = agents.get(id);
+  if (!a0) return;
+  const msgs = a0.getMessages();
+  // 需要至少有一轮助手回复；最后一条应是助手(回复已完成)
+  const last = msgs[msgs.length - 1];
+  if (!last || last.role !== "assistant" || !hasText(msgs, "user")) {
+    send("evt:suggest", { sid: id, text: "" });
+    return;
+  }
+  suggestInFlight.add(id);
+  const recent = msgs.slice(-4);
+  const convo = recent
+    .map((m: any) => `${m.role === "user" ? "用户" : "助手"}: ${msgText(m)}`)
+    .filter((s: string) => s.length > 3)
+    .join("\n");
+  try {
+    const res = await provider.complete(
+      "你是输入建议助手。下面是用户与编码助手的对话，助手最后的回复常以一个问题或建议的下一步动作结尾。" +
+        "请用中文写出用户接下来最可能输入的一句话(第一人称或祈使句，像用户自己会打的话，不超过20字)，" +
+        "直接输出这句话，不要引号、解释或前缀。若助手在等用户自由发挥、没有明确下一步，只输出：无",
+      [{ role: "user", content: [{ type: "text", text: `对话:\n${convo}\n\n用户接下来最可能输入:` }] }] as any,
+      [],
+      {},
+    );
+    let raw = (res.content || [])
+      .filter((b: any) => b.type === "text")
+      .map((b: any) => b.text)
+      .join("")
+      .trim()
+      .replace(/^["'「『]|["'」』]$/g, "")
+      .slice(0, 40);
+    if (raw === "无" || raw === "无。") raw = "";
+    send("evt:suggest", { sid: id, text: raw });
+  } catch {
+    send("evt:suggest", { sid: id, text: "" });
+  } finally {
+    suggestInFlight.delete(id);
+  }
+}
+
 function createWindow() {
   const b = loadWindowBounds(); // 上次窗口尺寸/位置
   // 窗口/任务栏图标：dev 下 electron.exe 用默认图标，显式指向 build/icon.png；
@@ -1205,6 +1250,7 @@ ipcMain.on("chat:send", async (_e, sid: string, text: string, images?: string[])
     }
     persist(useId); // 该会话跑完落盘
     void emitAccount(); // 刷新余额/本会话已消耗(DeepSeek 等)
+    if (useId === currentId && !ac.signal.aborted) void suggestNextAction(useId); // 仅当前会话、正常跑完才提建议
   }
 });
 

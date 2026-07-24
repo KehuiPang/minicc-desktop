@@ -21,6 +21,7 @@ const EVENTS = [
   "evt:browser",
   "evt:browser-activity",
   "evt:browser-detached",
+  "evt:suggest",
 ] as const;
 
 contextBridge.exposeInMainWorld("minicc", {
