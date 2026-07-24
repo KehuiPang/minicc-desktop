@@ -36,8 +36,8 @@ contextBridge.exposeInMainWorld("minicc", {
   deleteSession: (id: string) => ipcRenderer.send("session:delete", id),
   setSessionGroup: (id: string, group?: string | null) =>
     ipcRenderer.send("session:set-group", id, group),
-  setSessionPriority: (id: string, priority: number) =>
-    ipcRenderer.send("session:set-priority", id, priority),
+  setSessionPriority: (id: string, priority: number, tag?: string) =>
+    ipcRenderer.send("session:set-priority", id, priority, tag),
   setSessionOrder: (id: string, order: number) =>
     ipcRenderer.send("session:set-order", id, order),
   reorderGroups: (names: string[]) => ipcRenderer.send("session:reorder-groups", names),

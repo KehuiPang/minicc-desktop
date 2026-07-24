@@ -20,7 +20,8 @@ export interface SessionMeta {
   updatedAt: number;
   usage?: { totalInput: number; totalOutput: number; lastInput: number };
   group?: string; // 所属分组名；空=未分组
-  priority?: number; // 优先级：数字越大越靠前(默认 0)
+  priority?: number; // 优先级排序权重：数字越大越靠前(默认 0)
+  priorityTag?: string; // 优先级显示短标签(高/中/低 或 四象限缩写)；与 priority 权重配对
   order?: number; // 手动拖拽排序键(同优先级内按此升序；未拖过=按 -updatedAt)
   project?: string; // AI 推断的项目/主题(用于「按项目智能分组」)
 }
@@ -79,11 +80,12 @@ export function setSessionGroup(id: string, group?: string | null) {
   pruneGroups();
 }
 
-export function setSessionPriority(id: string, priority: number) {
+export function setSessionPriority(id: string, priority: number, tag?: string) {
   const l = listSessions();
   const s = l.find((x) => x.id === id);
   if (!s) return;
   s.priority = Number.isFinite(priority) ? priority : 0;
+  s.priorityTag = (tag || "").trim() || undefined;
   saveList(l);
 }
 
@@ -193,6 +195,7 @@ export function saveSession(
     usage,
     group: prev?.group,
     priority: prev?.priority,
+    priorityTag: prev?.priorityTag,
     order: prev?.order,
     project: prev?.project,
   });

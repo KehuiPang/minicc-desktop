@@ -1327,9 +1327,9 @@ ipcMain.on("session:set-group", (_e, id: string, group?: string | null) => {
   send("evt:groups", listGroups());
 });
 
-// 会话优先级：数字越大越靠前
-ipcMain.on("session:set-priority", (_e, id: string, priority: number) => {
-  setSessionPriority(id, priority);
+// 会话优先级：权重(数字大靠前) + 显示标签
+ipcMain.on("session:set-priority", (_e, id: string, priority: number, tag?: string) => {
+  setSessionPriority(id, priority, tag);
   send("evt:sessions", listSessions());
 });
 

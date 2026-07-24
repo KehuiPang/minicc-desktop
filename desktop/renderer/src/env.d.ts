@@ -8,7 +8,7 @@ export interface MiniccApi {
   switchSession(id: string): void;
   deleteSession(id: string): void;
   setSessionGroup(id: string, group?: string | null): void;
-  setSessionPriority(id: string, priority: number): void;
+  setSessionPriority(id: string, priority: number, tag?: string): void;
   setSessionOrder(id: string, order: number): void;
   reorderGroups(names: string[]): void;
   setGroupMode(mode: "manual" | "date" | "project"): void;

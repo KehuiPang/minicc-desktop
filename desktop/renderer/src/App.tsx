@@ -33,8 +33,26 @@ interface SessionMeta {
   updatedAt: number;
   group?: string;
   priority?: number;
+  priorityTag?: string;
   order?: number;
+  project?: string;
 }
+
+// 优先级方案：高/中/低 + 艾森豪威尔四象限。weight 用于排序(大在前)，tag=徽标短标签，label=全称
+const PRIO_HL = [
+  { tag: "高", weight: 3, label: "高" },
+  { tag: "中", weight: 2, label: "中" },
+  { tag: "低", weight: 1, label: "低" },
+];
+const PRIO_QUAD = [
+  { tag: "重急", weight: 4, label: "紧急重要" },
+  { tag: "重", weight: 3, label: "不紧急重要" },
+  { tag: "急", weight: 2, label: "紧急不重要" },
+  { tag: "缓", weight: 1, label: "不紧急不重要" },
+];
+const PRIO_TITLE: Record<string, string> = Object.fromEntries(
+  [...PRIO_HL, ...PRIO_QUAD].map((p) => [p.tag, p.label]),
+);
 
 const CTX_MAX = 1_000_000; // gpt-5.5 上下文窗口估算，用于占用条
 
@@ -751,6 +769,19 @@ export function App() {
 
   // ——— 侧栏分组/排序辅助 ———
   const orderKey = (s: SessionMeta) => (s.order != null ? s.order : -s.updatedAt);
+  // 相对时间(最新消息多久前)：随 now(每15s)更新
+  const relTime = (ts: number): string => {
+    const sec = Math.max(0, Math.floor((now - ts) / 1000));
+    if (sec < 60) return sec + "秒前";
+    const min = Math.floor(sec / 60);
+    if (min < 60) return min + "分钟前";
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return hr + "小时前";
+    const day = Math.floor(hr / 24);
+    if (day < 30) return day + "天前";
+    const mo = Math.floor(day / 30);
+    return mo < 12 ? mo + "个月前" : Math.floor(mo / 12) + "年前";
+  };
   // 组内排序：优先级(数字大在前) → 手动拖拽键(未拖过=按最近更新)
   const sortRows = (arr: SessionMeta[]) =>
     [...arr].sort((a, b) => (b.priority || 0) - (a.priority || 0) || orderKey(a) - orderKey(b));
@@ -949,12 +980,18 @@ export function App() {
                 }}
               >
                 {runningSet.has(s.id) && <span className="s-run" title="运行中" />}
-                {!!s.priority && (
-                  <span className="s-prio" title={"优先级 " + s.priority}>
-                    {s.priority}
+                {s.priorityTag && (
+                  <span
+                    className={"s-prio p" + (s.priority || 0)}
+                    title={PRIO_TITLE[s.priorityTag] || s.priorityTag}
+                  >
+                    {s.priorityTag}
                   </span>
                 )}
                 <span className="s-title">{s.title}</span>
+                <span className="s-time" title={new Date(s.updatedAt).toLocaleString()}>
+                  {relTime(s.updatedAt)}
+                </span>
                 <button
                   className="s-del"
                   onClick={(e) => {
@@ -1102,18 +1139,42 @@ export function App() {
                     </button>
                   )}
                   <div className="ctx-sep" />
-                  <div className="ctx-head">优先级（数字大靠前）</div>
+                  <div className="ctx-head">优先级</div>
                   <div className="ctx-prio">
-                    {[0, 1, 2, 3, 5].map((n) => (
+                    <button
+                      className={"ctx-prio-b" + (!s.priorityTag ? " on" : "")}
+                      onClick={() => {
+                        window.minicc.setSessionPriority(ctxMenu.sid, 0, "");
+                        close();
+                      }}
+                    >
+                      无
+                    </button>
+                    {PRIO_HL.map((p) => (
                       <button
-                        key={n}
-                        className={"ctx-prio-b" + ((s.priority || 0) === n ? " on" : "")}
+                        key={p.tag}
+                        className={"ctx-prio-b" + (s.priorityTag === p.tag ? " on" : "")}
                         onClick={() => {
-                          window.minicc.setSessionPriority(ctxMenu.sid, n);
+                          window.minicc.setSessionPriority(ctxMenu.sid, p.weight, p.tag);
                           close();
                         }}
                       >
-                        {n === 0 ? "无" : n}
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="ctx-head">四象限（重要/紧急）</div>
+                  <div className="ctx-quad">
+                    {PRIO_QUAD.map((p) => (
+                      <button
+                        key={p.tag}
+                        className={"ctx-quad-b p" + p.weight + (s.priorityTag === p.tag ? " on" : "")}
+                        onClick={() => {
+                          window.minicc.setSessionPriority(ctxMenu.sid, p.weight, p.tag);
+                          close();
+                        }}
+                      >
+                        {p.label}
                       </button>
                     ))}
                   </div>
