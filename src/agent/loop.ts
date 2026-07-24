@@ -34,6 +34,56 @@ export interface AgentHooks {
   onRateLimits?(rl: import("../types.js").RateLimits): void; // 订阅额度快照
   onCompact?(before: number, after: number): void; // 压缩发生时回报条数变化
   onStep?(): void; // 每完成一段(助手消息/工具结果)后回调：用于即时落盘，重启不丢进度
+  onRecover?(cleanedText: string): void; // 模型把工具调用当文本吐出→兜底解析后，回传清理后的正文供前端修正显示
+}
+
+// 兜底：模型偶尔把工具调用写成文本(<invoke name="x"><parameter name="y">…</parameter></invoke>)，
+// 导致没有结构化 tool_use → 循环判定"结束"而自动停止，且屏上留一堆 XML 符号。
+// 这里把这种泄漏的调用解析回来，转成真正的 tool_use 去执行，并给出去掉 XML 的干净正文。
+function recoverLeakedToolCalls(
+  content: ContentBlock[],
+): { toolUses: Extract<ContentBlock, { type: "tool_use" }>[]; newContent: ContentBlock[] } | null {
+  const text = content
+    .filter((b) => b.type === "text")
+    .map((b: any) => b.text)
+    .join("");
+  if (!/<(?:antml:)?invoke\s+name=/.test(text)) return null;
+  const invokeRe = /<(?:antml:)?invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/(?:antml:)?invoke>/g;
+  const toolUses: any[] = [];
+  let m: RegExpExecArray | null;
+  let i = 0;
+  while ((m = invokeRe.exec(text))) {
+    const name = m[1];
+    const inner = m[2];
+    const input: Record<string, unknown> = {};
+    const paramRe = /<(?:antml:)?parameter\s+name="([^"]+)"\s*>([\s\S]*?)<\/(?:antml:)?parameter>/g;
+    let p: RegExpExecArray | null;
+    while ((p = paramRe.exec(inner))) {
+      const key = p[1];
+      const t = String(p[2]).trim();
+      let val: unknown = p[2];
+      if (/^-?\d+(\.\d+)?$/.test(t)) val = Number(t);
+      else if (t === "true" || t === "false") val = t === "true";
+      else if (/^[[{]/.test(t)) {
+        try {
+          val = JSON.parse(t);
+        } catch {
+          /* 保留原字符串 */
+        }
+      }
+      input[key] = val;
+    }
+    toolUses.push({ type: "tool_use", id: `leak_${Date.now()}_${i++}`, name, input });
+  }
+  if (!toolUses.length) return null;
+  const cleanedText = text
+    .replace(/<(?:antml:)?function_calls>[\s\S]*?<\/(?:antml:)?function_calls>/g, "")
+    .replace(/<(?:antml:)?invoke\s+name="[^"]+"\s*>[\s\S]*?<\/(?:antml:)?invoke>/g, "")
+    .trim();
+  const newContent: ContentBlock[] = [];
+  if (cleanedText) newContent.push({ type: "text", text: cleanedText } as ContentBlock);
+  newContent.push(...(toolUses as ContentBlock[]));
+  return { toolUses: toolUses as any, newContent };
 }
 
 export class Agent {
@@ -158,9 +208,24 @@ export class Agent {
       this.messages.push({ role: "assistant", content: result.content, ts: Date.now() });
       hooks.onStep?.(); // 助手段落已入历史，即时落盘(重启不丢)
 
-      const toolUses = result.content.filter(
+      let toolUses = result.content.filter(
         (b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use",
       );
+
+      // 兜底：没有结构化 tool_use 时，看是否把工具调用当文本写出来了(<invoke …>)，是则解析回来执行、继续跑
+      if (toolUses.length === 0) {
+        const recovered = recoverLeakedToolCalls(result.content);
+        if (recovered) {
+          toolUses = recovered.toolUses;
+          this.messages[this.messages.length - 1] = {
+            role: "assistant",
+            content: recovered.newContent,
+            ts: Date.now(),
+          };
+          const cleaned = recovered.newContent.find((b) => b.type === "text") as any;
+          hooks.onRecover?.(cleaned?.text || ""); // 让前端把屏上那串 XML 换成干净正文
+        }
+      }
 
       if (toolUses.length === 0) {
         // 助手已给出无工具的回复：若期间用户注入了新需求，接着处理它(不结束本回合)

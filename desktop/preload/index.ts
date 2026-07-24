@@ -23,6 +23,7 @@ const EVENTS = [
   "evt:browser-detached",
   "evt:suggest",
   "evt:groups",
+  "evt:assistant-replace",
 ] as const;
 
 contextBridge.exposeInMainWorld("minicc", {

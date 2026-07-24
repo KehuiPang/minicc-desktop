@@ -1255,6 +1255,10 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
           streamDrafts.delete(useId); // 该段已进历史，清草稿
           persistQuiet(useId); // 即时落盘真实消息(每段/每工具轮)
         },
+        onRecover: (cleaned) => {
+          streamDrafts.delete(useId);
+          send("evt:assistant-replace", { sid: useId, text: cleaned }); // 前端把泄漏的 XML 换成干净正文
+        },
         onToolStart: (id, name, input) => send("evt:tool-start", { sid: useId, id, name, input }),
         onToolEnd: (id, result, isError) => send("evt:tool-end", { sid: useId, id, result, isError }),
         requestPermission: (tool, input) =>

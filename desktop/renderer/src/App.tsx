@@ -608,6 +608,21 @@ export function App() {
         case "evt:suggest":
           if (payload.sid === currentIdRef.current) setSuggestion(payload.text || "");
           break;
+        case "evt:assistant-replace":
+          // 兜底恢复泄漏工具调用后：把屏上那条 assistant 的 XML 文本换成干净正文
+          if (payload.sid !== currentIdRef.current) break;
+          flushDelta(true);
+          setItems((p) => {
+            const c = [...p];
+            for (let k = c.length - 1; k >= 0; k--) {
+              if (c[k].type === "assistant") {
+                c[k] = { ...(c[k] as any), text: payload.text };
+                break;
+              }
+            }
+            return c;
+          });
+          break;
         case "evt:compact":
           if (payload.sid !== currentIdRef.current) break;
           push({ type: "notice", text: `上下文已压缩：${payload.before} → ${payload.after} 条消息` });
