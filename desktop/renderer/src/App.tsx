@@ -36,6 +36,7 @@ interface SessionMeta {
   priorityTag?: string;
   order?: number;
   project?: string;
+  done?: boolean;
 }
 
 // 优先级方案：高/中/低 + 艾森豪威尔四象限。weight 用于排序(大在前)，tag=徽标短标签，label=全称
@@ -186,6 +187,7 @@ export function App() {
   streamSpeedRef.current = streamSpeed;
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [ctxMenu, setCtxMenu] = useState<{ sid: string; x: number; y: number } | null>(null); // 会话右键菜单
+  const [groupCtx, setGroupCtx] = useState<{ name: string; x: number; y: number } | null>(null); // 分组右键菜单
   const [dragId, setDragId] = useState<string | null>(null); // 正在拖拽的会话 id
   const [dragOverId, setDragOverId] = useState<string | null>(null); // 拖到哪个会话上(高亮)
   const [dragGroup, setDragGroup] = useState<string | null>(null); // 正在拖拽的组名
@@ -794,9 +796,14 @@ export function App() {
     const mo = Math.floor(day / 30);
     return mo < 12 ? mo + "个月前" : Math.floor(mo / 12) + "年前";
   };
-  // 组内排序：优先级(数字大在前) → 手动拖拽键(未拖过=按最近更新)
+  // 组内排序：已完成沉底 → 优先级(数字大在前) → 手动拖拽键(未拖过=按最近更新)
   const sortRows = (arr: SessionMeta[]) =>
-    [...arr].sort((a, b) => (b.priority || 0) - (a.priority || 0) || orderKey(a) - orderKey(b));
+    [...arr].sort(
+      (a, b) =>
+        (a.done ? 1 : 0) - (b.done ? 1 : 0) ||
+        (b.priority || 0) - (a.priority || 0) ||
+        orderKey(a) - orderKey(b),
+    );
   // 日期分组的桶名 + 排序权重
   const dateBucket = (ts: number): string => {
     const d = new Date(ts);
@@ -971,6 +978,7 @@ export function App() {
                 className={
                   "session-item" +
                   (s.id === currentId ? " active" : "") +
+                  (s.done ? " done" : "") +
                   (s.id === dragId ? " dragging" : "") +
                   (s.id === dragOverId ? " drag-over" : "")
                 }
@@ -1005,6 +1013,7 @@ export function App() {
                     {s.priorityTag}
                   </span>
                 )}
+                {s.done && <span className="s-done" title="已完成">✓</span>}
                 <span className="s-title">{s.title}</span>
                 <span className="s-time" title={new Date(s.updatedAt).toLocaleString()}>
                   {relTime(s.updatedAt)}
@@ -1073,6 +1082,10 @@ export function App() {
                             return n;
                           })
                         }
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          setGroupCtx({ name: g, x: e.clientX, y: e.clientY });
+                        }}
                       >
                         <span className="group-caret">{collapsed ? "▸" : "▾"}</span>
                         <span className="group-name" title={g}>
@@ -1116,6 +1129,16 @@ export function App() {
                   }}
                 />
                 <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
+                  <button
+                    className="ctx-item ctx-done"
+                    onClick={() => {
+                      window.minicc.setSessionDone(ctxMenu.sid, !s.done);
+                      close();
+                    }}
+                  >
+                    {s.done ? "↩ 取消完成" : "✓ 标记完成"}
+                  </button>
+                  <div className="ctx-sep" />
                   <div className="ctx-head">移动到分组</div>
                   {groups
                     .filter((g) => g !== s.group)
@@ -1195,6 +1218,35 @@ export function App() {
                       </button>
                     ))}
                   </div>
+                </div>
+              </>
+            );
+          })()}
+        {groupCtx &&
+          (() => {
+            const close = () => setGroupCtx(null);
+            return (
+              <>
+                <div
+                  className="ctx-overlay"
+                  onClick={close}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    close();
+                  }}
+                />
+                <div className="ctx-menu" style={{ left: groupCtx.x, top: groupCtx.y }}>
+                  <div className="ctx-head">分组「{groupCtx.name}」</div>
+                  <button
+                    className="ctx-item ctx-new"
+                    onClick={() => {
+                      const ids = sessions.filter((s) => groupOf(s) === groupCtx.name).map((s) => s.id);
+                      window.minicc.generateReport(groupCtx.name, ids);
+                      close();
+                    }}
+                  >
+                    📋 一键生成日报
+                  </button>
                 </div>
               </>
             );

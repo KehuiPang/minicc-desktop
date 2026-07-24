@@ -24,6 +24,7 @@ export interface SessionMeta {
   priorityTag?: string; // 优先级显示短标签(高/中/低 或 四象限缩写)；与 priority 权重配对
   order?: number; // 手动拖拽排序键(同优先级内按此升序；未拖过=按 -updatedAt)
   project?: string; // AI 推断的项目/主题(用于「按项目智能分组」)
+  done?: boolean; // 已完成：排到最后、置灰
 }
 
 function ensure() {
@@ -104,6 +105,15 @@ export function setSessionProject(id: string, project: string) {
   const s = l.find((x) => x.id === id);
   if (!s) return;
   s.project = (project || "").trim() || undefined;
+  saveList(l);
+}
+
+// 标记已完成(排到最后、置灰)
+export function setSessionDone(id: string, done: boolean) {
+  const l = listSessions();
+  const s = l.find((x) => x.id === id);
+  if (!s) return;
+  s.done = !!done || undefined;
   saveList(l);
 }
 
@@ -198,6 +208,7 @@ export function saveSession(
     priorityTag: prev?.priorityTag,
     order: prev?.order,
     project: prev?.project,
+    done: prev?.done,
   });
   saveList(l);
 }

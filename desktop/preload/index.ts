@@ -42,7 +42,10 @@ contextBridge.exposeInMainWorld("minicc", {
     ipcRenderer.send("session:set-priority", id, priority, tag),
   setSessionOrder: (id: string, order: number) =>
     ipcRenderer.send("session:set-order", id, order),
+  setSessionDone: (id: string, done: boolean) => ipcRenderer.send("session:set-done", id, done),
   reorderGroups: (names: string[]) => ipcRenderer.send("session:reorder-groups", names),
+  generateReport: (group: string, sessionIds: string[]) =>
+    ipcRenderer.send("report:generate", group, sessionIds),
   setGroupMode: (mode: "manual" | "date" | "project") =>
     ipcRenderer.send("settings:set-group-mode", mode),
   setStreamOutput: (mode: "typewriter" | "stream" | "instant", speed: number) =>

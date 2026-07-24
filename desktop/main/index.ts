@@ -40,6 +40,7 @@ import {
   setSessionOrder,
   setSessionProject,
   setGroupsOrder,
+  setSessionDone,
 } from "./sessions.js";
 import {
   loadSettings,
@@ -1207,15 +1208,15 @@ app.on("window-all-closed", () => {
 
 // —— IPC：渲染 → 主 ——
 // 多任务：sid 指定跑哪个会话(前端传 currentId)，各会话各自异步、互不阻塞。事件都带 sid，前端只把当前可见会话的更新画出来。
-async function startTurn(useId: string, text: string, images?: string[]) {
+async function startTurn(useId: string, text: string, images?: string[], sysOverride?: string) {
   const agent = getAgent(useId);
   if (!agent) {
     send("evt:error", { sid: useId, message: "未初始化：缺少模型凭证。请确认 ~/.codex/auth.json 或设置 API key 后重启。" });
     return;
   }
   if (runs.has(useId)) return; // 该会话已在跑，忽略重复提交
-  // 每轮开跑前刷新系统提示词，让上一轮 remember 写入的记忆立即生效
-  agent.setSystem(buildSysPrompt(cwd, modelLabel, loadSettings()?.providerId));
+  // 每轮开跑前刷新系统提示词，让上一轮 remember 写入的记忆立即生效(日报等场景用 sysOverride 注入聚合内容)
+  agent.setSystem(sysOverride ?? buildSysPrompt(cwd, modelLabel, loadSettings()?.providerId));
   const ac = new AbortController();
   runs.set(useId, ac);
   emitTasks();
@@ -1311,6 +1312,46 @@ ipcMain.on("session:new", () => {
   void emitAccount();
 });
 
+// 一键生成日报：把某分组下(前端算好的会话 id 列表)所有会话内容聚合，新开一个会话让 AI 梳理成日报
+ipcMain.on("report:generate", (_e, group: string, sessionIds: string[]) => {
+  const ids = Array.isArray(sessionIds) ? sessionIds : [];
+  if (!ids.length) return;
+  const metas = listSessions();
+  // 每个会话取标题 + 正文文本(取末尾最新进展，单会话截断防超长)
+  const digest = ids
+    .map((id) => {
+      const meta = metas.find((s) => s.id === id);
+      const body = loadMessages(id)
+        .map((m: any) => {
+          const t = (m.content || [])
+            .filter((b: any) => b.type === "text")
+            .map((b: any) => b.text)
+            .join(" ")
+            .trim();
+          return t ? `${m.role === "user" ? "我" : "助手"}：${t}` : "";
+        })
+        .filter(Boolean)
+        .join("\n")
+        .slice(-2000); // 取末尾(最新进展)，单会话上限约 2000 字
+      return `【${meta?.title || "对话"}】\n${body || "(暂无文字内容)"}`;
+    })
+    .join("\n\n----\n\n");
+
+  const sys =
+    `你是工作日报助手。下面是「${group}」分组下今天多个工作会话的内容。当用户要求生成日报时，` +
+    `请按项目/重点条理清晰地梳理成一份精简中文日报，分三部分：` +
+    `✅ 今日进展与成果（按项目/重点一条条罗列）、📌 待办（接下来要做的）、⚠️ 遗留问题/风险。` +
+    `要求：精简概要、突出重点、条目式，不要逐字复述细节。\n\n=== 会话内容 ===\n${digest}`;
+
+  // 新开会话并切过去
+  const sid = randomUUID();
+  currentId = sid;
+  getAgent(sid);
+  send("evt:session-loaded", { id: sid, messages: [] });
+  sendUsageFor(sid);
+  void startTurn(sid, `请生成「${group}」今天的工作日报。`, undefined, sys);
+});
+
 ipcMain.on("session:switch", (_e, id: string) => {
   currentId = id;
   const a = getAgent(id);
@@ -1358,6 +1399,12 @@ ipcMain.on("session:set-order", (_e, id: string, order: number) => {
 ipcMain.on("session:reorder-groups", (_e, names: string[]) => {
   setGroupsOrder(names);
   send("evt:groups", listGroups());
+});
+
+// 标记已完成(排到最后、置灰)
+ipcMain.on("session:set-done", (_e, id: string, done: boolean) => {
+  setSessionDone(id, done);
+  send("evt:sessions", listSessions());
 });
 
 // 删除某一轮问答(第 ordinal 条用户输入及其后到下一条用户输入之间的全部消息=该轮回复)

@@ -2917,3 +2917,9 @@ body {
   word-break: break-word;
   overflow-wrap: anywhere;
 }
+
+/* ===== 已完成会话：置灰 + 删除线，排到最后 ===== */
+.session-item.done .s-title { text-decoration: line-through; color: var(--text-muted); opacity: 0.75; }
+.session-item.done { opacity: 0.7; }
+.s-done { flex: 0 0 auto; color: #5aa469; font-size: 11px; font-weight: 700; }
+.ctx-done { color: #5aa469; }
