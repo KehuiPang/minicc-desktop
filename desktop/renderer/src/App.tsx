@@ -4635,6 +4635,8 @@ function AppSettingsModal({
   streamMode,
   streamSpeed,
   onStream,
+  keepRecent,
+  onKeepRecent,
 }: {
   onClose: () => void;
   groupMode: "manual" | "date" | "project";
