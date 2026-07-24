@@ -1,0 +1,525 @@
+// Provider 实现：把统一的 Message/Tool 语义翻译到具体后端。
+// - AnthropicProvider：原生 Anthropic Messages API（流式）
+// - OpenAIProvider：任意 OpenAI 兼容 /chat/completions（本地 vLLM 等），做消息与工具的双向转换
+import Anthropic from "@anthropic-ai/sdk";
+import { randomUUID } from "node:crypto";
+import type { Config } from "../config.js";
+import type {
+  ContentBlock,
+  Message,
+  Provider,
+  ProviderResult,
+  ProviderStreamHandlers,
+  ToolSpec,
+} from "../types.js";
+
+// Claude Code 订阅版(OAuth) 请求时，服务端要求 system 首段是官方身份，否则拒绝。
+const CLAUDE_CODE_IDENTITY =
+  "You are Claude Code, Anthropic's official CLI for Claude.";
+
+// ---------- Anthropic（同时支持 api-key 与订阅 OAuth）----------
+class AnthropicProvider implements Provider {
+  name = "anthropic";
+  private client: Anthropic;
+  private oauth: boolean;
+  private lastHeaders?: Headers; // 每次响应头(用于解析订阅额度)
+  constructor(private cfg: Config) {
+    this.oauth = cfg.authMode === "oauth";
+    // 自定义 fetch：截获响应头，供 complete 后解析订阅额度(anthropic-ratelimit-*)
+    const capFetch = async (url: any, init?: any): Promise<Response> => {
+      const res = await fetch(url, init);
+      try {
+        this.lastHeaders = res.headers;
+      } catch {
+        /* ignore */
+      }
+      return res;
+    };
+    if (this.oauth) {
+      // 订阅 OAuth：Authorization: Bearer <token> + anthropic-beta:oauth；不带 x-api-key
+      this.client = new Anthropic({
+        authToken: cfg.oauthToken,
+        baseURL: cfg.baseUrl,
+        defaultHeaders: { "anthropic-beta": cfg.anthropicBeta },
+        fetch: capFetch,
+      });
+    } else {
+      this.client = new Anthropic({ apiKey: cfg.apiKey, baseURL: cfg.baseUrl, fetch: capFetch });
+    }
+  }
+
+  async complete(
+    system: string,
+    messages: Message[],
+    tools: ToolSpec[],
+    handlers: ProviderStreamHandlers,
+  ): Promise<ProviderResult> {
+    // OAuth 模式：system 拆成 [官方身份, 我们的提示词] 两个 text block；
+    // 提示词为空时不能发空文本块(Anthropic 拒收空 text→400)，只保留身份块。
+    const systemParam: string | Anthropic.TextBlockParam[] = this.oauth
+      ? [
+          { type: "text", text: CLAUDE_CODE_IDENTITY },
+          ...(system && system.trim()
+            ? [{ type: "text", text: system } as Anthropic.TextBlockParam]
+            : []),
+        ]
+      : system;
+
+    const stream = this.client.messages.stream(
+      {
+        model: this.cfg.model,
+        max_tokens: this.cfg.maxTokens,
+        system: systemParam,
+        messages: toAnthropicMessages(messages),
+      tools: tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
+        })),
+      },
+      { signal: handlers.signal },
+    );
+
+    stream.on("text", (delta) => handlers.onText?.(delta));
+    const final = await stream.finalMessage();
+
+    const content: ContentBlock[] = [];
+    for (const block of final.content) {
+      if (block.type === "text") content.push({ type: "text", text: block.text });
+      else if (block.type === "tool_use")
+        content.push({
+          type: "tool_use",
+          id: block.id,
+          name: block.name,
+          input: block.input as Record<string, unknown>,
+        });
+    }
+    const stopReason =
+      final.stop_reason === "tool_use"
+        ? "tool_use"
+        : final.stop_reason === "max_tokens"
+          ? "max_tokens"
+          : final.stop_reason === "end_turn"
+            ? "end_turn"
+            : "other";
+    return {
+      content,
+      stopReason,
+      usage: {
+        inputTokens: final.usage?.input_tokens ?? 0,
+        outputTokens: final.usage?.output_tokens ?? 0,
+      },
+      rateLimits: this.oauth ? parseUnifiedRate(this.lastHeaders) : undefined,
+    };
+  }
+}
+
+// 解析 Claude 订阅(OAuth)响应头里的统一额度(账号级共享，和 Claude Code 同一池)
+// 真实头(实测)：anthropic-ratelimit-unified-{5h,7d}-utilization=已用比例(0~1) / -reset=epoch 秒
+function parseUnifiedRate(H?: Headers): ProviderResult["rateLimits"] | undefined {
+  if (!H) return undefined;
+  const usedPct = (k: string) => {
+    const v = H.get(k);
+    return v == null || v === "" ? undefined : Math.round(Number(v) * 100);
+  };
+  const resetSecs = (k: string) => {
+    const v = H.get(k);
+    if (!v) return undefined;
+    const n = Number(v); // epoch 秒
+    return Number.isNaN(n) ? undefined : Math.max(0, Math.round(n - Date.now() / 1000));
+  };
+  const p5 = usedPct("anthropic-ratelimit-unified-5h-utilization");
+  const pw = usedPct("anthropic-ratelimit-unified-7d-utilization");
+  if (p5 == null && pw == null) return undefined;
+  return {
+    primaryUsedPercent: p5,
+    primaryWindowMinutes: 300,
+    primaryResetAfterSeconds: resetSecs("anthropic-ratelimit-unified-5h-reset"),
+    secondaryUsedPercent: pw,
+    secondaryWindowMinutes: 7 * 24 * 60,
+    secondaryResetAfterSeconds: resetSecs("anthropic-ratelimit-unified-7d-reset"),
+  };
+}
+
+// ---------- OpenAI 兼容（本地模型/vLLM） ----------
+class OpenAIProvider implements Provider {
+  name = "openai";
+  constructor(private cfg: Config) {}
+
+  async complete(
+    system: string,
+    messages: Message[],
+    tools: ToolSpec[],
+    handlers: ProviderStreamHandlers,
+  ): Promise<ProviderResult> {
+    // 视觉模型才发真图片，否则图片转文本占位(如 deepseek 纯文本模型不认 image_url)
+    const vision =
+      /gpt-4o|gpt-4\.1|gpt-5|\bo3\b|\bo4|vl\b|vision|omni|internvl|qwen3?-?vl|glm-[\d.]*v|grok-4|kimi-latest|hunyuan-vision|minicpm-v/i.test(
+        this.cfg.model,
+      ) || this.cfg.vision === true;
+    const oaMessages = toOpenAIMessages(system, messages, vision);
+    // 某些自建 vLLM 未开 --enable-auto-tool-choice，一带 tools 就 400；可用 disableTools 退化为纯对话
+    const noTools = this.cfg.disableTools === true;
+    const oaTools = noTools
+      ? []
+      : tools.map((t) => ({
+      type: "function",
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.inputSchema,
+      },
+    }));
+
+    const base = (this.cfg.baseUrl ?? "http://localhost:8000/v1").replace(/\/$/, "");
+    // 小上下文模型(如 8192 窗口的本地 vLLM)：若输出上限≥窗口，会把上下文顶满导致输入没空间报400。
+    // 此时不发 max_tokens，让服务端按 (窗口 - 输入) 自适应，绝不越界。
+    const ctxWin = this.cfg.contextWindow || 0;
+    const sendMaxTokens = ctxWin && this.cfg.maxTokens >= ctxWin ? undefined : this.cfg.maxTokens;
+    const res = await fetch(`${base}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.cfg.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.cfg.model,
+        max_tokens: sendMaxTokens,
+        messages: oaMessages,
+        tools: oaTools.length ? oaTools : undefined,
+        stream: true, // SSE 流式：文字实时逐字打印
+        stream_options: { include_usage: true }, // 末尾块带 usage
+      }),
+      signal: handlers.signal,
+    });
+    if (!res.ok || !res.body) {
+      throw new Error(`OpenAI 兼容端点报错 ${res.status}: ${await res.text()}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let text = "";
+    let sawTool = false;
+    const toolAcc: Record<number, { id?: string; name?: string; args: string }> = {};
+    let usage: {
+      inputTokens: number;
+      outputTokens: number;
+      cacheHitTokens?: number;
+      cacheMissTokens?: number;
+    } = { inputTokens: 0, outputTokens: 0 };
+
+    outer: while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        const s = line.trim();
+        if (!s.startsWith("data:")) continue;
+        const payload = s.slice(5).trim();
+        if (payload === "[DONE]") break outer;
+        let j: any;
+        try {
+          j = JSON.parse(payload);
+        } catch {
+          continue;
+        }
+        if (j.usage) {
+          const inTok = j.usage.prompt_tokens ?? 0;
+          // DeepSeek 等返回缓存命中/未命中明细；缺失则按全部未命中兜底
+          const hit = j.usage.prompt_cache_hit_tokens ?? j.usage.prompt_tokens_details?.cached_tokens;
+          const cacheHit = typeof hit === "number" ? hit : 0;
+          const cacheMiss =
+            typeof j.usage.prompt_cache_miss_tokens === "number"
+              ? j.usage.prompt_cache_miss_tokens
+              : Math.max(0, inTok - cacheHit);
+          usage = {
+            inputTokens: inTok,
+            outputTokens: j.usage.completion_tokens ?? 0,
+            cacheHitTokens: cacheHit,
+            cacheMissTokens: cacheMiss,
+          };
+        }
+        const ch = j.choices?.[0];
+        if (!ch) continue;
+        const d = ch.delta ?? {};
+        if (typeof d.content === "string" && d.content) {
+          text += d.content;
+          handlers.onText?.(d.content); // 逐块推给渲染进程
+        }
+        for (const tc of d.tool_calls ?? []) {
+          sawTool = true;
+          const idx = tc.index ?? 0;
+          const acc = (toolAcc[idx] ??= { args: "" });
+          if (tc.id) acc.id = tc.id;
+          if (tc.function?.name) acc.name = tc.function.name;
+          if (tc.function?.arguments) acc.args += tc.function.arguments;
+        }
+      }
+    }
+
+    const content: ContentBlock[] = [];
+    if (text) content.push({ type: "text", text });
+    for (const idx of Object.keys(toolAcc).map(Number).sort((a, b) => a - b)) {
+      const acc = toolAcc[idx];
+      let input: Record<string, unknown> = {};
+      try {
+        input = JSON.parse(acc.args || "{}");
+      } catch {
+        input = {};
+      }
+      content.push({
+        type: "tool_use",
+        id: acc.id ?? `call_${idx}`,
+        name: acc.name ?? "unknown",
+        input,
+      });
+    }
+    return { content, stopReason: sawTool ? "tool_use" : "end_turn", usage };
+  }
+}
+
+// data:image/png;base64,xxx → { mediaType, data }
+function parseDataUrl(d: string): { mediaType: string; data: string } {
+  const m = d.match(/^data:([^;]+);base64,(.*)$/);
+  return m ? { mediaType: m[1], data: m[2] } : { mediaType: "image/png", data: d };
+}
+
+// 统一 Message[] → Anthropic 格式（text/tool_use/tool_result 直通，image 转 base64 source）
+function toAnthropicMessages(messages: Message[]): Anthropic.MessageParam[] {
+  return messages.map((m) => ({
+    role: m.role,
+    content: m.content.map((b) => {
+      if (b.type === "image") {
+        const { mediaType, data } = parseDataUrl(b.dataUrl);
+        return { type: "image", source: { type: "base64", media_type: mediaType, data } };
+      }
+      return b;
+    }),
+  })) as unknown as Anthropic.MessageParam[];
+}
+
+// 把统一 Message[] 转成 OpenAI chat 格式；vision=false 时图片转文本占位(纯文本模型不认 image_url)
+function toOpenAIMessages(system: string, messages: Message[], vision: boolean): any[] {
+  // system 为空时不发空的 system 消息（部分端点如 Kimi Code 会 400: system must not be empty）
+  const out: any[] = system && system.trim() ? [{ role: "system", content: system }] : [];
+  for (const m of messages) {
+    if (m.role === "assistant") {
+      const text = m.content
+        .filter((b) => b.type === "text")
+        .map((b) => (b as any).text)
+        .join("");
+      const toolCalls = m.content
+        .filter((b) => b.type === "tool_use")
+        .map((b: any) => ({
+          id: b.id,
+          type: "function",
+          function: { name: b.name, arguments: JSON.stringify(b.input) },
+        }));
+      const am: any = { role: "assistant", content: text || null };
+      if (toolCalls.length) am.tool_calls = toolCalls;
+      out.push(am);
+    } else {
+      // user：可能是纯文本、图片，或若干 tool_result
+      const toolResults = m.content.filter((b) => b.type === "tool_result");
+      if (toolResults.length) {
+        for (const r of toolResults as any[]) {
+          out.push({ role: "tool", tool_call_id: r.tool_use_id, content: r.content });
+        }
+        const text = m.content
+          .filter((b) => b.type === "text")
+          .map((b: any) => b.text)
+          .join("");
+        if (text) out.push({ role: "user", content: text });
+      } else {
+        const images = m.content.filter((b) => b.type === "image") as any[];
+        const text = m.content
+          .filter((b) => b.type === "text")
+          .map((b: any) => b.text)
+          .join("");
+        if (images.length && vision) {
+          const parts: any[] = [];
+          if (text) parts.push({ type: "text", text });
+          for (const im of images) parts.push({ type: "image_url", image_url: { url: im.dataUrl } });
+          out.push({ role: "user", content: parts });
+        } else if (images.length) {
+          // 纯文本模型：图片转占位文本，避免 image_url 报 400 卡死历史
+          const note = images.map(() => "[图片]").join(" ");
+          out.push({ role: "user", content: text ? `${text}\n${note}` : note });
+        } else {
+          out.push({ role: "user", content: text });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// ---------- Codex 订阅版（ChatGPT 登录，Responses API）----------
+// 真机验证要点：endpoint=chatgpt.com/backend-api/codex/responses；
+// 头需 Authorization:Bearer + chatgpt-account-id + originator:codex_cli_rs；
+// body 走 Responses 格式(input/instructions/扁平 tools)；model 用主线名 gpt-5.5。
+class CodexProvider implements Provider {
+  name = "codex";
+  constructor(private cfg: Config) {}
+
+  async complete(
+    system: string,
+    messages: Message[],
+    tools: ToolSpec[],
+    handlers: ProviderStreamHandlers,
+  ): Promise<ProviderResult> {
+    const body = {
+      model: this.cfg.model,
+      instructions: system, // Responses 用 instructions 而非 system
+      input: toResponsesInput(messages),
+      tools: tools.map((t) => ({
+        type: "function",
+        name: t.name,
+        description: t.description,
+        parameters: t.inputSchema,
+        strict: false,
+      })),
+      tool_choice: "auto",
+      parallel_tool_calls: true,
+      store: false,
+      stream: true,
+      reasoning: { effort: "medium" },
+    };
+
+    const res = await fetch(this.cfg.codexEndpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.cfg.codexToken}`,
+        "chatgpt-account-id": this.cfg.codexAccountId,
+        "OpenAI-Beta": "responses=experimental",
+        originator: "codex_cli_rs",
+        session_id: randomUUID(),
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        "User-Agent": "codex_cli_rs/0.0.0",
+      },
+      body: JSON.stringify(body),
+      signal: handlers.signal,
+    });
+
+    if (!res.ok || !res.body) {
+      throw new Error(`Codex 端点 ${res.status}: ${(await res.text()).slice(0, 400)}`);
+    }
+
+    // 订阅额度：从响应头读取（primary=5小时窗口，secondary=周窗口）
+    const H = res.headers;
+    const numH = (k: string) => {
+      const v = H.get(k);
+      return v === null || v === "" ? undefined : Number(v);
+    };
+    const rateLimits = {
+      planType: H.get("x-codex-plan-type") ?? undefined,
+      primaryUsedPercent: numH("x-codex-primary-used-percent"),
+      primaryWindowMinutes: numH("x-codex-primary-window-minutes"),
+      primaryResetAfterSeconds: numH("x-codex-primary-reset-after-seconds"),
+      secondaryUsedPercent: numH("x-codex-secondary-used-percent"),
+      secondaryWindowMinutes: numH("x-codex-secondary-window-minutes"),
+      secondaryResetAfterSeconds: numH("x-codex-secondary-reset-after-seconds"),
+      creditsBalance: H.get("x-codex-credits-balance") || undefined,
+      creditsUnlimited: H.get("x-codex-credits-unlimited") === "True",
+    };
+
+    // 解析 Responses SSE，累积文本与 function_call
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    const content: ContentBlock[] = [];
+    let curText = "";
+    let usage = { inputTokens: 0, outputTokens: 0 };
+    const toolCalls: { call_id: string; name: string; args: string }[] = [];
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split("\n\n");
+      buf = parts.pop() ?? "";
+      for (const block of parts) {
+        for (const line of block.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          const data = line.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+          let ev: any;
+          try {
+            ev = JSON.parse(data);
+          } catch {
+            continue;
+          }
+          if (ev.type === "response.output_text.delta" && ev.delta) {
+            curText += ev.delta;
+            handlers.onText?.(ev.delta);
+          } else if (ev.type === "response.output_item.done" && ev.item?.type === "function_call") {
+            toolCalls.push({
+              call_id: ev.item.call_id,
+              name: ev.item.name,
+              args: ev.item.arguments ?? "{}",
+            });
+          } else if (ev.type === "response.completed" && ev.response?.usage) {
+            usage = {
+              inputTokens: ev.response.usage.input_tokens ?? 0,
+              outputTokens: ev.response.usage.output_tokens ?? 0,
+            };
+          } else if (ev.type === "error" || ev.type === "response.failed") {
+            throw new Error(`Codex 流错误: ${JSON.stringify(ev).slice(0, 300)}`);
+          }
+        }
+      }
+    }
+
+    if (curText) content.push({ type: "text", text: curText });
+    for (const tc of toolCalls) {
+      let input: Record<string, unknown> = {};
+      try {
+        input = JSON.parse(tc.args);
+      } catch {
+        input = {};
+      }
+      content.push({ type: "tool_use", id: tc.call_id, name: tc.name, input });
+    }
+    return { content, stopReason: toolCalls.length ? "tool_use" : "end_turn", usage, rateLimits };
+  }
+}
+
+// 统一 Message[] → Responses input[]（tool_use→function_call，tool_result→function_call_output）
+function toResponsesInput(messages: Message[]): any[] {
+  const input: any[] = [];
+  for (const m of messages) {
+    if (m.role === "assistant") {
+      for (const b of m.content) {
+        if (b.type === "text" && b.text)
+          input.push({ role: "assistant", content: [{ type: "output_text", text: b.text }] });
+        else if (b.type === "tool_use")
+          input.push({
+            type: "function_call",
+            call_id: b.id,
+            name: b.name,
+            arguments: JSON.stringify(b.input),
+          });
+      }
+    } else {
+      // user：文本 / 图片 / 工具结果
+      for (const b of m.content) {
+        if (b.type === "tool_result")
+          input.push({ type: "function_call_output", call_id: b.tool_use_id, output: b.content });
+        else if (b.type === "text" && b.text)
+          input.push({ role: "user", content: [{ type: "input_text", text: b.text }] });
+        else if (b.type === "image")
+          input.push({ role: "user", content: [{ type: "input_image", image_url: b.dataUrl }] });
+      }
+    }
+  }
+  return input;
+}
+
+export function makeProvider(cfg: Config): Provider {
+  if (cfg.provider === "codex") return new CodexProvider(cfg);
+  return cfg.provider === "openai" ? new OpenAIProvider(cfg) : new AnthropicProvider(cfg);
+}
