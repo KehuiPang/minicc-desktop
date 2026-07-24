@@ -4,8 +4,9 @@
 //   - 明文态： {access_token,refresh_token,expires_at}  ← 旧版(B2)或 safeStorage 不可用时的回退
 // 读到明文态且本机可加密 → 自动转存为加密态（B3 兼容迁移，无需重登）。
 //
-// ⚠️ 跨端注意：CLI 端(纯 node, 非 Electron)无 safeStorage、读不了加密态。
-// 原「三端共享 auth.json」在加密后对 CLI 失效——此取舍待 CEO 定（是否 CLI 另存/是否放弃共享）。
+// 跨端取舍（CEO 已定·方案A）：不再追求三端共享 session，各端各自登录。
+// 桌面端此文件为 safeStorage 加密态；CLI 端(纯 node 无 safeStorage)若需要登录，自管其明文 token，
+// 二者互不读取。登录一次成本低，换来桌面端 token 加密落盘。
 import { safeStorage } from "electron";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
