@@ -2242,6 +2242,17 @@ export function App() {
                         {p.id === curProviderId && <span className="mq-check">✓</span>}
                       </button>
                     ))}
+                    <div className="mq-sep" />
+                    <button
+                      className="mq-item mq-more"
+                      onClick={() => {
+                        setShowProviderMenu(false);
+                        setSettingsTab("platforms");
+                        setShowSettings(true);
+                      }}
+                    >
+                      全部供应商设置…
+                    </button>
                   </div>
                 </>
               )}
