@@ -3052,6 +3052,26 @@ body {
   background: var(--bg); color: var(--text);
 }
 .sec-add-actions { display: flex; align-items: center; gap: 10px; }
+/* 与底部「保存」同款质感:圆角/内边距/字重一致 */
+.sec-add-actions button,
+.sec-import button {
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 9px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: filter 0.12s ease, border-color 0.12s ease;
+}
+.sec-add-actions button:hover:not(:disabled),
+.sec-import button:hover:not(:disabled) { border-color: var(--accent); }
+.sec-add-actions button.allow,
+.sec-import button.allow { font-weight: 600; }
+.sec-add-actions button.allow:hover:not(:disabled),
+.sec-import button.allow:hover:not(:disabled) { filter: brightness(1.06); }
+.sec-add-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
 .sec-err { font-size: 12px; color: var(--danger, #c0392b); }
 .sec-import { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .sec-import-ta {

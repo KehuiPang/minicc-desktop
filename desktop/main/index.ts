@@ -1687,10 +1687,14 @@ ipcMain.handle("secrets:import-env", (_e, text: string) => {
     return { ok: false, error: e.message };
   }
 });
-// 发送前扫描：脱敏已入库密钥 + 返回尚未入库的疑似新密钥(给确认弹窗)
+// 发送前扫描：脱敏已入库密钥 + 返回尚未入库的疑似新密钥(给确认弹窗)。永不抛错,否则会挡住发送。
 ipcMain.handle("secrets:scan", (_e, text: string) => {
-  const redacted = secrets.redact(text).text;
-  return { redacted, candidates: secrets.detect(redacted) };
+  try {
+    const redacted = secrets.redact(text).text;
+    return { redacted, candidates: secrets.detect(redacted) };
+  } catch {
+    return { redacted: text, candidates: [] };
+  }
 });
 
 // 「工具」面板：把当前生效的全部工具（内置 + 浏览器 + 各 MCP 服务器）按来源分组返回

@@ -850,15 +850,25 @@ export function App() {
     setSuggestion(""); // 发送后清掉旧的下一步建议(回复完会重新生成)
     const imgs = pendingImages;
     const inject = busy; // 跑动中→注入到当前回合
-    // 发送前扫描敏感密钥：已入库的静默替换,新出现的弹窗让用户确认
-    window.minicc.secretsScan(text).then((r) => {
-      if (r.candidates.length > 0) {
-        setSecretPrompt({ text, imgs, inject, candidates: r.candidates, checked: r.candidates.map(() => true) });
-        return; // 等用户在弹窗里决定,先不发
-      }
+    // 铁律:发送绝不能依赖密钥扫描。扫描失败/无该接口都要照常发,主进程还会兜底脱敏。
+    const go = () => {
       dispatchMessage(text, imgs, inject);
       clearComposer();
-    });
+    };
+    const scan = text ? window.minicc.secretsScan?.(text) : undefined;
+    if (!scan) {
+      go();
+      return;
+    }
+    scan
+      .then((r) => {
+        if (r?.candidates?.length > 0) {
+          setSecretPrompt({ text, imgs, inject, candidates: r.candidates, checked: r.candidates.map(() => true) });
+        } else {
+          go();
+        }
+      })
+      .catch(() => go()); // 扫描出错→照常发
   }
 
   // 密钥确认弹窗：存入选中的,再发送
