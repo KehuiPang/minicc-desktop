@@ -20,7 +20,7 @@ import { searchDocs, readDoc, buildDocIndex, docStats, type BuildProgress } from
 export type { BrainGraph, BrainNode, BrainEdge } from "./types.js";
 export { warmupEmbedder, embeddingReady } from "./embed.js";
 export { BRAIN_DIR, GRAPH_FILE } from "./store.js";
-export { readDoc, docStats, DOCS_FILE } from "./docs.js";
+export { readDoc, docStats, DOCS_FILE, loadDocIndex } from "./docs.js";
 export type { BuildProgress } from "./docs.js";
 
 // 构建/重建文档冷存储索引（知识宫殿等目录）

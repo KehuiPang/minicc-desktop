@@ -59,6 +59,11 @@ export interface MiniccApi {
   brainDocStats(): Promise<{ chunks: number; files: number; dir: string; builtAt: number }>;
   brainBuildDocs(dir: string): Promise<{ chunks: number; files: number; dir: string; builtAt: number }>;
   brainReadDoc(ref: string): Promise<string>;
+  brainDocProgress(): Promise<{ building: boolean; phase: string; files: number; total: number; done: number; error?: string }>;
+  brainEmbedReady(): Promise<boolean>;
+  brainExtractConcepts(opts?: { all?: boolean }): Promise<{ started: boolean; reason?: string }>;
+  brainConceptProgress(): Promise<{ running: boolean; phase: string; total: number; done: number; created: number; skipped: number; cur?: string }>;
+  brainStopConcepts(): void;
   getMcp(): Promise<{ config: string; status: { name: string; status: string; error: string; tools: number }[] }>;
   setMcp(text: string): void;
   secretsList(): Promise<{

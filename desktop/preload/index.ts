@@ -25,6 +25,7 @@ const EVENTS = [
   "evt:groups",
   "evt:assistant-replace",
   "evt:brain-docs",
+  "evt:brain-concepts",
 ] as const;
 
 contextBridge.exposeInMainWorld("minicc", {
@@ -97,6 +98,16 @@ contextBridge.exposeInMainWorld("minicc", {
   brainBuildDocs: (dir: string) =>
     ipcRenderer.invoke("brain:build-docs", dir) as Promise<{ chunks: number; files: number; dir: string; builtAt: number }>,
   brainReadDoc: (ref: string) => ipcRenderer.invoke("brain:read-doc", ref) as Promise<string>,
+  // 索引构建进度 / 向量模型是否就绪(主进程真相源,关弹窗不丢)
+  brainDocProgress: () =>
+    ipcRenderer.invoke("brain:doc-progress") as Promise<{ building: boolean; phase: string; files: number; total: number; done: number; error?: string }>,
+  brainEmbedReady: () => ipcRenderer.invoke("brain:embed-ready") as Promise<boolean>,
+  // 概念抽取(用 k3 从已索引文档批量抽概念)：触发/查进度/停止
+  brainExtractConcepts: (opts?: { all?: boolean }) =>
+    ipcRenderer.invoke("brain:extract-concepts", opts || {}) as Promise<{ started: boolean; reason?: string }>,
+  brainConceptProgress: () =>
+    ipcRenderer.invoke("brain:concept-progress") as Promise<{ running: boolean; phase: string; total: number; done: number; created: number; skipped: number; cur?: string }>,
+  brainStopConcepts: () => ipcRenderer.send("brain:stop-concepts"),
   getMcp: () =>
     ipcRenderer.invoke("mcp:get") as Promise<{
       config: string;

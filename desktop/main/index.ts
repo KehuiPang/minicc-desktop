@@ -1683,12 +1683,166 @@ ipcMain.handle("brain:add-edge", async (_e, from: string, relation: string, to: 
 ipcMain.handle("brain:delete-edge", (_e, id: string) => brain.deleteEdgeFromUI(String(id)));
 // 文档冷存储（知识宫殿等）：建索引(带进度事件)/统计/读原文
 ipcMain.handle("brain:doc-stats", () => brain.docStats());
+
+// —— 索引构建进度：主进程为唯一真相源，关闭设置弹窗也不丢；渲染随时可查/订阅 ——
+type DocBuildState = {
+  building: boolean;
+  phase: string; // idle|scan|embed|done|error
+  files: number;
+  total: number;
+  done: number;
+  error?: string;
+};
+let docBuildState: DocBuildState = { building: false, phase: "idle", files: 0, total: 0, done: 0 };
+ipcMain.handle("brain:doc-progress", () => docBuildState);
+ipcMain.handle("brain:embed-ready", () => brain.embeddingReady());
 ipcMain.handle("brain:build-docs", async (_e, dir: string) => {
   const abs = String(dir).replace(/^~(?=\/|$)/, homedir());
-  await brain.buildDocs(abs, (p) => send("evt:brain-docs", p));
+  docBuildState = { building: true, phase: "scan", files: 0, total: 0, done: 0 };
+  send("evt:brain-docs", docBuildState);
+  try {
+    await brain.buildDocs(abs, (p) => {
+      docBuildState = {
+        building: true,
+        phase: p.phase,
+        files: p.files ?? docBuildState.files,
+        total: p.total ?? docBuildState.total,
+        done: p.done ?? docBuildState.done,
+      };
+      send("evt:brain-docs", docBuildState);
+    });
+    docBuildState = { ...docBuildState, building: false, phase: "done" };
+  } catch (e: any) {
+    docBuildState = { ...docBuildState, building: false, phase: "error", error: e?.message || String(e) };
+  }
+  send("evt:brain-docs", docBuildState);
   return brain.docStats();
 });
 ipcMain.handle("brain:read-doc", (_e, ref: string) => brain.readDoc(String(ref)));
+
+// —— 概念抽取：用当前对话模型(k3)从已索引文档「按文档级」批量抽概念+关系填进 graph ——
+// 按文档级(而非块级)大幅省 token：204 文档 = 204 次调用，非 3571 块。可停、进度持久、默认只抽未抽过的文档。
+const CONCEPTS_DONE_FILE = join(homedir(), ".minicc", "brain", "concepts-done.json");
+function loadConceptsDone(): Set<string> {
+  try {
+    return new Set(JSON.parse(readFileSync(CONCEPTS_DONE_FILE, "utf8")).files || []);
+  } catch {
+    return new Set();
+  }
+}
+function saveConceptsDone(s: Set<string>) {
+  try {
+    mkdirSync(dirname(CONCEPTS_DONE_FILE), { recursive: true });
+    writeFileSync(CONCEPTS_DONE_FILE, JSON.stringify({ files: [...s], updatedAt: Date.now() }), "utf8");
+  } catch {
+    /* ignore */
+  }
+}
+type ConceptState = {
+  running: boolean;
+  phase: string; // idle|run|done|stopped|error
+  total: number;
+  done: number;
+  created: number;
+  skipped: number;
+  cur?: string;
+  error?: string;
+};
+let conceptState: ConceptState = { running: false, phase: "idle", total: 0, done: 0, created: 0, skipped: 0 };
+let conceptCancel = false;
+ipcMain.handle("brain:concept-progress", () => conceptState);
+ipcMain.on("brain:stop-concepts", () => {
+  conceptCancel = true;
+});
+ipcMain.handle("brain:extract-concepts", (_e, opts: { all?: boolean }) => {
+  if (conceptState.running) return { started: false, reason: "已在运行" };
+  if (!provider) return { started: false, reason: "未配置模型" };
+  void runConceptExtraction(!!opts?.all); // 后台跑,不阻塞;进度走 evt:brain-concepts
+  return { started: true };
+});
+
+async function extractOneFile(file: string, body: string): Promise<number> {
+  const sys =
+    "你是知识图谱抽取器。从给定的中文文档片段中，抽取值得长期记住的【概念节点】与它们之间的【关系】。" +
+    "概念 = 项目/服务器/服务/脚本/工具/命令/注意事项/偏好/抽象概念 等有信息量的实体。" +
+    "只输出一个 JSON 对象，禁止任何解释、禁止代码围栏，格式严格为：" +
+    '{"concepts":[{"name":"规范短名","type":"类型","summary":"一句话摘要","aliases":["别名"]}],"relations":[{"from":"概念A","relation":"关系","to":"概念B"}]}。' +
+    "name 用最规范简短的名字；没有可抽的就返回 {\"concepts\":[],\"relations\":[]}。最多 12 个概念。";
+  const res = await provider!.complete(
+    sys,
+    [{ role: "user", content: [{ type: "text", text: `文档《${file}》片段：\n${body}\n\nJSON:` }] }] as any,
+    [],
+    {},
+  );
+  const raw = (res.content || [])
+    .filter((b: any) => b.type === "text")
+    .map((b: any) => b.text)
+    .join("")
+    .trim();
+  let parsed: any = null;
+  try {
+    parsed = JSON.parse(raw.replace(/^```(json)?/i, "").replace(/```\s*$/, "").trim());
+  } catch {
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (m) try { parsed = JSON.parse(m[0]); } catch { /* 放弃本篇 */ }
+  }
+  if (!parsed) return 0;
+  let n = 0;
+  for (const c of parsed.concepts || []) {
+    if (!c?.name) continue;
+    await brain.learn({
+      name: String(c.name).slice(0, 60),
+      type: c.type ? String(c.type).slice(0, 20) : "概念",
+      summary: c.summary ? String(c.summary).slice(0, 200) : "",
+      aliases: Array.isArray(c.aliases) ? c.aliases.slice(0, 8).map((a: any) => String(a).slice(0, 40)) : [],
+    });
+    n++;
+  }
+  for (const r of parsed.relations || []) {
+    if (!r?.from || !r?.to || !r?.relation) continue;
+    await brain.link(String(r.from).slice(0, 60), String(r.relation).slice(0, 20), String(r.to).slice(0, 60));
+  }
+  return n;
+}
+
+async function runConceptExtraction(all: boolean) {
+  conceptCancel = false;
+  const idx = brain.loadDocIndex();
+  const byFile = new Map<string, { headingPath: string; text: string }[]>();
+  for (const c of idx.chunks) {
+    if (!byFile.has(c.file)) byFile.set(c.file, []);
+    byFile.get(c.file)!.push({ headingPath: c.headingPath, text: c.text });
+  }
+  const done = all ? new Set<string>() : loadConceptsDone();
+  const files = [...byFile.keys()].filter((f) => all || !done.has(f));
+  conceptState = { running: true, phase: "run", total: files.length, done: 0, created: 0, skipped: 0 };
+  send("evt:brain-concepts", conceptState);
+  for (const f of files) {
+    if (conceptCancel) {
+      conceptState = { ...conceptState, running: false, phase: "stopped" };
+      break;
+    }
+    conceptState = { ...conceptState, cur: f };
+    send("evt:brain-concepts", conceptState);
+    let body = byFile
+      .get(f)!
+      .map((c) => (c.headingPath ? `〖${c.headingPath}〗\n${c.text}` : c.text))
+      .join("\n\n");
+    if (body.length > 6000) body = body.slice(0, 6000); // 单篇上限,控 token
+    try {
+      const created = await extractOneFile(f, body);
+      conceptState = { ...conceptState, created: conceptState.created + created };
+      done.add(f);
+      saveConceptsDone(done);
+    } catch {
+      conceptState = { ...conceptState, skipped: conceptState.skipped + 1 };
+    }
+    conceptState = { ...conceptState, done: conceptState.done + 1 };
+    send("evt:brain-concepts", conceptState);
+  }
+  if (!conceptCancel) conceptState = { ...conceptState, running: false, phase: "done", cur: undefined };
+  send("evt:brain-concepts", conceptState);
+}
 
 // —— MCP 服务器(设置里配置) ——
 ipcMain.handle("mcp:get", () => {

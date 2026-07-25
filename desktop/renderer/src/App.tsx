@@ -267,6 +267,31 @@ export function App() {
     }, 250);
     return () => clearTimeout(t);
   }, [input, pendingImages]);
+  // 知识网络后台进度：主进程为真相源，无论设置弹窗开没开都持续订阅，供底部状态栏实时显示。
+  const [idxProg, setIdxProg] = useState<{
+    building: boolean;
+    phase: string;
+    files: number;
+    total: number;
+    done: number;
+  } | null>(null);
+  const [conProg, setConProg] = useState<{
+    running: boolean;
+    phase: string;
+    total: number;
+    done: number;
+    created: number;
+    cur?: string;
+  } | null>(null);
+  useEffect(() => {
+    window.minicc.brainDocProgress?.().then((s: any) => setIdxProg(s)).catch(() => {});
+    window.minicc.brainConceptProgress?.().then((s: any) => setConProg(s)).catch(() => {});
+    const off = window.minicc.onEvent((ch, p: any) => {
+      if (ch === "evt:brain-docs") setIdxProg(p);
+      else if (ch === "evt:brain-concepts") setConProg(p);
+    });
+    return off;
+  }, []);
   // 发送前检测到的疑似新密钥→确认弹窗
   type SecCand = {
     value: string;
@@ -1965,6 +1990,46 @@ export function App() {
                 手动
               </button>
             </div>
+
+            {/* 知识网络后台进度：索引构建 / 概念抽取，实时可见，点击进设置查看 */}
+            {(idxProg?.building || conProg?.running) && (
+              <button
+                className="brain-prog"
+                title="点击打开知识网络"
+                onClick={() => {
+                  setSettingsTab("brain");
+                  setShowSettings(true);
+                }}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "2px 8px",
+                  border: "1px solid var(--border, #e2e2e2)",
+                  borderRadius: 999,
+                  background: "var(--chip-bg, #f4f4f5)",
+                  fontSize: 11,
+                  color: "var(--text-2, #666)",
+                  whiteSpace: "nowrap",
+                  cursor: "pointer",
+                }}
+              >
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    background: "#3b82f6",
+                    animation: "pulse 1.2s ease-in-out infinite",
+                  }}
+                />
+                {idxProg?.building
+                  ? idxProg.phase === "scan"
+                    ? `索引·扫描 ${idxProg.files} 文档`
+                    : `索引 ${idxProg.done}/${idxProg.total || "…"} 块`
+                  : `抽概念 ${conProg?.done}/${conProg?.total}`}
+              </button>
+            )}
 
             <div className="model-quick">
               <button
@@ -3669,6 +3734,7 @@ function SettingsModal({
   const [brainRecallOut, setBrainRecallOut] = useState(""); // 检索测试结果
   const [brainWarming, setBrainWarming] = useState(false); // 模型预热中
   const [brainWarmMsg, setBrainWarmMsg] = useState(""); // 预热结果提示
+  const [conExtract, setConExtract] = useState<{ running: boolean; phase: string; total: number; done: number; created: number; cur?: string } | null>(null); // 概念抽取进度
   const [brainNewEdge, setBrainNewEdge] = useState({ relation: "", to: "" }); // 给选中节点加关系
   const reloadBrain = () =>
     Promise.all([window.minicc.brainGraph(), window.minicc.brainStats()]).then(([g, st]) => {
@@ -3722,7 +3788,8 @@ function SettingsModal({
       setToolTotal(r.total);
     });
   }, [tab]);
-  // 切到「知识网络」页时拉一次图谱 + 文档库统计，并监听建索引进度
+  // 切到「知识网络」页时拉一次图谱 + 文档库统计，并监听建索引/概念抽取进度。
+  // 关键：主进程是进度真相源——重开设置时先查一次当前状态回填，避免"关了再开状态就没了"。
   useEffect(() => {
     if (tab !== "brain") return;
     reloadBrain();
@@ -3730,12 +3797,37 @@ function SettingsModal({
       setDocStat(s);
       if (s.dir) setDocDir(s.dir);
     });
+    // 回填：索引是否正在构建 + 向量模型是否已就绪 + 概念抽取是否在跑
+    window.minicc.brainDocProgress().then((d) => {
+      if (d?.building) {
+        setDocBuilding(true);
+        setDocProg(
+          d.phase === "scan" ? `扫描到 ${d.files} 个文档，开始向量化…` : `向量化 ${d.done}/${d.total} 块…`,
+        );
+      }
+    });
+    window.minicc.brainEmbedReady().then((r) => {
+      if (r) setBrainWarmMsg("✓ 向量模型就绪，语义检索已启用。");
+    });
+    window.minicc.brainConceptProgress().then((c) => setConExtract(c));
     const off = window.minicc.onEvent((ch, p) => {
-      if (ch !== "evt:brain-docs") return;
-      const d = p as { phase: string; files?: number; total?: number; done?: number };
-      if (d.phase === "scan") setDocProg(`扫描到 ${d.files} 个文档，开始向量化…`);
-      else if (d.phase === "embed") setDocProg(`向量化 ${d.done}/${d.total} 块…`);
-      else if (d.phase === "done") setDocProg(`✓ 完成，共 ${d.total} 块`);
+      if (ch === "evt:brain-docs") {
+        const d = p as { building?: boolean; phase: string; files?: number; total?: number; done?: number };
+        if (d.phase === "scan") setDocProg(`扫描到 ${d.files} 个文档，开始向量化…`);
+        else if (d.phase === "embed") setDocProg(`向量化 ${d.done}/${d.total} 块…`);
+        else if (d.phase === "done") {
+          setDocProg(`✓ 完成，共 ${d.total} 块`);
+          setDocBuilding(false);
+          window.minicc.brainDocStats().then(setDocStat);
+        } else if (d.phase === "error") {
+          setDocProg("✗ 构建失败");
+          setDocBuilding(false);
+        }
+      } else if (ch === "evt:brain-concepts") {
+        const c = p as { running: boolean; phase: string; total: number; done: number; created: number; cur?: string };
+        setConExtract(c);
+        if (!c.running) reloadBrain(); // 抽完刷新概念/关系数
+      }
     });
     return off;
   }, [tab]);
@@ -5189,10 +5281,49 @@ function SettingsModal({
                         {docProg}
                       </span>
                     )}
+                    {/* 概念抽取：用当前对话模型(k3)从已索引文档批量抽概念+关系填进 graph。按文档级调用，省 token；可停。 */}
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        disabled={docStat.files === 0 || conExtract?.running}
+                        title="用当前模型从已索引文档抽取概念与关系，填进知识网络（默认只抽未抽过的文档）"
+                        onClick={async () => {
+                          const r = await window.minicc.brainExtractConcepts({ all: false });
+                          if (!r.started) setBrainWarmMsg("✗ " + (r.reason || "无法开始抽取"));
+                        }}
+                      >
+                        {conExtract?.running ? "抽取中…" : "抽取概念(新增)"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={docStat.files === 0 || conExtract?.running}
+                        title="忽略已抽记录，对全部文档重新抽取（更费 token）"
+                        onClick={async () => {
+                          const r = await window.minicc.brainExtractConcepts({ all: true });
+                          if (!r.started) setBrainWarmMsg("✗ " + (r.reason || "无法开始抽取"));
+                        }}
+                      >
+                        全部重抽
+                      </button>
+                      {conExtract?.running && (
+                        <button type="button" className="allow" onClick={() => window.minicc.brainStopConcepts()}>
+                          停止
+                        </button>
+                      )}
+                      {conExtract && (conExtract.running || conExtract.phase === "done" || conExtract.phase === "stopped") && (
+                        <span className="s-note" style={{ margin: 0 }}>
+                          {conExtract.running
+                            ? `抽取 ${conExtract.done}/${conExtract.total} 篇 · 已生成 ${conExtract.created} 概念${conExtract.cur ? " · " + conExtract.cur : ""}`
+                            : conExtract.phase === "stopped"
+                              ? `已停止（${conExtract.done}/${conExtract.total} 篇，${conExtract.created} 概念）`
+                              : `✓ 抽取完成，共 ${conExtract.created} 概念`}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <p className="s-note pp-fixed">
                     存于 <code>~/.minicc/brain/graph.json</code>，向量模型在 <code>~/.minicc/brain/models</code>。
-                    模型对话中调用 brain_learn/brain_link 会自动往这里长知识；越用越准。
+                    模型对话中调用 brain_learn/brain_link 会自动往这里长知识；「抽取概念」按钮可用 k3 从文档批量补概念。
                   </p>
                 </div>
               );
