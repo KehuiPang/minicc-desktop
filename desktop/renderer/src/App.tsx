@@ -209,6 +209,14 @@ function LogoutIcon({ size = 15 }: { size?: number }) {
     </svg>
   );
 }
+function RefreshIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ flex: "0 0 auto" }}>
+      <path d="M20 12a8 8 0 1 1-2.3-5.6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M20 4v4h-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 export function App() {
   const [items, setItems] = useState<Item[]>([]);
@@ -1684,31 +1692,6 @@ export function App() {
                           <GearIcon size={15} />
                           设置
                         </button>
-                        {(account.providerId === "deepseek" ||
-                          account.providerId === "zhipu" ||
-                          account.providerId === "kimi-sub") && (
-                          <button
-                            className="acct-menu-item"
-                            onClick={async () => {
-                              setShowAcctMenu(false);
-                              setWebLoginBusy(true);
-                              await window.minicc.webLogin(account.providerId!);
-                              setWebLoginBusy(false);
-                            }}
-                          >
-                            {account.providerId === "kimi-sub"
-                              ? "浏览器登录（读取 5小时 / 周额度）"
-                              : `浏览器登录（抓头像 / 昵称${account.providerId === "zhipu" ? " / 余额" : ""}）`}
-                          </button>
-                        )}
-                        {account.expired && (
-                          <div className="acct-menu-note" style={{ color: "#e8a838" }}>
-                            ⚠{" "}
-                            {account.providerId === "kimi-sub"
-                              ? "Kimi 额度登录已过期，5小时/周额度无法显示。请点上方「浏览器登录」重新登录。"
-                              : "智谱登录已过期，余额无法显示。请点上方「浏览器登录」重新登录。"}
-                          </div>
-                        )}
                         {account.providerId === "codex" && account.loggedIn && (
                           <button
                             className="acct-menu-item"
@@ -2419,6 +2402,30 @@ export function App() {
             <div className="u-bar">
               <div className="u-fill" style={{ width: ctxPct + "%" }} />
             </div>
+
+            {/* 余额登录过期：给个可点的刷新入口，去网站授权后自动刷新（余额可用时不显示） */}
+            {account.expired &&
+              (account.providerId === "deepseek" ||
+                account.providerId === "zhipu" ||
+                account.providerId === "kimi-sub") && (
+                <div
+                  className="u-row"
+                  style={{ color: "#C05F3C", cursor: webLoginBusy ? "default" : "pointer", alignItems: "center" }}
+                  title="登录已过期，点击去网站重新授权，回来自动刷新余额"
+                  onClick={async () => {
+                    if (webLoginBusy) return;
+                    setWebLoginBusy(true);
+                    await window.minicc.webLogin(account.providerId!);
+                    setWebLoginBusy(false);
+                  }}
+                >
+                  <span>{account.providerId === "kimi-sub" ? "额度登录已过期" : "余额登录已过期"}</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    {webLoginBusy ? "登录中…" : "点此授权刷新"}
+                    <RefreshIcon size={13} />
+                  </span>
+                </div>
+              )}
 
             {meta.sub && rate ? (
               // 订阅类后端(Codex/Claude)：显示 5小时/周额度
