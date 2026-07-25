@@ -3119,3 +3119,21 @@ body {
   font-size: 12px; color: var(--text-muted); text-align: left;
 }
 .sec-more-toggle:hover { color: var(--accent); }
+
+/* 密钥确认弹窗按钮:对齐设置里保存/取消的精致质感 */
+.sec-prompt .btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.sec-prompt .btns button {
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 9px;
+  padding: 7px 15px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: filter 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.sec-prompt .btns button:not(.allow):hover { border-color: var(--accent); color: var(--accent); }
+.sec-prompt .btns button.allow { font-weight: 600; }
+.sec-prompt .btns button.allow:hover { filter: brightness(1.06); }
