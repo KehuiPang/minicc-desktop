@@ -1,4 +1,25 @@
 // 渲染进程可见的 window.minicc 类型（来自 preload）
+export interface BrainNodeLite {
+  id: string;
+  name: string;
+  aliases: string[];
+  type: string;
+  summary: string;
+  attrs: Record<string, string>;
+  weight: number;
+  hits: number;
+  createdAt: number;
+  updatedAt: number;
+  lastHit?: number;
+}
+export interface BrainEdgeLite {
+  id: string;
+  from: string;
+  to: string;
+  relation: string;
+  weight: number;
+  hits: number;
+}
 export interface MiniccApi {
   send(sid: string, text: string, images?: string[]): void;
   inject(sid: string, text: string, images?: string[]): void;
@@ -24,6 +45,15 @@ export interface MiniccApi {
   setSettings(s: any): void;
   getMemory(): Promise<string>;
   setMemory(text: string): void;
+  // 本地知识网络 Brain
+  brainGraph(): Promise<{ nodes: BrainNodeLite[]; edges: BrainEdgeLite[] }>;
+  brainStats(): Promise<{ nodes: number; edges: number; embedded: number }>;
+  brainRecall(query: string): Promise<string>;
+  brainWarmup(): Promise<boolean>;
+  brainSaveNode(node: Partial<BrainNodeLite> & { name: string }): Promise<void>;
+  brainDeleteNode(id: string): Promise<void>;
+  brainAddEdge(from: string, relation: string, to: string): Promise<void>;
+  brainDeleteEdge(id: string): Promise<void>;
   getMcp(): Promise<{ config: string; status: { name: string; status: string; error: string; tools: number }[] }>;
   setMcp(text: string): void;
   secretsList(): Promise<{

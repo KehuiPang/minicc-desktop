@@ -36,7 +36,9 @@
       "package.json"
     ],
     "asarUnpack": [
-      "**/node_modules/@anthropic-ai/**"
+      "**/node_modules/@anthropic-ai/**",
+      "**/node_modules/onnxruntime-node/**",
+      "**/node_modules/@xenova/**"
     ],
     "mac": {
       "target": [

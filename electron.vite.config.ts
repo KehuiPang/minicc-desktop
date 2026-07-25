@@ -33,7 +33,10 @@ export default defineConfig({
       outDir: "out/main",
       rollupOptions: {
         input: resolve(root, "desktop/main/index.ts"),
-        external: ["electron"],
+        // @xenova/transformers 必须 external：它经动态 import() 加载，若被 bundle 会内联
+        // onnxruntime-web(wasm 后端)并丢失 onnxruntime-node 原生后端。保持 external 后
+        // 运行时从 node_modules 加载，走 onnx 原生后端（更快更稳）。
+        external: ["electron", "@xenova/transformers", "onnxruntime-node"],
       },
     },
   },

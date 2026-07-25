@@ -61,6 +61,33 @@ contextBridge.exposeInMainWorld("minicc", {
   setSettings: (s: unknown) => ipcRenderer.send("settings:set", s),
   getMemory: () => ipcRenderer.invoke("memory:get") as Promise<string>,
   setMemory: (text: string) => ipcRenderer.send("memory:set", text),
+  // 本地知识网络 Brain
+  brainGraph: () =>
+    ipcRenderer.invoke("brain:graph") as Promise<{
+      nodes: {
+        id: string;
+        name: string;
+        aliases: string[];
+        type: string;
+        summary: string;
+        attrs: Record<string, string>;
+        weight: number;
+        hits: number;
+        createdAt: number;
+        updatedAt: number;
+        lastHit?: number;
+      }[];
+      edges: { id: string; from: string; to: string; relation: string; weight: number; hits: number }[];
+    }>,
+  brainStats: () =>
+    ipcRenderer.invoke("brain:stats") as Promise<{ nodes: number; edges: number; embedded: number }>,
+  brainRecall: (query: string) => ipcRenderer.invoke("brain:recall", query) as Promise<string>,
+  brainWarmup: () => ipcRenderer.invoke("brain:warmup") as Promise<boolean>,
+  brainSaveNode: (node: unknown) => ipcRenderer.invoke("brain:save-node", node) as Promise<void>,
+  brainDeleteNode: (id: string) => ipcRenderer.invoke("brain:delete-node", id) as Promise<void>,
+  brainAddEdge: (from: string, relation: string, to: string) =>
+    ipcRenderer.invoke("brain:add-edge", from, relation, to) as Promise<void>,
+  brainDeleteEdge: (id: string) => ipcRenderer.invoke("brain:delete-edge", id) as Promise<void>,
   getMcp: () =>
     ipcRenderer.invoke("mcp:get") as Promise<{
       config: string;
@@ -83,7 +110,13 @@ contextBridge.exposeInMainWorld("minicc", {
   secretsScan: (text: string) =>
     ipcRenderer.invoke("secrets:scan", text) as Promise<{
       redacted: string;
-      candidates: { value: string; masked: string; kind: string; suggestedName: string }[];
+      candidates: { value: string; masked: string; kind: string; suggestedName: string; note?: string }[];
+    }>,
+  secretsReveal: (pw: string) =>
+    ipcRenderer.invoke("secrets:reveal", pw) as Promise<{
+      ok: boolean;
+      error?: string;
+      items?: { id: string; value: string }[];
     }>,
   getTools: () =>
     ipcRenderer.invoke("tools:get") as Promise<{
