@@ -1697,6 +1697,7 @@ let docBuildState: DocBuildState = { building: false, phase: "idle", files: 0, t
 ipcMain.handle("brain:doc-progress", () => docBuildState);
 ipcMain.handle("brain:embed-ready", () => brain.embeddingReady());
 ipcMain.handle("brain:build-docs", async (_e, dir: string) => {
+  if (conceptState.running) throw new Error("正在抽取概念，请先停止或等它完成再重建索引（两者共用向量模型）");
   const abs = String(dir).replace(/^~(?=\/|$)/, homedir());
   docBuildState = { building: true, phase: "scan", files: 0, total: 0, done: 0 };
   send("evt:brain-docs", docBuildState);
@@ -1757,6 +1758,10 @@ ipcMain.on("brain:stop-concepts", () => {
 ipcMain.handle("brain:extract-concepts", (_e, opts: { all?: boolean }) => {
   if (conceptState.running) return { started: false, reason: "已在运行" };
   if (!provider) return { started: false, reason: "未配置模型" };
+  // 防并发:抽概念时每存一个概念要给它算向量,走的是索引重建正霸占的同一个 worker,
+  // 同时跑会互相饿死→龟速。索引没建完先拦住,提示用户等索引跑完再抽。
+  if (docBuildState.building)
+    return { started: false, reason: "索引正在构建，请等它跑完再抽概念（两者共用向量模型，同时跑会互相拖慢）" };
   void runConceptExtraction(!!opts?.all); // 后台跑,不阻塞;进度走 evt:brain-concepts
   return { started: true };
 });
@@ -1817,9 +1822,11 @@ async function runConceptExtraction(all: boolean) {
   const files = [...byFile.keys()].filter((f) => all || !done.has(f));
   conceptState = { running: true, phase: "run", total: files.length, done: 0, created: 0, skipped: 0 };
   send("evt:brain-concepts", conceptState);
+  log("concept", `开始抽取:待处理 ${files.length} 篇(all=${all}),模型=${modelLabel}`);
   for (const f of files) {
     if (conceptCancel) {
       conceptState = { ...conceptState, running: false, phase: "stopped" };
+      log("concept", `已停止:${conceptState.done}/${files.length} 篇, 累计 ${conceptState.created} 概念`);
       break;
     }
     conceptState = { ...conceptState, cur: f };
@@ -1829,18 +1836,25 @@ async function runConceptExtraction(all: boolean) {
       .map((c) => (c.headingPath ? `〖${c.headingPath}〗\n${c.text}` : c.text))
       .join("\n\n");
     if (body.length > 6000) body = body.slice(0, 6000); // 单篇上限,控 token
+    const t0 = Date.now();
+    log("concept", `[${conceptState.done + 1}/${files.length}] 抽取中: ${f}`);
     try {
       const created = await extractOneFile(f, body);
       conceptState = { ...conceptState, created: conceptState.created + created };
       done.add(f);
       saveConceptsDone(done);
-    } catch {
+      log("concept", `[${conceptState.done + 1}/${files.length}] 完成: ${f} → +${created} 概念 (${Date.now() - t0}ms)`);
+    } catch (e: any) {
       conceptState = { ...conceptState, skipped: conceptState.skipped + 1 };
+      log("concept", `[${conceptState.done + 1}/${files.length}] 失败(跳过): ${f} → ${e?.message || e}`);
     }
     conceptState = { ...conceptState, done: conceptState.done + 1 };
     send("evt:brain-concepts", conceptState);
   }
-  if (!conceptCancel) conceptState = { ...conceptState, running: false, phase: "done", cur: undefined };
+  if (!conceptCancel) {
+    conceptState = { ...conceptState, running: false, phase: "done", cur: undefined };
+    log("concept", `全部完成:${conceptState.done} 篇, 共 ${conceptState.created} 概念, 跳过 ${conceptState.skipped}`);
+  }
   send("evt:brain-concepts", conceptState);
 }
 

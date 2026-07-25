@@ -5261,13 +5261,15 @@ function SettingsModal({
                       />
                       <button
                         type="button"
-                        disabled={docBuilding || !docDir.trim()}
+                        disabled={docBuilding || conExtract?.running || !docDir.trim()}
                         onClick={async () => {
                           setDocBuilding(true);
                           setDocProg("准备…");
                           try {
                             const s = await window.minicc.brainBuildDocs(docDir.trim());
                             setDocStat(s);
+                          } catch (e: any) {
+                            setDocProg("✗ " + (e?.message || "构建失败"));
                           } finally {
                             setDocBuilding(false);
                           }
