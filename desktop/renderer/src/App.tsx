@@ -5353,14 +5353,18 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                 ) : (
                   secrets.map((s) => (
                     <div key={s.id} className="sec-row">
-                      <div className="sec-row-main">
-                        <span className="sec-name">{s.name}</span>
-                        <span className={"sec-mask" + (revealed ? " revealed" : "")}>
-                          {revealed && revealed[s.id] != null ? revealed[s.id] : s.masked}
-                        </span>
-                        {s.envVar && <span className="sec-env">${s.envVar}</span>}
+                      <div className="sec-row-left">
+                        <div className="sec-row-top">
+                          <span className="sec-name">{s.name}</span>
+                          {s.envVar && <span className="sec-env">${s.envVar}</span>}
+                        </div>
+                        <div className="sec-row-sub">
+                          <span className={"sec-mask" + (revealed ? " revealed" : "")}>
+                            {revealed && revealed[s.id] != null ? revealed[s.id] : s.masked}
+                          </span>
+                          {s.note && <span className="sec-row-note">· {s.note}</span>}
+                        </div>
                       </div>
-                      {s.note && <span className="sec-row-note">{s.note}</span>}
                       <button
                         type="button"
                         className="sec-del"

@@ -92,7 +92,8 @@ export function listSecrets(): SecretView[] {
       id: e.id,
       name: e.name,
       envVar: e.envVar,
-      masked: plain != null ? mask(plain) : "⚠ 无法解密",
+      // 默认全打码:不露首尾、不泄露长度。真实值仅解锁后可见。
+      masked: plain != null ? "••••••••" : "⚠ 无法解密",
       note: e.note,
       createdAt: e.createdAt,
     };
