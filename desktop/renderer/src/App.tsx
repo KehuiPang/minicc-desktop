@@ -3538,6 +3538,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [dragOverIdx, setDragOverIdx] = useState(-1); // 拖拽悬停到第几行(高亮)
   const dragIdxRef = useRef(-1); // 拖起始行
   const [tab, setTab] = useState<"model" | "platforms" | "prompt" | "memory" | "brain" | "mcp" | "tools" | "secrets">("model"); // 设置分块标签页
+  const [maxed, setMaxed] = useState(false); // 设置弹窗最大化(知识网络等大结构需放大看)
   const [memory, setMemory] = useState(""); // 全局长期记忆
   const memoryTouchedRef = useRef(false); // 是否改过记忆(保存时才写)
   // ── 本地知识网络 Brain ──
@@ -4122,8 +4123,18 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   return (
     <>
     <div className="perm-overlay" onClick={onClose}>
-      <div className="settings tabbed" onClick={(e) => e.stopPropagation()}>
-        <h3>模型设置</h3>
+      <div className={"settings tabbed" + (maxed ? " maxed" : "")} onClick={(e) => e.stopPropagation()}>
+        <div className="settings-titlebar">
+          <h3>模型设置</h3>
+          <button
+            type="button"
+            className="set-max-btn"
+            title={maxed ? "还原窗口大小" : "最大化窗口（知识网络等大结构放大看）"}
+            onClick={() => setMaxed((v) => !v)}
+          >
+            {maxed ? "🗗 还原" : "🗖 最大化"}
+          </button>
+        </div>
 
         {/* 分块：一个板块只干一件事 */}
         <div className="set-tabs">

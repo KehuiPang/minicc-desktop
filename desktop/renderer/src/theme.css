@@ -1799,10 +1799,47 @@ body {
 }
 /* 标签页版(模型设置)：固定高度 + 三段式(头/滚动内容/底)，切标签/换平台外框位置尺寸都不变，不再跳动 */
 .settings.tabbed {
-  height: min(86vh, 600px);
+  width: 760px; /* tab 多(8个)，加宽让标签一行排开、内容更从容 */
+  max-width: 94vw;
+  height: min(88vh, 660px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  resize: both; /* 右下角可拖拽调整大小(知识网络等大结构自定义放大) */
+  min-width: 440px;
+  min-height: 380px;
+}
+/* 最大化：占满视口(知识网络大图/全屏查看)。max-width/height 都放开，禁用拖拽把手 */
+.settings.tabbed.maxed {
+  width: 96vw;
+  height: 94vh;
+  max-width: 96vw;
+  resize: none;
+}
+/* 标题栏：标题 + 右侧最大化/还原按钮 */
+.settings-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  flex-shrink: 0;
+}
+.settings-titlebar h3 {
+  margin: 0;
+}
+.set-max-btn {
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: 8px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.set-max-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .settings h3 {
   margin: 0 0 14px;
