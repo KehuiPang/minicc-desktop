@@ -248,7 +248,8 @@ export function App() {
   // 发送前检测到的疑似新密钥→确认弹窗
   type SecCand = { value: string; masked: string; kind: string; suggestedName: string };
   const [secretPrompt, setSecretPrompt] = useState<{
-    text: string;
+    text: string; // 原始文本(供存入后重新扫描)
+    redacted: string; // 已把已入库密钥换成占位符的版本(用于显示/发送)
     imgs: string[];
     inject: boolean;
     candidates: SecCand[];
@@ -863,27 +864,43 @@ export function App() {
     scan
       .then((r) => {
         if (r?.candidates?.length > 0) {
-          setSecretPrompt({ text, imgs, inject, candidates: r.candidates, checked: r.candidates.map(() => true) });
+          setSecretPrompt({
+            text,
+            redacted: r.redacted ?? text,
+            imgs,
+            inject,
+            candidates: r.candidates,
+            checked: r.candidates.map(() => true),
+          });
         } else {
-          go();
+          // 用脱敏后的文本显示+发送:已入库密钥在气泡里也是占位符,不明文示人
+          dispatchMessage(r?.redacted ?? text, imgs, inject);
+          clearComposer();
         }
       })
       .catch(() => go()); // 扫描出错→照常发
   }
 
-  // 密钥确认弹窗：存入选中的,再发送
+  // 密钥确认弹窗：存入选中的,再发送(存入后重新扫描,让新密钥在气泡里也变占位符)
   async function confirmSecretPrompt(store: boolean) {
     const sp = secretPrompt;
     if (!sp) return;
+    let outText = sp.redacted; // 默认:已入库的已脱敏,新密钥保持原样(用户选了不存)
     if (store) {
       for (let i = 0; i < sp.candidates.length; i++) {
         if (!sp.checked[i]) continue;
         const c = sp.candidates[i];
         await window.minicc.secretsAdd({ name: c.suggestedName, value: c.value });
       }
+      // 存好后重新扫描:刚入库的这批也会被替换成占位符
+      try {
+        outText = (await window.minicc.secretsScan(sp.text))?.redacted ?? sp.redacted;
+      } catch {
+        outText = sp.redacted;
+      }
     }
     setSecretPrompt(null);
-    dispatchMessage(sp.text, sp.imgs, sp.inject); // 存入后主进程会把它们替换成占位符
+    dispatchMessage(outText, sp.imgs, sp.inject);
     clearComposer();
   }
 
@@ -3458,6 +3475,24 @@ function migrateMcpDefaults(text: string): { text: string; changed: boolean } {
   return { text: changed ? JSON.stringify({ mcpServers: servers }, null, 2) : text, changed };
 }
 
+// Brain 属性 <-> 文本（每行「键: 值」）互转，供知识网络面板编辑属性
+function attrsToText(attrs: Record<string, string>): string {
+  return Object.entries(attrs)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n");
+}
+function textToAttrs(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const i = line.indexOf(":");
+    if (i < 0) continue;
+    const k = line.slice(0, i).trim();
+    const v = line.slice(i + 1).trim();
+    if (k) out[k] = v;
+  }
+  return out;
+}
+
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const [pid, setPid] = useState("codex");
   const [model, setModel] = useState(PRESETS[0].models[0]);
@@ -3498,9 +3533,27 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   hiddenRef.current = hidden;
   const [dragOverIdx, setDragOverIdx] = useState(-1); // 拖拽悬停到第几行(高亮)
   const dragIdxRef = useRef(-1); // 拖起始行
-  const [tab, setTab] = useState<"model" | "platforms" | "prompt" | "memory" | "mcp" | "tools" | "secrets">("model"); // 设置分块标签页
+  const [tab, setTab] = useState<"model" | "platforms" | "prompt" | "memory" | "brain" | "mcp" | "tools" | "secrets">("model"); // 设置分块标签页
   const [memory, setMemory] = useState(""); // 全局长期记忆
   const memoryTouchedRef = useRef(false); // 是否改过记忆(保存时才写)
+  // ── 本地知识网络 Brain ──
+  const [brainNodes, setBrainNodes] = useState<import("./env").BrainNodeLite[]>([]);
+  const [brainEdges, setBrainEdges] = useState<import("./env").BrainEdgeLite[]>([]);
+  const [brainStat, setBrainStat] = useState<{ nodes: number; edges: number; embedded: number }>({ nodes: 0, edges: 0, embedded: 0 });
+  const [brainFilter, setBrainFilter] = useState(""); // 概念列表过滤
+  const [brainSel, setBrainSel] = useState<string | null>(null); // 选中编辑的节点 id
+  const [brainDraft, setBrainDraft] = useState<import("./env").BrainNodeLite | null>(null); // 编辑草稿
+  const [brainRecallQ, setBrainRecallQ] = useState(""); // 检索测试输入
+  const [brainRecallOut, setBrainRecallOut] = useState(""); // 检索测试结果
+  const [brainWarming, setBrainWarming] = useState(false); // 模型预热中
+  const [brainWarmMsg, setBrainWarmMsg] = useState(""); // 预热结果提示
+  const [brainNewEdge, setBrainNewEdge] = useState({ relation: "", to: "" }); // 给选中节点加关系
+  const reloadBrain = () =>
+    Promise.all([window.minicc.brainGraph(), window.minicc.brainStats()]).then(([g, st]) => {
+      setBrainNodes(g.nodes);
+      setBrainEdges(g.edges);
+      setBrainStat(st);
+    });
   const [mcpConfig, setMcpConfig] = useState(""); // MCP 服务器配置(JSON，源真相)
   const [mcpStatus, setMcpStatus] = useState<
     { name: string; status: string; error: string; disabled?: boolean; toolInfos?: { name: string; description: string }[] }[]
@@ -3546,6 +3599,11 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
       setToolGroups(r.groups);
       setToolTotal(r.total);
     });
+  }, [tab]);
+  // 切到「知识网络」页时拉一次图谱
+  useEffect(() => {
+    if (tab !== "brain") return;
+    reloadBrain();
   }, [tab]);
   // ── 密钥管理器 ──
   type SecretRow = { id: string; name: string; envVar: string; masked: string; note?: string; createdAt: number };
@@ -4077,6 +4135,13 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           </button>
           <button
             type="button"
+            className={"set-tab" + (tab === "brain" ? " on" : "")}
+            onClick={() => setTab("brain")}
+          >
+            知识网络
+          </button>
+          <button
+            type="button"
             className={"set-tab" + (tab === "mcp" ? " on" : "")}
             onClick={() => setTab("mcp")}
           >
@@ -4476,6 +4541,302 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
               </p>
             </div>
           )}
+
+          {/* ── 板块 · 知识网络 Brain（概念图谱：查看/检索/编辑）── */}
+          {tab === "brain" &&
+            (() => {
+              const q = brainFilter.trim().toLowerCase();
+              const filteredNodes = q
+                ? brainNodes.filter(
+                    (n) =>
+                      n.name.toLowerCase().includes(q) ||
+                      n.type.toLowerCase().includes(q) ||
+                      n.summary.toLowerCase().includes(q) ||
+                      n.aliases.some((a) => a.toLowerCase().includes(q)),
+                  )
+                : brainNodes;
+              const sorted = [...filteredNodes].sort((a, b) => b.weight - a.weight);
+              const nodeName = (id: string) => brainNodes.find((n) => n.id === id)?.name || id;
+              return (
+                <div className="prompt-pane" style={{ display: "flex", flexDirection: "column", gap: 10, minHeight: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    <span className="s-note" style={{ margin: 0 }}>
+                      概念 <b>{brainStat.nodes}</b> · 关系 <b>{brainStat.edges}</b> · 已向量化{" "}
+                      <b>{brainStat.embedded}</b>/{brainStat.nodes}
+                    </span>
+                    <button type="button" onClick={() => reloadBrain()}>
+                      刷新
+                    </button>
+                    <button
+                      type="button"
+                      disabled={brainWarming}
+                      onClick={async () => {
+                        setBrainWarming(true);
+                        setBrainWarmMsg("正在加载本地向量模型（首次约120MB，走镜像可能要几分钟）…");
+                        const ok = await window.minicc.brainWarmup();
+                        setBrainWarming(false);
+                        setBrainWarmMsg(
+                          ok
+                            ? "✓ 向量模型就绪，语义检索已启用。"
+                            : "✗ 模型加载失败，已退化为关键词检索，可稍后重试。",
+                        );
+                        reloadBrain();
+                      }}
+                    >
+                      {brainWarming ? "加载中…" : "启用/预热向量模型"}
+                    </button>
+                    {brainWarmMsg && (
+                      <span className="s-note" style={{ margin: 0 }}>
+                        {brainWarmMsg}
+                      </span>
+                    )}
+                  </div>
+
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input
+                      style={{ flex: 1 }}
+                      placeholder="试检索：如「figcheck 部署」——看看大脑会给出什么"
+                      value={brainRecallQ}
+                      onChange={(e) => setBrainRecallQ(e.target.value)}
+                      onKeyDown={async (e) => {
+                        if (e.key === "Enter")
+                          setBrainRecallOut((await window.minicc.brainRecall(brainRecallQ)) || "(无命中)");
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={async () =>
+                        setBrainRecallOut((await window.minicc.brainRecall(brainRecallQ)) || "(无命中)")
+                      }
+                    >
+                      检索
+                    </button>
+                  </div>
+                  {brainRecallOut && (
+                    <pre
+                      style={{
+                        margin: 0,
+                        maxHeight: 140,
+                        overflow: "auto",
+                        fontSize: 12,
+                        whiteSpace: "pre-wrap",
+                        opacity: 0.85,
+                        background: "rgba(127,127,127,0.08)",
+                        padding: 8,
+                        borderRadius: 6,
+                      }}
+                    >
+                      {brainRecallOut}
+                    </pre>
+                  )}
+
+                  <div style={{ display: "flex", gap: 12, flex: 1, minHeight: 0 }}>
+                    {/* 左：概念列表 */}
+                    <div style={{ width: 220, display: "flex", flexDirection: "column", gap: 6, minHeight: 0 }}>
+                      <input
+                        placeholder="过滤概念…"
+                        value={brainFilter}
+                        onChange={(e) => setBrainFilter(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBrainSel(null);
+                          setBrainDraft({
+                            id: "",
+                            name: "",
+                            aliases: [],
+                            type: "概念",
+                            summary: "",
+                            attrs: {},
+                            weight: 1,
+                            hits: 0,
+                            createdAt: 0,
+                            updatedAt: 0,
+                          });
+                        }}
+                      >
+                        + 新概念
+                      </button>
+                      <div style={{ overflow: "auto", flex: 1 }}>
+                        {sorted.map((n) => (
+                          <div
+                            key={n.id}
+                            onClick={() => {
+                              setBrainSel(n.id);
+                              setBrainDraft({ ...n, attrs: { ...n.attrs }, aliases: [...n.aliases] });
+                            }}
+                            style={{
+                              padding: "6px 8px",
+                              cursor: "pointer",
+                              borderRadius: 6,
+                              background: brainSel === n.id ? "rgba(127,127,127,0.18)" : "transparent",
+                            }}
+                          >
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{n.name}</div>
+                            <div className="s-note" style={{ margin: 0 }}>
+                              {n.type} · 命中{n.hits}
+                            </div>
+                          </div>
+                        ))}
+                        {sorted.length === 0 && (
+                          <div className="s-note">暂无概念。对话中让模型 brain_learn，或点「+ 新概念」手动加。</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 右：详情编辑 */}
+                    <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+                      {!brainDraft ? (
+                        <div className="s-note">← 选择左侧概念查看/编辑，或点「+ 新概念」。</div>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          <label className="field">
+                            <span>名称</span>
+                            <input
+                              value={brainDraft.name}
+                              onChange={(e) => setBrainDraft({ ...brainDraft, name: e.target.value })}
+                            />
+                          </label>
+                          <label className="field">
+                            <span>类型</span>
+                            <input
+                              value={brainDraft.type}
+                              placeholder="项目/服务器/脚本/注意事项…"
+                              onChange={(e) => setBrainDraft({ ...brainDraft, type: e.target.value })}
+                            />
+                          </label>
+                          <label className="field">
+                            <span>摘要</span>
+                            <input
+                              value={brainDraft.summary}
+                              onChange={(e) => setBrainDraft({ ...brainDraft, summary: e.target.value })}
+                            />
+                          </label>
+                          <label className="field">
+                            <span>别名（逗号分隔）</span>
+                            <input
+                              value={brainDraft.aliases.join(", ")}
+                              onChange={(e) =>
+                                setBrainDraft({
+                                  ...brainDraft,
+                                  aliases: e.target.value
+                                    .split(/[,，]/)
+                                    .map((s) => s.trim())
+                                    .filter(Boolean),
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="field">
+                            <span>结构化属性（每行 键: 值）</span>
+                            <textarea
+                              className="sysprompt-area"
+                              style={{ minHeight: 90 }}
+                              value={attrsToText(brainDraft.attrs)}
+                              placeholder={"git路径: ~/...\n测试环境: fig01\n部署脚本: ..."}
+                              onChange={(e) => setBrainDraft({ ...brainDraft, attrs: textToAttrs(e.target.value) })}
+                            />
+                          </label>
+                          {brainDraft.id && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                              <span className="s-note" style={{ margin: 0 }}>
+                                关系
+                              </span>
+                              {brainEdges
+                                .filter((ed) => ed.from === brainDraft.id)
+                                .map((ed) => (
+                                  <div key={ed.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                    <span style={{ fontSize: 13 }}>
+                                      ──{ed.relation}→ {nodeName(ed.to)}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        await window.minicc.brainDeleteEdge(ed.id);
+                                        reloadBrain();
+                                      }}
+                                    >
+                                      删
+                                    </button>
+                                  </div>
+                                ))}
+                              <div style={{ display: "flex", gap: 6 }}>
+                                <input
+                                  style={{ width: 110 }}
+                                  placeholder="关系名"
+                                  value={brainNewEdge.relation}
+                                  onChange={(e) => setBrainNewEdge({ ...brainNewEdge, relation: e.target.value })}
+                                />
+                                <input
+                                  style={{ flex: 1 }}
+                                  placeholder="目标概念名"
+                                  value={brainNewEdge.to}
+                                  onChange={(e) => setBrainNewEdge({ ...brainNewEdge, to: e.target.value })}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (brainNewEdge.relation.trim() && brainNewEdge.to.trim()) {
+                                      await window.minicc.brainAddEdge(
+                                        brainDraft.name,
+                                        brainNewEdge.relation.trim(),
+                                        brainNewEdge.to.trim(),
+                                      );
+                                      setBrainNewEdge({ relation: "", to: "" });
+                                      reloadBrain();
+                                    }
+                                  }}
+                                >
+                                  加关系
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!brainDraft.name.trim()) return;
+                                await window.minicc.brainSaveNode({
+                                  id: brainDraft.id || undefined,
+                                  name: brainDraft.name.trim(),
+                                  type: brainDraft.type,
+                                  summary: brainDraft.summary,
+                                  aliases: brainDraft.aliases,
+                                  attrs: brainDraft.attrs,
+                                });
+                                await reloadBrain();
+                                setBrainWarmMsg("✓ 已保存");
+                              }}
+                            >
+                              保存
+                            </button>
+                            {brainDraft.id && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  await window.minicc.brainDeleteNode(brainDraft.id);
+                                  setBrainDraft(null);
+                                  setBrainSel(null);
+                                  reloadBrain();
+                                }}
+                              >
+                                删除概念
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <p className="s-note pp-fixed">
+                    存于 <code>~/.minicc/brain/graph.json</code>，向量模型在 <code>~/.minicc/brain/models</code>。
+                    模型对话中调用 brain_learn/brain_link 会自动往这里长知识；越用越准。
+                  </p>
+                </div>
+              );
+            })()}
 
           {/* ── 板块五：MCP 服务器管理（列表/搜索/安装/启停/删除）── */}
           {tab === "mcp" &&
