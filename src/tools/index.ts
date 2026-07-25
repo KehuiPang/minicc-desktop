@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { Tool, ToolContext, ToolResult } from "../types.js";
+import * as brain from "../brain/index.js";
 
 // 全局记忆文件：跨会话持久，注入到每次对话的系统提示词
 export const MEMORY_FILE = join(homedir(), ".minicc", "memory.md");
@@ -132,6 +133,8 @@ const bashTool: Tool = {
         maxBuffer: 10 * 1024 * 1024,
         shell: "/bin/bash",
         signal: ctx.signal, // 用户停止→杀子进程,别再干等超时
+        // 本地密钥以环境变量注入子进程：模型只写 $OPENAI_API_KEY 即可，全程不接触明文
+        env: ctx.env ? { ...process.env, ...ctx.env } : process.env,
       });
       const out = [stdout, stderr].filter(Boolean).join("\n").trim();
       return { content: out || "(无输出)" };
@@ -390,6 +393,132 @@ const webFetchTool: Tool = {
   },
 };
 
+// ---- Brain：本地概念知识网络（结构化、可检索、越用越准）----
+// 定位：把项目/服务器/脚本/注意事项等"高价值概念点"存成互相关联的网络，
+// 开工前先 brain_recall 取相关子图，避免每次全量扫文档、省 token。
+const brainRecallTool: Tool = {
+  name: "brain_recall",
+  description:
+    "从本地知识网络检索与当前任务相关的概念子图（项目背景、部署脚本位置、服务器分布、注意事项等结构化信息）。**每次开始一个涉及具体项目/部署/环境的任务前，先调用它**，按返回的结构化信息行动，不要凭空猜或去全量翻文档。返回为空说明网络里还没这块知识。",
+  readOnly: true, // 只读+轻量强化，安全，免权限确认，可并行
+  inputSchema: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "要检索的主题/概念，如 'figcheck 部署' 'fig07 服务器'" },
+      limit: { type: "number", description: "返回概念数上限，默认 6" },
+    },
+    required: ["query"],
+  },
+  async run(input): Promise<ToolResult> {
+    try {
+      const r = await brain.recall(String(input.query || ""), Number(input.limit) || 6);
+      return { content: r.text || "(知识网络中暂无相关概念；可用 brain_learn 记住新发现的知识)" };
+    } catch (e: any) {
+      return { content: `检索失败: ${e.message}`, isError: true };
+    }
+  },
+};
+
+const brainLearnTool: Tool = {
+  name: "brain_learn",
+  description:
+    "把一个高价值概念记进本地知识网络，或更新已有概念（同名自动合并、纠正旧信息）。用于沉淀固定不变的知识：项目是什么、git 路径、测试/线上环境、部署脚本位置、踩坑注意事项等。attrs 存结构化键值（如 {git:'~/...', 测试环境:'fig01'}）。发现旧记忆有误时，用同名 name 覆盖更新。",
+  readOnly: true, // 只写 minicc 自己的知识库，安全
+  inputSchema: {
+    type: "object",
+    properties: {
+      name: { type: "string", description: "概念主名，如 'figcheck'、'deploy_view_prod.sh'" },
+      type: { type: "string", description: "类型：项目/服务器/脚本/注意事项/命令/概念…" },
+      summary: { type: "string", description: "一句话摘要" },
+      aliases: { type: "array", items: { type: "string" }, description: "别名，可选" },
+      attrs: {
+        type: "object",
+        additionalProperties: { type: "string" },
+        description: "结构化属性键值对，如 {git路径:'...', 测试环境:'fig01', 部署脚本:'...'}",
+      },
+    },
+    required: ["name"],
+  },
+  async run(input): Promise<ToolResult> {
+    try {
+      const r = await brain.learn({
+        name: String(input.name),
+        type: input.type ? String(input.type) : undefined,
+        summary: input.summary ? String(input.summary) : undefined,
+        aliases: Array.isArray(input.aliases) ? (input.aliases as string[]) : undefined,
+        attrs: (input.attrs as Record<string, string>) || undefined,
+      });
+      return { content: `${r.created ? "已记住新概念" : "已更新概念"}：${r.name}` };
+    } catch (e: any) {
+      return { content: `写入失败: ${e.message}`, isError: true };
+    }
+  },
+};
+
+const brainLinkTool: Tool = {
+  name: "brain_link",
+  description:
+    "在两个概念间建立/强化一条有向关系，把知识串成网络。如 brain_link('figcheck','部署脚本','deploy_view_prod.sh')、('figcheck','线上服务器','fig03')。两端概念若不存在会自动占位创建。",
+  readOnly: true,
+  inputSchema: {
+    type: "object",
+    properties: {
+      from: { type: "string", description: "源概念名" },
+      relation: { type: "string", description: "关系名：部署脚本/测试环境/线上服务器/包含服务/注意事项/关联…" },
+      to: { type: "string", description: "目标概念名" },
+    },
+    required: ["from", "relation", "to"],
+  },
+  async run(input): Promise<ToolResult> {
+    try {
+      const r = await brain.link(String(input.from), String(input.relation), String(input.to));
+      return { content: r.msg, isError: !r.ok };
+    } catch (e: any) {
+      return { content: `建立关系失败: ${e.message}`, isError: true };
+    }
+  },
+};
+
+const brainForgetTool: Tool = {
+  name: "brain_forget",
+  description: "从知识网络删除一个错误/过时的概念（连带其所有关系）。仅在确认某概念确实错误时使用。",
+  readOnly: true,
+  inputSchema: {
+    type: "object",
+    properties: { name: { type: "string", description: "要删除的概念名" } },
+    required: ["name"],
+  },
+  async run(input): Promise<ToolResult> {
+    try {
+      const ok = brain.forget(String(input.name));
+      return { content: ok ? `已忘记：${input.name}` : `未找到概念：${input.name}` };
+    } catch (e: any) {
+      return { content: `删除失败: ${e.message}`, isError: true };
+    }
+  },
+};
+
+const brainReadDocTool: Tool = {
+  name: "brain_read_doc",
+  description:
+    "读取知识宫殿等文档库里某文件/文档块的原文。brain_recall 返回的『相关文档』只给摘要+路径；需要完整细节时用它按 file 路径读全文（长期大文本按需路由，不必全量扫）。",
+  readOnly: true,
+  inputSchema: {
+    type: "object",
+    properties: {
+      ref: { type: "string", description: "文档相对路径或块 id（brain_recall 返回的 file 值）" },
+    },
+    required: ["ref"],
+  },
+  async run(input): Promise<ToolResult> {
+    try {
+      return { content: brain.readDoc(String(input.ref || "")) };
+    } catch (e: any) {
+      return { content: `读取失败: ${e.message}`, isError: true };
+    }
+  },
+};
+
 export const ALL_TOOLS: Tool[] = [
   readTool,
   writeTool,
@@ -400,6 +529,11 @@ export const ALL_TOOLS: Tool[] = [
   webSearchTool,
   webFetchTool,
   rememberTool,
+  brainRecallTool,
+  brainLearnTool,
+  brainLinkTool,
+  brainForgetTool,
+  brainReadDocTool,
 ];
 
 export const TOOL_MAP: Map<string, Tool> = new Map(ALL_TOOLS.map((t) => [t.name, t]));

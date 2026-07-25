@@ -25,6 +25,8 @@ const EVENTS = [
   "evt:suggest",
   "evt:groups",
   "evt:assistant-replace",
+  "evt:brain-docs",
+  "evt:brain-concepts",
 ] as const;
 
 contextBridge.exposeInMainWorld("minicc", {
@@ -62,12 +64,97 @@ contextBridge.exposeInMainWorld("minicc", {
   setSettings: (s: unknown) => ipcRenderer.send("settings:set", s),
   getMemory: () => ipcRenderer.invoke("memory:get") as Promise<string>,
   setMemory: (text: string) => ipcRenderer.send("memory:set", text),
+  // 输入框草稿(文字+粘贴的图)实时存本地，重开自动恢复
+  draftGet: () => ipcRenderer.invoke("draft:get") as Promise<{ text: string; images: string[] }>,
+  draftSet: (draft: { text: string; images: string[] }) => ipcRenderer.send("draft:set", draft),
+  // 本地知识网络 Brain
+  brainGraph: () =>
+    ipcRenderer.invoke("brain:graph") as Promise<{
+      nodes: {
+        id: string;
+        name: string;
+        aliases: string[];
+        type: string;
+        summary: string;
+        attrs: Record<string, string>;
+        weight: number;
+        hits: number;
+        createdAt: number;
+        updatedAt: number;
+        lastHit?: number;
+      }[];
+      edges: { id: string; from: string; to: string; relation: string; weight: number; hits: number }[];
+    }>,
+  brainStats: () =>
+    ipcRenderer.invoke("brain:stats") as Promise<{ nodes: number; edges: number; embedded: number }>,
+  brainRecall: (query: string) => ipcRenderer.invoke("brain:recall", query) as Promise<string>,
+  brainWarmup: () => ipcRenderer.invoke("brain:warmup") as Promise<boolean>,
+  brainSaveNode: (node: unknown) => ipcRenderer.invoke("brain:save-node", node) as Promise<void>,
+  brainDeleteNode: (id: string) => ipcRenderer.invoke("brain:delete-node", id) as Promise<void>,
+  brainAddEdge: (from: string, relation: string, to: string) =>
+    ipcRenderer.invoke("brain:add-edge", from, relation, to) as Promise<void>,
+  brainDeleteEdge: (id: string) => ipcRenderer.invoke("brain:delete-edge", id) as Promise<void>,
+  brainDocStats: () =>
+    ipcRenderer.invoke("brain:doc-stats") as Promise<{ chunks: number; files: number; dir: string; builtAt: number }>,
+  brainBuildDocs: (dir: string) =>
+    ipcRenderer.invoke("brain:build-docs", dir) as Promise<{ chunks: number; files: number; dir: string; builtAt: number }>,
+  brainReadDoc: (ref: string) => ipcRenderer.invoke("brain:read-doc", ref) as Promise<string>,
+  // 索引构建进度 / 向量模型是否就绪(主进程真相源,关弹窗不丢)
+  brainDocProgress: () =>
+    ipcRenderer.invoke("brain:doc-progress") as Promise<{ building: boolean; phase: string; files: number; total: number; done: number; error?: string }>,
+  brainEmbedReady: () => ipcRenderer.invoke("brain:embed-ready") as Promise<boolean>,
+  // 概念抽取(用 k3 从已索引文档批量抽概念)：触发/查进度/停止
+  brainExtractConcepts: (opts?: { all?: boolean }) =>
+    ipcRenderer.invoke("brain:extract-concepts", opts || {}) as Promise<{ started: boolean; reason?: string }>,
+  brainConceptProgress: () =>
+    ipcRenderer.invoke("brain:concept-progress") as Promise<{ running: boolean; phase: string; total: number; done: number; created: number; skipped: number; cur?: string }>,
+  brainStopConcepts: () => ipcRenderer.send("brain:stop-concepts"),
   getMcp: () =>
     ipcRenderer.invoke("mcp:get") as Promise<{
       config: string;
       status: { name: string; status: string; error: string; tools: number }[];
     }>,
   setMcp: (text: string) => ipcRenderer.send("mcp:set", text),
+  // 本地密钥管理器
+  secretsList: () =>
+    ipcRenderer.invoke("secrets:list") as Promise<{
+      entries: { id: string; name: string; envVar: string; masked: string; note?: string; createdAt: number }[];
+      available: boolean;
+    }>,
+  secretsAdd: (input: { name?: string; envVar?: string; value: string; note?: string; force?: boolean }) =>
+    ipcRenderer.invoke("secrets:add", input) as Promise<{ ok: boolean; error?: string; entry?: any }>,
+  secretsUpdate: (id: string, patch: { name?: string; envVar?: string; note?: string; value?: string }) =>
+    ipcRenderer.invoke("secrets:update", id, patch) as Promise<{ ok: boolean; error?: string }>,
+  secretsDelete: (id: string) => ipcRenderer.invoke("secrets:delete", id) as Promise<{ ok: boolean }>,
+  secretsImportEnv: (text: string) =>
+    ipcRenderer.invoke("secrets:import-env", text) as Promise<{ ok: boolean; count?: number; error?: string }>,
+  secretsScan: (text: string) =>
+    ipcRenderer.invoke("secrets:scan", text) as Promise<{
+      redacted: string;
+      candidates: {
+        value: string;
+        masked: string;
+        kind: string;
+        suggestedName: string;
+        note?: string;
+        existing?: { id: string; name: string; note?: string };
+      }[];
+    }>,
+  secretsReveal: (pw: string) =>
+    ipcRenderer.invoke("secrets:reveal", pw) as Promise<{
+      ok: boolean;
+      error?: string;
+      items?: { id: string; value: string }[];
+    }>,
+  getTools: () =>
+    ipcRenderer.invoke("tools:get") as Promise<{
+      groups: {
+        source: string;
+        kind: "builtin" | "browser" | "mcp";
+        tools: { name: string; description: string; readOnly: boolean; inputSchema: any }[];
+      }[];
+      total: number;
+    }>,
   searchMcp: (query: string, cursor?: string) =>
     ipcRenderer.invoke("mcp:search", query, cursor) as Promise<{
       results: {
@@ -108,6 +195,7 @@ contextBridge.exposeInMainWorld("minicc", {
   platform: process.platform,
   winMinimize: () => ipcRenderer.send("win:minimize"),
   winMaximize: () => ipcRenderer.send("win:maximize"),
+  winIsMaximized: () => ipcRenderer.invoke("win:is-maximized") as Promise<boolean>,
   winClose: () => ipcRenderer.send("win:close"),
   checkConn: () =>
     ipcRenderer.invoke("conn:check") as Promise<{ status: "green" | "yellow" | "red"; reason: string }>,

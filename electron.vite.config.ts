@@ -28,13 +28,37 @@ export default defineConfig({
     // externalizeDepsPlugin: 把 node_modules 依赖 external（运行时 require），不 bundle；
     // external:["electron"]: electron 在 devDeps 不被上面处理，必须显式 external，
     // 否则 npm electron 包的 stub(spawnSync install.js)被打进主进程→启动即 fork bomb。
-    plugins: [externalizeDepsPlugin(), jsToTs],
+    // exclude: 把 transformers + onnxruntime-web 一起 bundle 进主进程（不 external），
+    // 这样下面的 alias 才能把 onnxruntime-node 换成 onnxruntime-web。
+    // 原因：onnxruntime-node 原生模块与 Electron 的 Node ABI 不兼容(加载即 SIGTRAP)，
+    // 改用 onnxruntime-web(wasm)在 Electron 里稳定运行。系统 node(CLI/测试)不受影响。
+    plugins: [externalizeDepsPlugin({ exclude: ["@xenova/transformers", "onnxruntime-web"] }), jsToTs],
     build: {
       outDir: "out/main",
       rollupOptions: {
-        input: resolve(root, "desktop/main/index.ts"),
-        external: ["electron"],
+        input: {
+          index: resolve(root, "desktop/main/index.ts"),
+          "embed-worker": resolve(root, "src/brain/embed-worker.ts"),
+        },
+        // sharp 是 transformers 的原生依赖(图像处理)，文本 embedding 用不到；external 让它
+        // 运行时从 unpacked 的 node_modules 加载，避免 bundle 后 sharp 的 .node 路径失效。
+        external: ["electron"], // sharp 走 alias stub，不再 external
+        // 主进程输出 CommonJS：bundle 进来的 onnxruntime-web 用了 __filename(CJS 全局)，
+        // 若输出 ESM(package type:module)会 ReferenceError 崩。CJS 下 __filename 原生可用。
+        output: {
+          format: "cjs",
+          entryFileNames: "[name].cjs",
+          chunkFileNames: "chunks/[name]-[hash].cjs",
+        },
       },
+    },
+    resolve: {
+      // transformers 静态 import 'onnxruntime-node'，在 Electron 会崩；alias 成 wasm 版
+      alias: {
+      "onnxruntime-node": "onnxruntime-web",
+      // 文本 embedding 不需要 sharp(图像)；stub 掉，避免其原生/依赖在打包环境加载失败
+      sharp: resolve(root, "src/brain/sharp-stub.mjs"),
+    },
     },
   },
   preload: {

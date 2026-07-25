@@ -1,6 +1,13 @@
 // Electron 主进程：创建窗口，复用 minicc 核心(agent/tools/config)，
 // 通过 IPC 把 Agent 流式 hooks 推给渲染进程，权限确认走 IPC 往返。
-import { app, BrowserWindow, WebContentsView, ipcMain, protocol, net, shell, session, clipboard, Menu } from "electron";
+import { app, BrowserWindow, WebContentsView, ipcMain, protocol, net, shell, session, clipboard, Menu, safeStorage } from "electron";
+const safeStorageOk = () => {
+  try {
+    return safeStorage.isEncryptionAvailable();
+  } catch {
+    return false;
+  }
+};
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -11,8 +18,10 @@ import { makeProvider } from "../../src/agent/provider.js";
 import { Agent } from "../../src/agent/loop.js";
 import { systemPrompt, renderPrompt, DEFAULT_SYSTEM_PROMPT } from "../../src/agent/prompt.js";
 import { ALL_TOOLS, TOOL_MAP, MEMORY_FILE } from "../../src/tools/index.js";
+import * as brain from "../../src/brain/index.js";
 import type { Tool, ToolResult } from "../../src/types.js";
-import { connectMcp, mcpTools, mcpStatus, loadMcpConfig, searchMcpRegistry, MCP_CONFIG_PATH } from "./mcp.js";
+import { connectMcp, mcpTools, mcpToolsBySource, mcpStatus, loadMcpConfig, searchMcpRegistry, MCP_CONFIG_PATH } from "./mcp.js";
+import * as secrets from "./secrets.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -794,6 +803,16 @@ function buildSysPrompt(cwd: string, model: string, providerId?: string): string
   base +=
     `\n\n## 长期记忆\n用户说“记住…/以后…/我喜欢…”或出现值得长期保留的信息(偏好、称呼、事实、项目背景)时，调用 remember 工具写入；它会在之后每次对话自动加载。`;
   if (mem) base += `\n\n已记住（需主动遵守/参考）：\n${mem}`;
+  // 本地知识网络（Brain）：概念化的项目/部署知识，按需 recall，不再全量注入
+  base +=
+    `\n\n## 本地知识网络（Brain）\n你有一个本地概念知识网络，沉淀着项目/服务器/脚本/部署/注意事项等结构化知识。\n- 涉及具体项目或部署/环境的任务，**开工前先用 brain_recall 检索**，按返回的结构化子图行动，别每次全量翻文档、省 token。\n- 发现值得长期固化的高价值知识（项目背景、git路径、测试/线上环境、部署脚本位置、踩坑注意事项）时，用 brain_learn 记住、brain_link 串联关系；旧信息有误就用同名 brain_learn 覆盖纠正。\n- brain_recall 还会命中知识宫殿等文档库的原文片段（『相关文档』），只给摘要+路径；需要完整内容时用 brain_read_doc 按该路径读全文，不必全量翻。`;
+  try {
+    const idx = brain.conceptIndex(40);
+    if (idx.length) base += `\n已沉淀的概念（可 brain_recall 展开）：${idx.join("、")}`;
+  } catch {
+    /* brain 不可用不影响主流程 */
+  }
+  base += secrets.SECRETS_SYSTEM_NOTE; // 告知模型：密钥走本地保险箱/环境变量，无需明文
   return base;
 }
 
@@ -935,9 +954,36 @@ const browserClickTool: Tool = {
   },
 };
 const BROWSER_TOOLS: Tool[] = [browserOpenTool, browserReadTool, browserClickTool];
-// 桌面版工具集 = 共享工具 + 浏览器工具 + 动态 MCP 工具(连上后加入)
+
+// 密钥安全包装：入参占位符→真实值回填、bash 注入密钥环境变量、工具结果→脱敏后再回给模型。
+// 闭环:模型能用密钥(env/占位符)但读不回明文(输出被脱敏)，想 echo 偷取也会被拦。
+function deepRehydrate(input: Record<string, unknown>): Record<string, unknown> {
+  const walk = (v: unknown): unknown => {
+    if (typeof v === "string") return secrets.rehydrate(v);
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === "object") {
+      const o: Record<string, unknown> = {};
+      for (const [k, val] of Object.entries(v)) o[k] = walk(val);
+      return o;
+    }
+    return v;
+  };
+  return walk(input) as Record<string, unknown>;
+}
+function wrapSecret(t: Tool): Tool {
+  return {
+    ...t,
+    async run(input, ctx) {
+      const realInput = deepRehydrate(input); // 占位符→明文，供本机执行
+      const r = await t.run(realInput, { ...ctx, env: secrets.envForTools() });
+      return { ...r, content: secrets.redact(r.content).text }; // 结果里的明文→占位符再回模型
+    },
+  };
+}
+
+// 桌面版工具集 = 共享工具 + 浏览器工具 + 动态 MCP 工具(连上后加入)，全部过密钥安全包装
 function desktopTools(): Tool[] {
-  return [...ALL_TOOLS, ...BROWSER_TOOLS, ...mcpTools()];
+  return [...ALL_TOOLS, ...BROWSER_TOOLS, ...mcpTools()].map(wrapSecret);
 }
 function desktopToolMap(): Map<string, Tool> {
   return new Map(desktopTools().map((t) => [t.name, t]));
@@ -1238,6 +1284,7 @@ app.on("window-all-closed", () => {
 // —— IPC：渲染 → 主 ——
 // 多任务：sid 指定跑哪个会话(前端传 currentId)，各会话各自异步、互不阻塞。事件都带 sid，前端只把当前可见会话的更新画出来。
 async function startTurn(useId: string, text: string, images?: string[], sysOverride?: string) {
+  text = secrets.redact(text).text; // 兜底：已入库密钥出现在消息里→占位符替换，永不出网到模型
   const agent = getAgent(useId);
   if (!agent) {
     send("evt:error", { sid: useId, message: "未初始化：缺少模型凭证。请确认 ~/.codex/auth.json 或设置 API key 后重启。" });
@@ -1316,6 +1363,7 @@ ipcMain.on("chat:send", (_e, sid: string, text: string, images?: string[]) => {
 // 运行中注入新需求：正在跑→注入到当前循环边界(AI 综合权衡/优先处理，不必等整轮跑完)；没在跑→当普通发送
 ipcMain.on("chat:inject", (_e, sid: string, text: string, images?: string[]) => {
   const useId = sid || currentId;
+  text = secrets.redact(text).text; // 同发送路径：注入的文本也脱敏
   const agent = getAgent(useId);
   if (agent && runs.has(useId)) {
     agent.injectUser(text, images);
@@ -1593,6 +1641,226 @@ ipcMain.on("memory:set", (_e, text: string) => {
   for (const a of agents.values()) a.setSystem(buildSysPrompt(cwd, modelLabel, loadSettings()?.providerId));
 });
 
+// —— 输入框草稿：实时落盘 ~/.minicc/draft.json，重开/更新后自动恢复(含粘贴的截图 base64) ——
+const DRAFT_FILE = join(homedir(), ".minicc", "draft.json");
+ipcMain.handle("draft:get", () => {
+  try {
+    return JSON.parse(readFileSync(DRAFT_FILE, "utf8"));
+  } catch {
+    return { text: "", images: [] };
+  }
+});
+ipcMain.on("draft:set", (_e, draft: { text?: string; images?: string[] }) => {
+  try {
+    mkdirSync(dirname(DRAFT_FILE), { recursive: true });
+    writeFileSync(
+      DRAFT_FILE,
+      JSON.stringify({ text: draft?.text || "", images: draft?.images || [] }),
+      "utf8",
+    );
+  } catch {
+    /* 落盘失败不影响发送 */
+  }
+});
+
+// —— 本地知识网络 Brain（设置里的"知识网络"面板 + 模型预热）——
+function refreshSysAfterBrain() {
+  for (const a of agents.values()) a.setSystem(buildSysPrompt(cwd, modelLabel, loadSettings()?.providerId));
+}
+ipcMain.handle("brain:graph", () => brain.getGraphLite());
+ipcMain.handle("brain:stats", () => brain.stats());
+ipcMain.handle("brain:recall", async (_e, query: string) => (await brain.recall(String(query || ""))).text);
+ipcMain.handle("brain:warmup", async () => brain.warmupEmbedder());
+ipcMain.handle("brain:save-node", async (_e, node) => {
+  await brain.saveNodeFromUI(node);
+  refreshSysAfterBrain();
+});
+ipcMain.handle("brain:delete-node", (_e, id: string) => {
+  brain.deleteNodeFromUI(String(id));
+  refreshSysAfterBrain();
+});
+ipcMain.handle("brain:add-edge", async (_e, from: string, relation: string, to: string) => {
+  await brain.addEdgeFromUI(String(from), String(relation), String(to));
+  refreshSysAfterBrain();
+});
+ipcMain.handle("brain:delete-edge", (_e, id: string) => brain.deleteEdgeFromUI(String(id)));
+// 文档冷存储（知识宫殿等）：建索引(带进度事件)/统计/读原文
+ipcMain.handle("brain:doc-stats", () => brain.docStats());
+
+// —— 索引构建进度：主进程为唯一真相源，关闭设置弹窗也不丢；渲染随时可查/订阅 ——
+type DocBuildState = {
+  building: boolean;
+  phase: string; // idle|scan|embed|done|error
+  files: number;
+  total: number;
+  done: number;
+  error?: string;
+};
+let docBuildState: DocBuildState = { building: false, phase: "idle", files: 0, total: 0, done: 0 };
+ipcMain.handle("brain:doc-progress", () => docBuildState);
+ipcMain.handle("brain:embed-ready", () => brain.embeddingReady());
+ipcMain.handle("brain:build-docs", async (_e, dir: string) => {
+  if (conceptState.running) throw new Error("正在抽取概念，请先停止或等它完成再重建索引（两者共用向量模型）");
+  const abs = String(dir).replace(/^~(?=\/|$)/, homedir());
+  docBuildState = { building: true, phase: "scan", files: 0, total: 0, done: 0 };
+  send("evt:brain-docs", docBuildState);
+  try {
+    await brain.buildDocs(abs, (p) => {
+      docBuildState = {
+        building: true,
+        phase: p.phase,
+        files: p.files ?? docBuildState.files,
+        total: p.total ?? docBuildState.total,
+        done: p.done ?? docBuildState.done,
+      };
+      send("evt:brain-docs", docBuildState);
+    });
+    docBuildState = { ...docBuildState, building: false, phase: "done" };
+  } catch (e: any) {
+    docBuildState = { ...docBuildState, building: false, phase: "error", error: e?.message || String(e) };
+  }
+  send("evt:brain-docs", docBuildState);
+  return brain.docStats();
+});
+ipcMain.handle("brain:read-doc", (_e, ref: string) => brain.readDoc(String(ref)));
+
+// —— 概念抽取：用当前对话模型(k3)从已索引文档「按文档级」批量抽概念+关系填进 graph ——
+// 按文档级(而非块级)大幅省 token：204 文档 = 204 次调用，非 3571 块。可停、进度持久、默认只抽未抽过的文档。
+const CONCEPTS_DONE_FILE = join(homedir(), ".minicc", "brain", "concepts-done.json");
+function loadConceptsDone(): Set<string> {
+  try {
+    return new Set(JSON.parse(readFileSync(CONCEPTS_DONE_FILE, "utf8")).files || []);
+  } catch {
+    return new Set();
+  }
+}
+function saveConceptsDone(s: Set<string>) {
+  try {
+    mkdirSync(dirname(CONCEPTS_DONE_FILE), { recursive: true });
+    writeFileSync(CONCEPTS_DONE_FILE, JSON.stringify({ files: [...s], updatedAt: Date.now() }), "utf8");
+  } catch {
+    /* ignore */
+  }
+}
+type ConceptState = {
+  running: boolean;
+  phase: string; // idle|run|done|stopped|error
+  total: number;
+  done: number;
+  created: number;
+  skipped: number;
+  cur?: string;
+  error?: string;
+};
+let conceptState: ConceptState = { running: false, phase: "idle", total: 0, done: 0, created: 0, skipped: 0 };
+let conceptCancel = false;
+ipcMain.handle("brain:concept-progress", () => conceptState);
+ipcMain.on("brain:stop-concepts", () => {
+  conceptCancel = true;
+});
+ipcMain.handle("brain:extract-concepts", (_e, opts: { all?: boolean }) => {
+  if (conceptState.running) return { started: false, reason: "已在运行" };
+  if (!provider) return { started: false, reason: "未配置模型" };
+  // 防并发:抽概念时每存一个概念要给它算向量,走的是索引重建正霸占的同一个 worker,
+  // 同时跑会互相饿死→龟速。索引没建完先拦住,提示用户等索引跑完再抽。
+  if (docBuildState.building)
+    return { started: false, reason: "索引正在构建，请等它跑完再抽概念（两者共用向量模型，同时跑会互相拖慢）" };
+  void runConceptExtraction(!!opts?.all); // 后台跑,不阻塞;进度走 evt:brain-concepts
+  return { started: true };
+});
+
+async function extractOneFile(file: string, body: string): Promise<number> {
+  const sys =
+    "你是知识图谱抽取器。从给定的中文文档片段中，抽取值得长期记住的【概念节点】与它们之间的【关系】。" +
+    "概念 = 项目/服务器/服务/脚本/工具/命令/注意事项/偏好/抽象概念 等有信息量的实体。" +
+    "只输出一个 JSON 对象，禁止任何解释、禁止代码围栏，格式严格为：" +
+    '{"concepts":[{"name":"规范短名","type":"类型","summary":"一句话摘要","aliases":["别名"]}],"relations":[{"from":"概念A","relation":"关系","to":"概念B"}]}。' +
+    "name 用最规范简短的名字；没有可抽的就返回 {\"concepts\":[],\"relations\":[]}。最多 12 个概念。";
+  const res = await provider!.complete(
+    sys,
+    [{ role: "user", content: [{ type: "text", text: `文档《${file}》片段：\n${body}\n\nJSON:` }] }] as any,
+    [],
+    {},
+  );
+  const raw = (res.content || [])
+    .filter((b: any) => b.type === "text")
+    .map((b: any) => b.text)
+    .join("")
+    .trim();
+  let parsed: any = null;
+  try {
+    parsed = JSON.parse(raw.replace(/^```(json)?/i, "").replace(/```\s*$/, "").trim());
+  } catch {
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (m) try { parsed = JSON.parse(m[0]); } catch { /* 放弃本篇 */ }
+  }
+  if (!parsed) return 0;
+  let n = 0;
+  for (const c of parsed.concepts || []) {
+    if (!c?.name) continue;
+    await brain.learn({
+      name: String(c.name).slice(0, 60),
+      type: c.type ? String(c.type).slice(0, 20) : "概念",
+      summary: c.summary ? String(c.summary).slice(0, 200) : "",
+      aliases: Array.isArray(c.aliases) ? c.aliases.slice(0, 8).map((a: any) => String(a).slice(0, 40)) : [],
+    });
+    n++;
+  }
+  for (const r of parsed.relations || []) {
+    if (!r?.from || !r?.to || !r?.relation) continue;
+    await brain.link(String(r.from).slice(0, 60), String(r.relation).slice(0, 20), String(r.to).slice(0, 60));
+  }
+  return n;
+}
+
+async function runConceptExtraction(all: boolean) {
+  conceptCancel = false;
+  const idx = brain.loadDocIndex();
+  const byFile = new Map<string, { headingPath: string; text: string }[]>();
+  for (const c of idx.chunks) {
+    if (!byFile.has(c.file)) byFile.set(c.file, []);
+    byFile.get(c.file)!.push({ headingPath: c.headingPath, text: c.text });
+  }
+  const done = all ? new Set<string>() : loadConceptsDone();
+  const files = [...byFile.keys()].filter((f) => all || !done.has(f));
+  conceptState = { running: true, phase: "run", total: files.length, done: 0, created: 0, skipped: 0 };
+  send("evt:brain-concepts", conceptState);
+  log("concept", `开始抽取:待处理 ${files.length} 篇(all=${all}),模型=${modelLabel}`);
+  for (const f of files) {
+    if (conceptCancel) {
+      conceptState = { ...conceptState, running: false, phase: "stopped" };
+      log("concept", `已停止:${conceptState.done}/${files.length} 篇, 累计 ${conceptState.created} 概念`);
+      break;
+    }
+    conceptState = { ...conceptState, cur: f };
+    send("evt:brain-concepts", conceptState);
+    let body = byFile
+      .get(f)!
+      .map((c) => (c.headingPath ? `〖${c.headingPath}〗\n${c.text}` : c.text))
+      .join("\n\n");
+    if (body.length > 6000) body = body.slice(0, 6000); // 单篇上限,控 token
+    const t0 = Date.now();
+    log("concept", `[${conceptState.done + 1}/${files.length}] 抽取中: ${f}`);
+    try {
+      const created = await extractOneFile(f, body);
+      conceptState = { ...conceptState, created: conceptState.created + created };
+      done.add(f);
+      saveConceptsDone(done);
+      log("concept", `[${conceptState.done + 1}/${files.length}] 完成: ${f} → +${created} 概念 (${Date.now() - t0}ms)`);
+    } catch (e: any) {
+      conceptState = { ...conceptState, skipped: conceptState.skipped + 1 };
+      log("concept", `[${conceptState.done + 1}/${files.length}] 失败(跳过): ${f} → ${e?.message || e}`);
+    }
+    conceptState = { ...conceptState, done: conceptState.done + 1 };
+    send("evt:brain-concepts", conceptState);
+  }
+  if (!conceptCancel) {
+    conceptState = { ...conceptState, running: false, phase: "done", cur: undefined };
+    log("concept", `全部完成:${conceptState.done} 篇, 共 ${conceptState.created} 概念, 跳过 ${conceptState.skipped}`);
+  }
+  send("evt:brain-concepts", conceptState);
+}
+
 // —— MCP 服务器(设置里配置) ——
 ipcMain.handle("mcp:get", () => {
   let config = "";
@@ -1617,6 +1885,87 @@ ipcMain.on("mcp:set", (_e, text: string) => {
   });
 });
 ipcMain.handle("mcp:search", (_e, query: string, cursor?: string) => searchMcpRegistry(query, cursor));
+
+// —— 本地密钥管理器 ——
+ipcMain.handle("secrets:list", () => {
+  try {
+    return { entries: secrets.listSecrets(), available: safeStorageOk() };
+  } catch {
+    return { entries: [], available: safeStorageOk() };
+  }
+});
+ipcMain.handle("secrets:add", (_e, input: { name?: string; envVar?: string; value: string; note?: string }) => {
+  try {
+    return { ok: true, entry: secrets.addSecret(input) };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+});
+ipcMain.handle("secrets:update", (_e, id: string, patch: any) => {
+  try {
+    secrets.updateSecret(id, patch);
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+});
+ipcMain.handle("secrets:delete", (_e, id: string) => {
+  secrets.deleteSecret(id);
+  return { ok: true };
+});
+ipcMain.handle("secrets:import-env", (_e, text: string) => {
+  try {
+    return { ok: true, count: secrets.importEnv(text) };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+});
+// 查看明文:先用本机账号密码校验(macOS dscl -authonly，不需 sudo)，通过才返回真实值
+ipcMain.handle("secrets:reveal", async (_e, pw: string) => {
+  try {
+    const { execFile } = await import("node:child_process");
+    const os = await import("node:os");
+    const user = os.userInfo().username;
+    const ok = await new Promise<boolean>((resolve) => {
+      const p = execFile("/usr/bin/dscl", [".", "-authonly", user, String(pw ?? "")], (err) => resolve(!err));
+      p.on("error", () => resolve(false));
+    });
+    if (!ok) return { ok: false, error: "密码不正确" };
+    return { ok: true, items: secrets.revealAll() };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+});
+// 发送前扫描：脱敏已入库密钥 + 返回尚未入库的疑似新密钥(给确认弹窗)。永不抛错,否则会挡住发送。
+ipcMain.handle("secrets:scan", (_e, text: string) => {
+  try {
+    // detect 用原文(才能发现"值已存在但描述不同"的重复)；redact 单独产出发给模型的脱敏版
+    return { redacted: secrets.redact(text).text, candidates: secrets.detect(text) };
+  } catch {
+    return { redacted: text, candidates: [] };
+  }
+});
+
+// 「工具」面板：把当前生效的全部工具（内置 + 浏览器 + 各 MCP 服务器）按来源分组返回
+ipcMain.handle("tools:get", () => {
+  const mk = (t: Tool) => ({
+    name: t.name,
+    description: t.description || "",
+    readOnly: !!t.readOnly,
+    inputSchema: t.inputSchema || { type: "object", properties: {} },
+  });
+  const groups: { source: string; kind: "builtin" | "browser" | "mcp"; tools: ReturnType<typeof mk>[] }[] = [
+    { source: "内置工具", kind: "builtin", tools: ALL_TOOLS.map(mk) },
+    { source: "浏览器", kind: "browser", tools: BROWSER_TOOLS.map(mk) },
+    ...mcpToolsBySource().map((g) => ({
+      source: g.server,
+      kind: "mcp" as const,
+      tools: g.tools.map(mk),
+    })),
+  ];
+  const total = groups.reduce((n, g) => n + g.tools.length, 0);
+  return { groups, total };
+});
 
 // —— 浏览器面板：把 WebContentsView 贴到主窗口指定区域(前端量好 bounds 发来) ——
 ipcMain.on("browser:show", (_e, b: { x: number; y: number; width: number; height: number }) => {

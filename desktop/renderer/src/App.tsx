@@ -228,7 +228,7 @@ export function App() {
     canGoForward?: boolean;
   }>({});
   const [showSettings, setShowSettings] = useState(false);
-  const [showAppSettings, setShowAppSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState("model"); // 统一设置页的初始/当前左侧菜单项
   const [curProviderId, setCurProviderId] = useState("");
   const [liveModels, setLiveModels] = useState<Record<string, string[]>>({}); // 各平台实时拉到的模型
   const [stations, setStations] = useState<Station[]>([]); // 自定义中转站
@@ -245,6 +245,71 @@ export function App() {
   const sidebarWRef = useRef(sidebarW);
   sidebarWRef.current = sidebarW;
   const [pendingImages, setPendingImages] = useState<string[]>([]);
+  // 输入框草稿持久化：文字+粘贴的截图实时落盘(~/.minicc/draft.json)，重开/更新后自动恢复。
+  // draftLoadedRef 保证「先加载完再回写」，避免初始空草稿把已存内容冲掉。
+  const draftLoadedRef = useRef(false);
+  useEffect(() => {
+    window.minicc
+      .draftGet()
+      .then((d) => {
+        if (d?.text) setInput(d.text);
+        if (d?.images?.length) setPendingImages(d.images);
+      })
+      .catch(() => {})
+      .finally(() => {
+        draftLoadedRef.current = true;
+      });
+  }, []);
+  useEffect(() => {
+    if (!draftLoadedRef.current) return;
+    const t = setTimeout(() => {
+      window.minicc.draftSet({ text: input, images: pendingImages });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [input, pendingImages]);
+  // 知识网络后台进度：主进程为真相源，无论设置弹窗开没开都持续订阅，供底部状态栏实时显示。
+  const [idxProg, setIdxProg] = useState<{
+    building: boolean;
+    phase: string;
+    files: number;
+    total: number;
+    done: number;
+  } | null>(null);
+  const [conProg, setConProg] = useState<{
+    running: boolean;
+    phase: string;
+    total: number;
+    done: number;
+    created: number;
+    cur?: string;
+  } | null>(null);
+  useEffect(() => {
+    window.minicc.brainDocProgress?.().then((s: any) => setIdxProg(s)).catch(() => {});
+    window.minicc.brainConceptProgress?.().then((s: any) => setConProg(s)).catch(() => {});
+    const off = window.minicc.onEvent((ch, p: any) => {
+      if (ch === "evt:brain-docs") setIdxProg(p);
+      else if (ch === "evt:brain-concepts") setConProg(p);
+    });
+    return off;
+  }, []);
+  // 发送前检测到的疑似新密钥→确认弹窗
+  type SecCand = {
+    value: string;
+    masked: string;
+    kind: string;
+    suggestedName: string;
+    note?: string;
+    existing?: { id: string; name: string; note?: string }; // 该值已在保险箱(备注不同)→三选一
+  };
+  const [secretPrompt, setSecretPrompt] = useState<{
+    text: string; // 原始文本(供存入后重新扫描)
+    redacted: string; // 已把已入库密钥换成占位符的版本(用于显示/发送)
+    imgs: string[];
+    inject: boolean;
+    candidates: SecCand[];
+    checked: boolean[]; // 新密钥:是否存入
+    dupChoice: ("new" | "overwrite" | "ignore")[]; // 重复项:新增/覆盖备注/忽略
+  } | null>(null);
   const [account, setAccount] = useState<{
     loggedIn: boolean;
     email: string | null;
@@ -354,6 +419,7 @@ export function App() {
   autoRef.current = autoMode;
   const streamRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true); // 用户是否贴着底部：滚上去看历史时暂停自动吸底，滚回底部再恢复
+  const forceBottomRef = useRef(false); // 切换会话:内容异步改高，需多帧兜底吸底(否则要点两下)
   const taRef = useRef<HTMLTextAreaElement>(null);
   const history = useRef<string[]>([]);
   const histIdx = useRef<number>(-1);
@@ -639,6 +705,7 @@ export function App() {
         case "evt:session-loaded":
           setCurrentId(payload.id);
           atBottomRef.current = true; // 打开/切换会话：定位到最新(底部)，不用手滚
+          forceBottomRef.current = true; // 切换会话：多帧兜底吸底，一次点击就到最新
           setItems(messagesToItems(payload.messages));
           break;
         case "evt:assistant-delta":
@@ -746,11 +813,22 @@ export function App() {
     if (!atBottomRef.current) return;
     const el = streamRef.current;
     if (!el) return;
-    el.scrollTo({ top: el.scrollHeight });
+    const toBottom = () => el.scrollTo({ top: el.scrollHeight });
+    toBottom();
     // 二次校正：长会话/代码高亮/图片会在下一帧改变高度，再吸一次确保真到底
     requestAnimationFrame(() => {
-      if (atBottomRef.current) el.scrollTo({ top: el.scrollHeight });
+      if (atBottomRef.current) toBottom();
     });
+    // 切换会话：内容(markdown/代码高亮/图片)会在随后几帧持续改变高度，多次兜底吸底，
+    // 保证一次点击就停在最新消息，而不用点两下。
+    if (forceBottomRef.current) {
+      forceBottomRef.current = false;
+      [50, 130, 260, 450].forEach((ms) =>
+        setTimeout(() => {
+          if (atBottomRef.current) toBottom();
+        }, ms),
+      );
+    }
   }, [items, busy, pending]);
 
   useEffect(() => {
@@ -863,6 +941,21 @@ export function App() {
     setInput("");
     setPendingImages([]);
     if (taRef.current) taRef.current.style.height = "auto";
+    window.minicc.draftSet({ text: "", images: [] }); // 发送后立即清空落盘草稿
+  }
+
+  // 真正把消息投递出去(注入 or 新发)——已入库密钥由主进程兜底脱敏
+  function dispatchMessage(text: string, imgs: string[], inject: boolean) {
+    if (inject) {
+      push({ type: "user", text, images: imgs.length ? imgs : undefined, ts: Date.now() });
+      if (text) {
+        history.current.push(text);
+        histIdx.current = history.current.length;
+      }
+      window.minicc.inject(currentId, text, imgs.length ? imgs : undefined);
+    } else {
+      doSend(text, imgs);
+    }
   }
 
   function submit() {
@@ -880,18 +973,68 @@ export function App() {
     }
     setSuggestion(""); // 发送后清掉旧的下一步建议(回复完会重新生成)
     const imgs = pendingImages;
-    if (busy) {
-      // 跑动中：实时注入到当前回合，AI 会在下一步综合权衡、优先处理，不必等整轮跑完
-      push({ type: "user", text, images: imgs.length ? imgs : undefined, ts: Date.now() });
-      if (text) {
-        history.current.push(text);
-        histIdx.current = history.current.length;
-      }
-      window.minicc.inject(currentId, text, imgs.length ? imgs : undefined);
+    const inject = busy; // 跑动中→注入到当前回合
+    // 铁律:发送绝不能依赖密钥扫描。扫描失败/无该接口都要照常发,主进程还会兜底脱敏。
+    const go = () => {
+      dispatchMessage(text, imgs, inject);
       clearComposer();
+    };
+    const scan = text ? window.minicc.secretsScan?.(text) : undefined;
+    if (!scan) {
+      go();
       return;
     }
-    doSend(text, imgs);
+    scan
+      .then((r) => {
+        if (r?.candidates?.length > 0) {
+          setSecretPrompt({
+            text,
+            redacted: r.redacted ?? text,
+            imgs,
+            inject,
+            candidates: r.candidates,
+            checked: r.candidates.map(() => true),
+            dupChoice: r.candidates.map(() => "ignore" as const),
+          });
+        } else {
+          // 用脱敏后的文本显示+发送:已入库密钥在气泡里也是占位符,不明文示人
+          dispatchMessage(r?.redacted ?? text, imgs, inject);
+          clearComposer();
+        }
+      })
+      .catch(() => go()); // 扫描出错→照常发
+  }
+
+  // 密钥确认弹窗：新密钥按勾选存入;重复项按三选一(新增/覆盖备注/忽略);再发送
+  async function confirmSecretPrompt(store: boolean) {
+    const sp = secretPrompt;
+    if (!sp) return;
+    let outText = sp.redacted; // 默认:已入库的已脱敏,新密钥保持原样(用户选了不存)
+    if (store) {
+      for (let i = 0; i < sp.candidates.length; i++) {
+        const c = sp.candidates[i];
+        if (c.existing) {
+          // 重复项:值已在保险箱,只处理备注/新增
+          const choice = sp.dupChoice[i];
+          if (choice === "new") {
+            await window.minicc.secretsAdd({ name: c.suggestedName, value: c.value, note: c.note, force: true });
+          } else if (choice === "overwrite") {
+            await window.minicc.secretsUpdate(c.existing.id, { note: c.note });
+          } // ignore: 不动
+        } else {
+          if (!sp.checked[i]) continue;
+          await window.minicc.secretsAdd({ name: c.suggestedName, value: c.value, note: c.note });
+        }
+      }
+      // 存好后重新扫描:刚入库的这批也会被替换成占位符
+      try {
+        outText = (await window.minicc.secretsScan(sp.text))?.redacted ?? sp.redacted;
+      } catch {
+        outText = sp.redacted;
+      }
+    }
+    setSecretPrompt(null);
+    dispatchMessage(outText, sp.imgs, sp.inject);
     clearComposer();
   }
 
@@ -1404,12 +1547,12 @@ export function App() {
                   {wuwei?.user.avatar ? (
                     <img src={wuwei.user.avatar} alt="" />
                   ) : (
-                    (wuwei?.user.name || wuwei?.user.email || "匿").slice(0, 1).toUpperCase()
+                    (wuwei?.user.name || wuwei?.user.email || "游").slice(0, 1).toUpperCase()
                   )}
                 </div>
                 <div
                   className="acct-name"
-                  title={wuwei ? wuwei.user.name || wuwei.user.email || "无为用户" : "匿名用户（未登录）"}
+                  title={wuwei ? wuwei.user.name || wuwei.user.email || "无为用户" : "游客（未登录）"}
                 >
                   {wuweiBusy ? (
                     "登录中…"
@@ -1419,7 +1562,7 @@ export function App() {
                       <span style={{ color: "#6F9FAD", marginLeft: 6 }}>⚡{wuwei.coin.balance}</span>
                     </>
                   ) : (
-                    "匿名用户"
+                    "游客"
                   )}
                 </div>
                 <span className="acct-caret">⋯</span>
@@ -1428,7 +1571,7 @@ export function App() {
                 <>
                   <div className="mq-overlay" onClick={() => setShowAcctMenu(false)} />
                   <div className="acct-menu">
-                    {/* 无为账号（与模型商账号合并进同一入口） */}
+                    {/* 无为账号（与模型商账号合并进同一入口）。未登录只给登录入口，设置等登录后才显示 */}
                     {wuwei ? (
                       <>
                         <div className="acct-menu-head">无为账号 · 无为币 {wuwei.coin.balance}</div>
@@ -1441,6 +1584,53 @@ export function App() {
                         >
                           退出无为账号
                         </button>
+                        <div className="acct-menu-head">模型 · {account.label || name}</div>
+                        <button
+                          className="acct-menu-item"
+                          onClick={() => {
+                            setShowAcctMenu(false);
+                            setSettingsTab("general");
+                            setShowSettings(true);
+                          }}
+                        >
+                          设置
+                        </button>
+                        {(account.providerId === "deepseek" ||
+                          account.providerId === "zhipu" ||
+                          account.providerId === "kimi-sub") && (
+                          <button
+                            className="acct-menu-item"
+                            onClick={async () => {
+                              setShowAcctMenu(false);
+                              setWebLoginBusy(true);
+                              await window.minicc.webLogin(account.providerId!);
+                              setWebLoginBusy(false);
+                            }}
+                          >
+                            {account.providerId === "kimi-sub"
+                              ? "浏览器登录（读取 5小时 / 周额度）"
+                              : `浏览器登录（抓头像 / 昵称${account.providerId === "zhipu" ? " / 余额" : ""}）`}
+                          </button>
+                        )}
+                        {account.expired && (
+                          <div className="acct-menu-note" style={{ color: "#e8a838" }}>
+                            ⚠{" "}
+                            {account.providerId === "kimi-sub"
+                              ? "Kimi 额度登录已过期，5小时/周额度无法显示。请点上方「浏览器登录」重新登录。"
+                              : "智谱登录已过期，余额无法显示。请点上方「浏览器登录」重新登录。"}
+                          </div>
+                        )}
+                        {account.providerId === "codex" && account.loggedIn && (
+                          <button
+                            className="acct-menu-item"
+                            onClick={() => {
+                              setShowAcctMenu(false);
+                              window.minicc.logout();
+                            }}
+                          >
+                            退出登录（ChatGPT）
+                          </button>
+                        )}
                       </>
                     ) : (
                       <button
@@ -1452,68 +1642,6 @@ export function App() {
                       >
                         登录 / 注册无为账号（注册领 100 无为币）
                       </button>
-                    )}
-                    <div className="acct-menu-head">模型 · {account.label || name}</div>
-                    <button
-                      className="acct-menu-item"
-                      onClick={() => {
-                        setShowAcctMenu(false);
-                        setShowSettings(true);
-                      }}
-                    >
-                      模型设置
-                    </button>
-                    <button
-                      className="acct-menu-item"
-                      onClick={() => {
-                        setShowAcctMenu(false);
-                        setShowAppSettings(true);
-                      }}
-                    >
-                      设置
-                    </button>
-                    {(account.providerId === "deepseek" ||
-                      account.providerId === "zhipu" ||
-                      account.providerId === "kimi-sub") && (
-                      <button
-                        className="acct-menu-item"
-                        onClick={async () => {
-                          setShowAcctMenu(false);
-                          setWebLoginBusy(true);
-                          await window.minicc.webLogin(account.providerId!);
-                          setWebLoginBusy(false);
-                        }}
-                      >
-                        {account.providerId === "kimi-sub"
-                          ? "浏览器登录（读取 5小时 / 周额度）"
-                          : `浏览器登录（抓头像 / 昵称${account.providerId === "zhipu" ? " / 余额" : ""}）`}
-                      </button>
-                    )}
-                    {account.expired && (
-                      <div className="acct-menu-note" style={{ color: "#e8a838" }}>
-                        ⚠{" "}
-                        {account.providerId === "kimi-sub"
-                          ? "Kimi 额度登录已过期，5小时/周额度无法显示。请点上方「浏览器登录」重新登录。"
-                          : "智谱登录已过期，余额无法显示。请点上方「浏览器登录」重新登录。"}
-                      </div>
-                    )}
-                    {account.providerId === "codex" && account.loggedIn && (
-                      <button
-                        className="acct-menu-item"
-                        onClick={() => {
-                          setShowAcctMenu(false);
-                          window.minicc.logout();
-                        }}
-                      >
-                        退出登录（ChatGPT）
-                      </button>
-                    )}
-                    {!account.loggedIn && (
-                      <div className="acct-menu-note">
-                        {account.providerId === "codex" || !account.providerId
-                          ? "未登录 · 终端运行 codex 登录，或去设置填 key"
-                          : "未登录 · 去设置填 API Key"}
-                      </div>
                     )}
                   </div>
                 </>
@@ -1970,6 +2098,46 @@ export function App() {
               </button>
             </div>
 
+            {/* 知识网络后台进度：索引构建 / 概念抽取，实时可见，点击进设置查看 */}
+            {(idxProg?.building || conProg?.running) && (
+              <button
+                className="brain-prog"
+                title="点击打开知识网络"
+                onClick={() => {
+                  setSettingsTab("brain");
+                  setShowSettings(true);
+                }}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "2px 8px",
+                  border: "1px solid var(--border, #e2e2e2)",
+                  borderRadius: 999,
+                  background: "var(--chip-bg, #f4f4f5)",
+                  fontSize: 11,
+                  color: "var(--text-2, #666)",
+                  whiteSpace: "nowrap",
+                  cursor: "pointer",
+                }}
+              >
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    background: "#3b82f6",
+                    animation: "pulse 1.2s ease-in-out infinite",
+                  }}
+                />
+                {idxProg?.building
+                  ? idxProg.phase === "scan"
+                    ? `索引·扫描 ${idxProg.files} 文档`
+                    : `索引 ${idxProg.done}/${idxProg.total || "…"} 块`
+                  : `抽概念 ${conProg?.done}/${conProg?.total}`}
+              </button>
+            )}
+
             <div className="model-quick">
               <button
                 className="mq-btn mq-prov"
@@ -2235,7 +2403,20 @@ export function App() {
           }}
         />
       )}
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showSettings && (
+        <SettingsModal
+          onClose={() => setShowSettings(false)}
+          liveModels={liveModels}
+          initialTab={settingsTab}
+          groupMode={groupMode}
+          onGroupMode={changeGroupMode}
+          streamMode={streamMode}
+          streamSpeed={streamSpeed}
+          onStream={changeStream}
+          keepRecent={keepRecent}
+          onKeepRecent={changeKeepRecent}
+        />
+      )}
       {/* 硬门槛登录框：未登录点发送时弹出（转化节点·注册领币） */}
       {showLoginGate && (
         <>
@@ -2306,17 +2487,72 @@ export function App() {
           </div>
         </>
       )}
-      {showAppSettings && (
-        <AppSettingsModal
-          onClose={() => setShowAppSettings(false)}
-          groupMode={groupMode}
-          onGroupMode={changeGroupMode}
-          streamMode={streamMode}
-          streamSpeed={streamSpeed}
-          onStream={changeStream}
-          keepRecent={keepRecent}
-          onKeepRecent={changeKeepRecent}
-        />
+      {secretPrompt && (
+        <div className="perm-overlay" onClick={() => setSecretPrompt(null)}>
+          <div className="add-st-dialog sec-prompt" onClick={(e) => e.stopPropagation()}>
+            <h3>🔒 检测到疑似密钥</h3>
+            <p className="s-note">
+              发现下面的敏感信息。勾选要存入本地密钥管理器的项——存入后会加密保存,并在发给 AI 前用占位符替换,之后每次自动识别。
+            </p>
+            <div className="sec-cand-list">
+              {secretPrompt.candidates.map((c, i) =>
+                c.existing ? (
+                  // 值已在保险箱、但这次描述不同→让用户三选一
+                  <div key={i} className="sec-cand sec-cand-dup">
+                    <div className="sec-cand-dup-top">
+                      <span className="sec-cand-kind dup">已存在</span>
+                      <span className="sec-cand-val">{c.masked}</span>
+                      <span className="sec-cand-meta">
+                        旧备注：{c.existing.note || "（无）"} → 新：<b>{c.note}</b>
+                      </span>
+                    </div>
+                    <div className="sec-seg">
+                      {(["new", "overwrite", "ignore"] as const).map((opt) => (
+                        <button
+                          key={opt}
+                          type="button"
+                          className={"sec-seg-btn" + (secretPrompt.dupChoice[i] === opt ? " on" : "")}
+                          onClick={() => {
+                            const dupChoice = [...secretPrompt.dupChoice];
+                            dupChoice[i] = opt;
+                            setSecretPrompt({ ...secretPrompt, dupChoice });
+                          }}
+                        >
+                          {opt === "new" ? "存为新的一条" : opt === "overwrite" ? "覆盖备注" : "不存"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <label key={i} className="sec-cand">
+                    <input
+                      type="checkbox"
+                      checked={secretPrompt.checked[i]}
+                      onChange={(e) => {
+                        const checked = [...secretPrompt.checked];
+                        checked[i] = e.target.checked;
+                        setSecretPrompt({ ...secretPrompt, checked });
+                      }}
+                    />
+                    <span className="sec-cand-kind">{c.kind}</span>
+                    <span className="sec-cand-val">{c.masked}</span>
+                    <span className="sec-cand-meta">
+                      → <b>{c.suggestedName}</b>
+                      {c.note ? ` · ${c.note}` : ""}
+                    </span>
+                  </label>
+                ),
+              )}
+            </div>
+            <div className="btns">
+              <button onClick={() => setSecretPrompt(null)}>取消发送</button>
+              <button onClick={() => confirmSecretPrompt(false)}>不存,直接发</button>
+              <button className="allow" onClick={() => confirmSecretPrompt(true)}>
+                存入并替换后发送
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {lightbox && (
         <div className="lightbox" onClick={() => setLightbox(null)}>
@@ -3562,7 +3798,58 @@ function migrateMcpDefaults(text: string): { text: string; changed: boolean } {
   return { text: changed ? JSON.stringify({ mcpServers: servers }, null, 2) : text, changed };
 }
 
-function SettingsModal({ onClose }: { onClose: () => void }) {
+// Brain 属性 <-> 文本（每行「键: 值」）互转，供知识网络面板编辑属性
+function attrsToText(attrs: Record<string, string>): string {
+  return Object.entries(attrs)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n");
+}
+function textToAttrs(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const i = line.indexOf(":");
+    if (i < 0) continue;
+    const k = line.slice(0, i).trim();
+    const v = line.slice(i + 1).trim();
+    if (k) out[k] = v;
+  }
+  return out;
+}
+
+function SettingsModal({
+  onClose,
+  liveModels,
+  initialTab,
+  groupMode,
+  onGroupMode,
+  streamMode,
+  streamSpeed,
+  onStream,
+  keepRecent,
+  onKeepRecent,
+}: {
+  onClose: () => void;
+  liveModels: Record<string, string[]>;
+  initialTab?: string;
+  groupMode: "manual" | "date" | "project";
+  onGroupMode: (m: "manual" | "date" | "project") => void;
+  streamMode: "typewriter" | "stream" | "instant";
+  streamSpeed: number;
+  onStream: (mode: "typewriter" | "stream" | "instant", speed: number) => void;
+  keepRecent: number;
+  onKeepRecent: (n: number) => void;
+}) {
+  // 界面主题（并入设置页「外观」）
+  const [uiTheme, setUiTheme] = useState("dark");
+  useEffect(() => {
+    window.minicc.getSettings().then((r: any) => setUiTheme(r?.settings?.theme || "dark"));
+  }, []);
+  async function pickTheme(t: string) {
+    setUiTheme(t);
+    document.documentElement.setAttribute("data-theme", t);
+    const r: any = await window.minicc.getSettings();
+    window.minicc.setSettings({ ...(r?.settings || {}), theme: t });
+  }
   const [pid, setPid] = useState("codex");
   const [model, setModel] = useState(PRESETS[0].models[0]);
   const [apiKey, setApiKey] = useState("");
@@ -3586,6 +3873,11 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [sCode, setSCode] = useState(""); // 设置里授权码输入
   const [creds, setCreds] = useState<Record<string, CredSlot>>({}); // 各平台凭证分槽
   const credsRef = useRef(creds); // 镜像最新 creds，避免切换时读到过时闭包(会误显示空 key→保存覆盖)
+  // ── 文档冷存储（知识宫殿等）──
+  const [docStat, setDocStat] = useState<{ chunks: number; files: number; dir: string; builtAt: number }>({ chunks: 0, files: 0, dir: "", builtAt: 0 });
+  const [docDir, setDocDir] = useState("~/Documents/tanxun/知识宫殿");
+  const [docBuilding, setDocBuilding] = useState(false);
+  const [docProg, setDocProg] = useState("");
   credsRef.current = creds;
   const loadedRef = useRef<any>({}); // 保存加载时的完整 settings，保存时 spread 保留 theme/app 等本页不管的字段
   const [stations, setStations] = useState<Station[]>([]); // 自定义中转站
@@ -3602,9 +3894,31 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   hiddenRef.current = hidden;
   const [dragOverIdx, setDragOverIdx] = useState(-1); // 拖拽悬停到第几行(高亮)
   const dragIdxRef = useRef(-1); // 拖起始行
-  const [tab, setTab] = useState<"model" | "platforms" | "prompt" | "memory" | "mcp">("model"); // 设置分块标签页
+  const [tab, setTab] = useState<
+    "general" | "display" | "model" | "platforms" | "prompt" | "memory" | "brain" | "mcp" | "tools" | "secrets"
+  >((initialTab as any) || "model"); // 设置分块标签页(左侧菜单)
+  const [maxed, setMaxed] = useState(false); // 设置弹窗最大化(知识网络等大结构需放大看)
   const [memory, setMemory] = useState(""); // 全局长期记忆
   const memoryTouchedRef = useRef(false); // 是否改过记忆(保存时才写)
+  // ── 本地知识网络 Brain ──
+  const [brainNodes, setBrainNodes] = useState<import("./env").BrainNodeLite[]>([]);
+  const [brainEdges, setBrainEdges] = useState<import("./env").BrainEdgeLite[]>([]);
+  const [brainStat, setBrainStat] = useState<{ nodes: number; edges: number; embedded: number }>({ nodes: 0, edges: 0, embedded: 0 });
+  const [brainFilter, setBrainFilter] = useState(""); // 概念列表过滤
+  const [brainSel, setBrainSel] = useState<string | null>(null); // 选中编辑的节点 id
+  const [brainDraft, setBrainDraft] = useState<import("./env").BrainNodeLite | null>(null); // 编辑草稿
+  const [brainRecallQ, setBrainRecallQ] = useState(""); // 检索测试输入
+  const [brainRecallOut, setBrainRecallOut] = useState(""); // 检索测试结果
+  const [brainWarming, setBrainWarming] = useState(false); // 模型预热中
+  const [brainWarmMsg, setBrainWarmMsg] = useState(""); // 预热结果提示
+  const [conExtract, setConExtract] = useState<{ running: boolean; phase: string; total: number; done: number; created: number; cur?: string } | null>(null); // 概念抽取进度
+  const [brainNewEdge, setBrainNewEdge] = useState({ relation: "", to: "" }); // 给选中节点加关系
+  const reloadBrain = () =>
+    Promise.all([window.minicc.brainGraph(), window.minicc.brainStats()]).then(([g, st]) => {
+      setBrainNodes(g.nodes);
+      setBrainEdges(g.edges);
+      setBrainStat(st);
+    });
   const [mcpConfig, setMcpConfig] = useState(""); // MCP 服务器配置(JSON，源真相)
   const [mcpStatus, setMcpStatus] = useState<
     { name: string; status: string; error: string; disabled?: boolean; toolInfos?: { name: string; description: string }[] }[]
@@ -3635,10 +3949,133 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [mcpLoadingMore, setMcpLoadingMore] = useState(false);
   const [mcpOnlineOpen, setMcpOnlineOpen] = useState<string | null>(null); // 展开详情的在线结果
   const mcpSearchRef = useRef(""); // 当前搜索词(翻页时校验没变)
+  // ── 工具面板：当前生效的全部工具（按来源分组）──
+  type ToolInfo = { name: string; description: string; readOnly: boolean; inputSchema: any };
+  type ToolGroup = { source: string; kind: "builtin" | "browser" | "mcp"; tools: ToolInfo[] };
+  const [toolGroups, setToolGroups] = useState<ToolGroup[]>([]);
+  const [toolTotal, setToolTotal] = useState(0);
+  const [toolView, setToolView] = useState<"list" | "json">("list"); // 列表 / JSON 视图
+  const [toolSel, setToolSel] = useState<ToolInfo | null>(null); // 点开看详情的工具
+  const [toolFilter, setToolFilter] = useState(""); // 工具名/描述过滤
+  // 切到「工具」页时拉一次当前工具集
+  useEffect(() => {
+    if (tab !== "tools") return;
+    window.minicc.getTools().then((r) => {
+      setToolGroups(r.groups);
+      setToolTotal(r.total);
+    });
+  }, [tab]);
+  // 切到「知识网络」页时拉一次图谱 + 文档库统计，并监听建索引/概念抽取进度。
+  // 关键：主进程是进度真相源——重开设置时先查一次当前状态回填，避免"关了再开状态就没了"。
+  useEffect(() => {
+    if (tab !== "brain") return;
+    reloadBrain();
+    window.minicc.brainDocStats().then((s) => {
+      setDocStat(s);
+      if (s.dir) setDocDir(s.dir);
+    });
+    // 回填：索引是否正在构建 + 向量模型是否已就绪 + 概念抽取是否在跑
+    window.minicc.brainDocProgress().then((d) => {
+      if (d?.building) {
+        setDocBuilding(true);
+        setDocProg(
+          d.phase === "scan" ? `扫描到 ${d.files} 个文档，开始向量化…` : `向量化 ${d.done}/${d.total} 块…`,
+        );
+      }
+    });
+    window.minicc.brainEmbedReady().then((r) => {
+      if (r) setBrainWarmMsg("✓ 向量模型就绪，语义检索已启用。");
+    });
+    window.minicc.brainConceptProgress().then((c) => setConExtract(c));
+    const off = window.minicc.onEvent((ch, p) => {
+      if (ch === "evt:brain-docs") {
+        const d = p as { building?: boolean; phase: string; files?: number; total?: number; done?: number };
+        if (d.phase === "scan") setDocProg(`扫描到 ${d.files} 个文档，开始向量化…`);
+        else if (d.phase === "embed") setDocProg(`向量化 ${d.done}/${d.total} 块…`);
+        else if (d.phase === "done") {
+          setDocProg(`✓ 完成，共 ${d.total} 块`);
+          setDocBuilding(false);
+          window.minicc.brainDocStats().then(setDocStat);
+        } else if (d.phase === "error") {
+          setDocProg("✗ 构建失败");
+          setDocBuilding(false);
+        }
+      } else if (ch === "evt:brain-concepts") {
+        const c = p as { running: boolean; phase: string; total: number; done: number; created: number; cur?: string };
+        setConExtract(c);
+        if (!c.running) reloadBrain(); // 抽完刷新概念/关系数
+      }
+    });
+    return off;
+  }, [tab]);
+  // ── 密钥管理器 ──
+  type SecretRow = { id: string; name: string; envVar: string; masked: string; note?: string; createdAt: number };
+  const [secrets, setSecrets] = useState<SecretRow[]>([]);
+  const [secretsAvail, setSecretsAvail] = useState(true);
+  const [secNew, setSecNew] = useState({ name: "", envVar: "", value: "", note: "" });
+  const [secMore, setSecMore] = useState(false); // 展开环境变量名/备注(默认收起)
+  const [secImportOpen, setSecImportOpen] = useState(false);
+  const [secImportText, setSecImportText] = useState("");
+  const [secErr, setSecErr] = useState("");
+  // 查看明文:需输入本机账号密码解锁(退出设置即失效——本状态随弹窗卸载清空)
+  const [revealed, setRevealed] = useState<Record<string, string> | null>(null);
+  const [unlockOpen, setUnlockOpen] = useState(false);
+  const [unlockPw, setUnlockPw] = useState("");
+  const [unlockErr, setUnlockErr] = useState("");
+  async function doUnlock() {
+    setUnlockErr("");
+    const r = await window.minicc.secretsReveal(unlockPw);
+    if (!r.ok) {
+      setUnlockErr(r.error || "验证失败");
+      return;
+    }
+    const map: Record<string, string> = {};
+    for (const it of r.items || []) map[it.id] = it.value;
+    setRevealed(map);
+    setUnlockOpen(false);
+    setUnlockPw("");
+  }
+  const reloadSecrets = () =>
+    window.minicc.secretsList().then((r) => {
+      setSecrets(r.entries);
+      setSecretsAvail(r.available);
+    });
+  useEffect(() => {
+    if (tab === "secrets") reloadSecrets();
+  }, [tab]);
+  async function addSecret() {
+    setSecErr("");
+    if (!secNew.value.trim()) {
+      setSecErr("请填入密钥值");
+      return;
+    }
+    const r = await window.minicc.secretsAdd({
+      name: secNew.name.trim() || undefined,
+      envVar: secNew.envVar.trim() || undefined,
+      value: secNew.value,
+      note: secNew.note.trim() || undefined,
+    });
+    if (!r.ok) {
+      setSecErr(r.error || "添加失败");
+      return;
+    }
+    setSecNew({ name: "", envVar: "", value: "", note: "" });
+    reloadSecrets();
+  }
+  async function doImportEnv() {
+    const r = await window.minicc.secretsImportEnv(secImportText);
+    if (r.ok) {
+      setSecImportText("");
+      setSecImportOpen(false);
+      reloadSecrets();
+    } else setSecErr(r.error || "导入失败");
+  }
   // 内置平台 + 中转站(合并成一份预设列表；下拉与查找都用它)
   const allPresets = [...PRESETS, ...stations.map(stationToPreset)];
   const orderedPresets = arrangePresets(allPresets, order, hidden, true);
   const preset = allPresets.find((p) => p.id === pid) ?? PRESETS[0];
+  // 模型下拉：预设在前(旗舰置顶)+ 平台实时拉到的新模型(liveModels，与底栏同源)，去重
+  const modelOptions = [...new Set([...(preset.models ?? []), ...(liveModels[pid] || [])])];
 
   // 把某平台槽里的凭证取出来填进字段(没存过就空/回退默认 baseUrl)
   function slotFields(c: Record<string, CredSlot>, id: string, p: Preset) {
@@ -4085,12 +4522,26 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
 
   return (
     <>
-    <div className="perm-overlay" onClick={onClose}>
-      <div className="settings tabbed" onClick={(e) => e.stopPropagation()}>
-        <h3>模型设置</h3>
-
-        {/* 分块：一个板块只干一件事 */}
-        <div className="set-tabs">
+    <div className="perm-overlay">
+      <div className={"settings tabbed sidenav" + (maxed ? " maxed" : "")} onClick={(e) => e.stopPropagation()}>
+        {/* 左侧竖排菜单 */}
+        <aside className="set-side">
+          <div className="set-side-title">设置</div>
+          <nav className="set-tabs">
+          <button
+            type="button"
+            className={"set-tab" + (tab === "general" ? " on" : "")}
+            onClick={() => setTab("general")}
+          >
+            通用
+          </button>
+          <button
+            type="button"
+            className={"set-tab" + (tab === "display" ? " on" : "")}
+            onClick={() => setTab("display")}
+          >
+            外观
+          </button>
           <button
             type="button"
             className={"set-tab" + (tab === "model" ? " on" : "")}
@@ -4121,14 +4572,189 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           </button>
           <button
             type="button"
+            className={"set-tab" + (tab === "brain" ? " on" : "")}
+            onClick={() => setTab("brain")}
+          >
+            知识网络
+          </button>
+          <button
+            type="button"
             className={"set-tab" + (tab === "mcp" ? " on" : "")}
             onClick={() => setTab("mcp")}
           >
             MCP
           </button>
-        </div>
+          <button
+            type="button"
+            className={"set-tab" + (tab === "tools" ? " on" : "")}
+            onClick={() => setTab("tools")}
+          >
+            工具
+          </button>
+          <button
+            type="button"
+            className={"set-tab" + (tab === "secrets" ? " on" : "")}
+            onClick={() => setTab("secrets")}
+          >
+            密钥
+          </button>
+          </nav>
+        </aside>
+
+        {/* 右侧主区：头(窗口按钮) + 内容 + 底部保存 */}
+        <div className="set-main">
+          <div className="set-main-head">
+            <div className="settings-winbtns">
+              <button
+                type="button"
+                className="set-win-btn"
+                title={maxed ? "还原窗口大小" : "最大化（同时把整个 minicc 窗口最大化铺满屏幕）"}
+                onClick={async () => {
+                  const next = !maxed;
+                  setMaxed(next);
+                  // 进入最大化时,把整个应用窗口也最大化——否则 96vw 弹窗只铺满小窗口、铺不满屏幕
+                  if (next && !(await window.minicc.winIsMaximized?.())) window.minicc.winMaximize();
+                }}
+              >
+                {maxed ? (
+                  <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="3" y="5" width="8" height="8" rx="1.3" stroke="currentColor" strokeWidth="1.4" />
+                    <path d="M5.5 5V3.5A1.2 1.2 0 016.7 2.3H12.5A1.2 1.2 0 0113.7 3.5V9.3A1.2 1.2 0 0112.5 10.5H11" stroke="currentColor" strokeWidth="1.4" />
+                  </svg>
+                ) : (
+                  <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="2.8" y="2.8" width="10.4" height="10.4" rx="1.4" stroke="currentColor" strokeWidth="1.4" />
+                  </svg>
+                )}
+              </button>
+              <button type="button" className="set-win-btn" title="关闭" onClick={onClose}>
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
+          </div>
 
         <div className="set-body">
+          {/* ── 通用：会话分组 + 上下文压缩 + 账号读取 ── */}
+          {tab === "general" && (
+            <>
+              <div className="app-set-group">会话分组</div>
+              <div className="theme-pick" style={{ marginBottom: "6px" }}>
+                {[
+                  { id: "manual", label: "手动分组" },
+                  { id: "date", label: "按日期" },
+                  { id: "project", label: "按项目" },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className={"theme-opt" + (groupMode === m.id ? " on" : "")}
+                    onClick={() => onGroupMode(m.id as any)}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <div className="app-set-hint" style={{ marginBottom: "16px" }}>
+                手动：右键会话移动/新建分组、可拖拽排序；按日期/按项目：自动分组（项目名由 AI 按会话内容归纳）。
+              </div>
+              <div className="app-set-group">上下文压缩</div>
+              <div className="app-set-row" style={{ cursor: "default", gap: "10px" }}>
+                <div className="app-set-label" style={{ whiteSpace: "nowrap" }}>
+                  保留最近条数
+                </div>
+                <input
+                  type="range"
+                  min={4}
+                  max={40}
+                  step={2}
+                  value={keepRecent}
+                  onChange={(e) => onKeepRecent(Number(e.target.value))}
+                  style={{ flex: 1 }}
+                />
+                <div className="app-set-hint" style={{ minWidth: 40, textAlign: "right" }}>
+                  {keepRecent} 条
+                </div>
+              </div>
+              <div className="app-set-hint" style={{ marginBottom: "16px" }}>
+                上下文超限时，会把更早的消息总结成要点摘要、保留最近这么多条原文。数字越大越不易“失忆”，但更费上下文。
+              </div>
+              <div className="app-set-group">Claude 订阅</div>
+              <div className="app-set-row" style={{ cursor: "default" }}>
+                <div className="app-set-text">
+                  <div className="app-set-label">账号信息自动读取</div>
+                  <div className="app-set-hint">
+                    用户名 / 邮箱 / 套餐直接从本机 Claude Code 配置（~/.claude.json）读取，随 Claude Code
+                    自动保持最新，无需登录或填 token。额度（5小时/周）发消息后从响应头刷新。
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── 外观：输出方式 + 界面主题 ── */}
+          {tab === "display" && (
+            <>
+              <div className="app-set-group">输出方式</div>
+              <div className="theme-pick" style={{ marginBottom: "6px" }}>
+                {[
+                  { id: "stream", label: "流式（一下出）" },
+                  { id: "typewriter", label: "打字机（匀速）" },
+                  { id: "instant", label: "回完一次性" },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className={"theme-opt" + (streamMode === m.id ? " on" : "")}
+                    onClick={() => onStream(m.id as any, streamSpeed)}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              {streamMode === "typewriter" && (
+                <div className="app-set-row" style={{ cursor: "default", gap: "10px" }}>
+                  <div className="app-set-label" style={{ whiteSpace: "nowrap" }}>
+                    打字机速度
+                  </div>
+                  <input
+                    type="range"
+                    min={80}
+                    max={2000}
+                    step={20}
+                    value={streamSpeed}
+                    onChange={(e) => onStream("typewriter", Number(e.target.value))}
+                    style={{ flex: 1 }}
+                  />
+                  <div className="app-set-hint" style={{ minWidth: 66, textAlign: "right" }}>
+                    {streamSpeed} 字/秒
+                  </div>
+                </div>
+              )}
+              <div className="app-set-hint" style={{ marginBottom: "16px" }}>
+                流式=收到即刻整批显示；打字机=匀速逐字，最丝滑；回完一次性=回复期间不显示、完成后整段出。
+              </div>
+              <div className="app-set-group">界面主题</div>
+              <div className="theme-pick" style={{ marginBottom: "14px" }}>
+                {[
+                  { id: "dark", label: "暗色" },
+                  { id: "light", label: "白色" },
+                  { id: "gold", label: "淡金" },
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className={"theme-opt theme-" + t.id + (uiTheme === t.id ? " on" : "")}
+                    onClick={() => pickTheme(t.id)}
+                  >
+                    <span className="theme-sw" />
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           {/* ── 板块一：模型（选平台 / 打通模型 / 填凭证）── */}
           {tab === "model" && (
             <>
@@ -4165,7 +4791,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
 
               <label className="field">
                 <span>模型</span>
-                {preset.models.length > 0 && !customModel ? (
+                {modelOptions.length > 0 && !customModel ? (
                   <select
                     value={model}
                     onChange={(e) => {
@@ -4177,7 +4803,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                       }
                     }}
                   >
-                    {preset.models.map((m) => (
+                    {modelOptions.map((m) => (
                       <option key={m} value={m}>
                         {m}
                       </option>
@@ -4507,6 +5133,386 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
+          {/* ── 板块 · 知识网络 Brain（概念图谱：查看/检索/编辑）── */}
+          {tab === "brain" &&
+            (() => {
+              const q = brainFilter.trim().toLowerCase();
+              const filteredNodes = q
+                ? brainNodes.filter(
+                    (n) =>
+                      n.name.toLowerCase().includes(q) ||
+                      n.type.toLowerCase().includes(q) ||
+                      n.summary.toLowerCase().includes(q) ||
+                      n.aliases.some((a) => a.toLowerCase().includes(q)),
+                  )
+                : brainNodes;
+              const sorted = [...filteredNodes].sort((a, b) => b.weight - a.weight);
+              const nodeName = (id: string) => brainNodes.find((n) => n.id === id)?.name || id;
+              return (
+                <div className="prompt-pane" style={{ display: "flex", flexDirection: "column", gap: 10, minHeight: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    <span className="s-note" style={{ margin: 0 }}>
+                      概念 <b>{brainStat.nodes}</b> · 关系 <b>{brainStat.edges}</b> · 已向量化{" "}
+                      <b>{brainStat.embedded}</b>/{brainStat.nodes}
+                    </span>
+                    <button type="button" onClick={() => reloadBrain()}>
+                      刷新
+                    </button>
+                    <button
+                      type="button"
+                      disabled={brainWarming}
+                      onClick={async () => {
+                        setBrainWarming(true);
+                        setBrainWarmMsg("正在加载本地向量模型（首次约120MB，走镜像可能要几分钟）…");
+                        const ok = await window.minicc.brainWarmup();
+                        setBrainWarming(false);
+                        setBrainWarmMsg(
+                          ok
+                            ? "✓ 向量模型就绪，语义检索已启用。"
+                            : "✗ 模型加载失败，已退化为关键词检索，可稍后重试。",
+                        );
+                        reloadBrain();
+                      }}
+                    >
+                      {brainWarming ? "加载中…" : "启用/预热向量模型"}
+                    </button>
+                    {brainWarmMsg && (
+                      <span className="s-note" style={{ margin: 0 }}>
+                        {brainWarmMsg}
+                      </span>
+                    )}
+                  </div>
+
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input
+                      style={{ flex: 1 }}
+                      placeholder="试检索：如「figcheck 部署」——看看大脑会给出什么"
+                      value={brainRecallQ}
+                      onChange={(e) => setBrainRecallQ(e.target.value)}
+                      onKeyDown={async (e) => {
+                        if (e.key === "Enter")
+                          setBrainRecallOut((await window.minicc.brainRecall(brainRecallQ)) || "(无命中)");
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={async () =>
+                        setBrainRecallOut((await window.minicc.brainRecall(brainRecallQ)) || "(无命中)")
+                      }
+                    >
+                      检索
+                    </button>
+                  </div>
+                  {brainRecallOut && (
+                    <pre
+                      style={{
+                        margin: 0,
+                        maxHeight: 140,
+                        overflow: "auto",
+                        fontSize: 12,
+                        whiteSpace: "pre-wrap",
+                        opacity: 0.85,
+                        background: "rgba(127,127,127,0.08)",
+                        padding: 8,
+                        borderRadius: 6,
+                      }}
+                    >
+                      {brainRecallOut}
+                    </pre>
+                  )}
+
+                  <div style={{ display: "flex", gap: 12, flex: 1, minHeight: 0 }}>
+                    {/* 左：概念列表 */}
+                    <div style={{ width: 220, display: "flex", flexDirection: "column", gap: 6, minHeight: 0 }}>
+                      <input
+                        placeholder="过滤概念…"
+                        value={brainFilter}
+                        onChange={(e) => setBrainFilter(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBrainSel(null);
+                          setBrainDraft({
+                            id: "",
+                            name: "",
+                            aliases: [],
+                            type: "概念",
+                            summary: "",
+                            attrs: {},
+                            weight: 1,
+                            hits: 0,
+                            createdAt: 0,
+                            updatedAt: 0,
+                          });
+                        }}
+                      >
+                        + 新概念
+                      </button>
+                      <div style={{ overflow: "auto", flex: 1 }}>
+                        {sorted.map((n) => (
+                          <div
+                            key={n.id}
+                            onClick={() => {
+                              setBrainSel(n.id);
+                              setBrainDraft({ ...n, attrs: { ...n.attrs }, aliases: [...n.aliases] });
+                            }}
+                            style={{
+                              padding: "6px 8px",
+                              cursor: "pointer",
+                              borderRadius: 6,
+                              background: brainSel === n.id ? "rgba(127,127,127,0.18)" : "transparent",
+                            }}
+                          >
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{n.name}</div>
+                            <div className="s-note" style={{ margin: 0 }}>
+                              {n.type} · 命中{n.hits}
+                            </div>
+                          </div>
+                        ))}
+                        {sorted.length === 0 && (
+                          <div className="s-note">暂无概念。对话中让模型 brain_learn，或点「+ 新概念」手动加。</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 右：详情编辑 */}
+                    <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+                      {!brainDraft ? (
+                        <div className="s-note">← 选择左侧概念查看/编辑，或点「+ 新概念」。</div>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          <label className="field">
+                            <span>名称</span>
+                            <input
+                              value={brainDraft.name}
+                              onChange={(e) => setBrainDraft({ ...brainDraft, name: e.target.value })}
+                            />
+                          </label>
+                          <label className="field">
+                            <span>类型</span>
+                            <input
+                              value={brainDraft.type}
+                              placeholder="项目/服务器/脚本/注意事项…"
+                              onChange={(e) => setBrainDraft({ ...brainDraft, type: e.target.value })}
+                            />
+                          </label>
+                          <label className="field">
+                            <span>摘要</span>
+                            <input
+                              value={brainDraft.summary}
+                              onChange={(e) => setBrainDraft({ ...brainDraft, summary: e.target.value })}
+                            />
+                          </label>
+                          <label className="field">
+                            <span>别名（逗号分隔）</span>
+                            <input
+                              value={brainDraft.aliases.join(", ")}
+                              onChange={(e) =>
+                                setBrainDraft({
+                                  ...brainDraft,
+                                  aliases: e.target.value
+                                    .split(/[,，]/)
+                                    .map((s) => s.trim())
+                                    .filter(Boolean),
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="field">
+                            <span>结构化属性（每行 键: 值）</span>
+                            <textarea
+                              className="sysprompt-area"
+                              style={{ minHeight: 90 }}
+                              value={attrsToText(brainDraft.attrs)}
+                              placeholder={"git路径: ~/...\n测试环境: fig01\n部署脚本: ..."}
+                              onChange={(e) => setBrainDraft({ ...brainDraft, attrs: textToAttrs(e.target.value) })}
+                            />
+                          </label>
+                          {brainDraft.id && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                              <span className="s-note" style={{ margin: 0 }}>
+                                关系
+                              </span>
+                              {brainEdges
+                                .filter((ed) => ed.from === brainDraft.id)
+                                .map((ed) => (
+                                  <div key={ed.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                    <span style={{ fontSize: 13 }}>
+                                      ──{ed.relation}→ {nodeName(ed.to)}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        await window.minicc.brainDeleteEdge(ed.id);
+                                        reloadBrain();
+                                      }}
+                                    >
+                                      删
+                                    </button>
+                                  </div>
+                                ))}
+                              <div style={{ display: "flex", gap: 6 }}>
+                                <input
+                                  style={{ width: 110 }}
+                                  placeholder="关系名"
+                                  value={brainNewEdge.relation}
+                                  onChange={(e) => setBrainNewEdge({ ...brainNewEdge, relation: e.target.value })}
+                                />
+                                <input
+                                  style={{ flex: 1 }}
+                                  placeholder="目标概念名"
+                                  value={brainNewEdge.to}
+                                  onChange={(e) => setBrainNewEdge({ ...brainNewEdge, to: e.target.value })}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (brainNewEdge.relation.trim() && brainNewEdge.to.trim()) {
+                                      await window.minicc.brainAddEdge(
+                                        brainDraft.name,
+                                        brainNewEdge.relation.trim(),
+                                        brainNewEdge.to.trim(),
+                                      );
+                                      setBrainNewEdge({ relation: "", to: "" });
+                                      reloadBrain();
+                                    }
+                                  }}
+                                >
+                                  加关系
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!brainDraft.name.trim()) return;
+                                await window.minicc.brainSaveNode({
+                                  id: brainDraft.id || undefined,
+                                  name: brainDraft.name.trim(),
+                                  type: brainDraft.type,
+                                  summary: brainDraft.summary,
+                                  aliases: brainDraft.aliases,
+                                  attrs: brainDraft.attrs,
+                                });
+                                await reloadBrain();
+                                setBrainWarmMsg("✓ 已保存");
+                              }}
+                            >
+                              保存
+                            </button>
+                            {brainDraft.id && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  await window.minicc.brainDeleteNode(brainDraft.id);
+                                  setBrainDraft(null);
+                                  setBrainSel(null);
+                                  reloadBrain();
+                                }}
+                              >
+                                删除概念
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      borderTop: "1px solid var(--border)",
+                      paddingTop: 10,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 6,
+                    }}
+                  >
+                    <span className="s-note" style={{ margin: 0 }}>
+                      📚 文档库（冷存储 · 知识宫殿等长期大文本，按需路由读原文）· 已索引{" "}
+                      <b>{docStat.chunks}</b> 块 / <b>{docStat.files}</b> 文档
+                    </span>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input
+                        style={{ flex: 1 }}
+                        placeholder="要索引的目录，如 ~/Documents/tanxun/知识宫殿"
+                        value={docDir}
+                        onChange={(e) => setDocDir(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        disabled={docBuilding || conExtract?.running || !docDir.trim()}
+                        onClick={async () => {
+                          setDocBuilding(true);
+                          setDocProg("准备…");
+                          try {
+                            const s = await window.minicc.brainBuildDocs(docDir.trim());
+                            setDocStat(s);
+                          } catch (e: any) {
+                            setDocProg("✗ " + (e?.message || "构建失败"));
+                          } finally {
+                            setDocBuilding(false);
+                          }
+                        }}
+                      >
+                        {docBuilding ? "索引中…" : docStat.chunks > 0 ? "重建索引" : "建立索引"}
+                      </button>
+                    </div>
+                    {docProg && (
+                      <span className="s-note" style={{ margin: 0 }}>
+                        {docProg}
+                      </span>
+                    )}
+                    {/* 概念抽取：用当前对话模型(k3)从已索引文档批量抽概念+关系填进 graph。按文档级调用，省 token；可停。 */}
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        disabled={docStat.files === 0 || conExtract?.running}
+                        title="用当前模型从已索引文档抽取概念与关系，填进知识网络（默认只抽未抽过的文档）"
+                        onClick={async () => {
+                          const r = await window.minicc.brainExtractConcepts({ all: false });
+                          if (!r.started) setBrainWarmMsg("✗ " + (r.reason || "无法开始抽取"));
+                        }}
+                      >
+                        {conExtract?.running ? "抽取中…" : "抽取概念(新增)"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={docStat.files === 0 || conExtract?.running}
+                        title="忽略已抽记录，对全部文档重新抽取（更费 token）"
+                        onClick={async () => {
+                          const r = await window.minicc.brainExtractConcepts({ all: true });
+                          if (!r.started) setBrainWarmMsg("✗ " + (r.reason || "无法开始抽取"));
+                        }}
+                      >
+                        全部重抽
+                      </button>
+                      {conExtract?.running && (
+                        <button type="button" className="allow" onClick={() => window.minicc.brainStopConcepts()}>
+                          停止
+                        </button>
+                      )}
+                      {conExtract && (conExtract.running || conExtract.phase === "done" || conExtract.phase === "stopped") && (
+                        <span className="s-note" style={{ margin: 0 }}>
+                          {conExtract.running
+                            ? `抽取 ${conExtract.done}/${conExtract.total} 篇 · 已生成 ${conExtract.created} 概念${conExtract.cur ? " · " + conExtract.cur : ""}`
+                            : conExtract.phase === "stopped"
+                              ? `已停止（${conExtract.done}/${conExtract.total} 篇，${conExtract.created} 概念）`
+                              : `✓ 抽取完成，共 ${conExtract.created} 概念`}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <p className="s-note pp-fixed">
+                    存于 <code>~/.minicc/brain/graph.json</code>，向量模型在 <code>~/.minicc/brain/models</code>。
+                    模型对话中调用 brain_learn/brain_link 会自动往这里长知识；「抽取概念」按钮可用 k3 从文档批量补概念。
+                  </p>
+                </div>
+              );
+            })()}
+
           {/* ── 板块五：MCP 服务器管理（列表/搜索/安装/启停/删除）── */}
           {tab === "mcp" &&
             (() => {
@@ -4776,6 +5782,256 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                 </div>
               );
             })()}
+
+          {/* ── 板块六：工具（当前生效的全部工具，列表/JSON 视图 + 详情）── */}
+          {tab === "tools" &&
+            (() => {
+              const q = toolFilter.trim().toLowerCase();
+              const filtered = toolGroups
+                .map((g) => ({
+                  ...g,
+                  tools: q
+                    ? g.tools.filter(
+                        (t) =>
+                          t.name.toLowerCase().includes(q) ||
+                          t.description.toLowerCase().includes(q),
+                      )
+                    : g.tools,
+                }))
+                .filter((g) => g.tools.length > 0);
+              const shownTotal = filtered.reduce((n, g) => n + g.tools.length, 0);
+              const badge = (kind: ToolGroup["kind"]) =>
+                kind === "builtin" ? "内置" : kind === "browser" ? "浏览器" : "MCP";
+              return (
+                <div className="tools-pane">
+                  <div className="tools-bar">
+                    <input
+                      className="mcp-search"
+                      value={toolFilter}
+                      onChange={(e) => setToolFilter(e.target.value)}
+                      placeholder={`搜索工具名 / 描述…（共 ${toolTotal} 个）`}
+                    />
+                    <div className="tools-viewsw">
+                      <button
+                        type="button"
+                        className={"tv-btn" + (toolView === "list" ? " on" : "")}
+                        onClick={() => setToolView("list")}
+                      >
+                        列表
+                      </button>
+                      <button
+                        type="button"
+                        className={"tv-btn" + (toolView === "json" ? " on" : "")}
+                        onClick={() => setToolView("json")}
+                      >
+                        JSON
+                      </button>
+                    </div>
+                  </div>
+
+                  {toolView === "json" ? (
+                    <pre className="tools-json">
+                      {JSON.stringify(
+                        filtered.map((g) => ({
+                          source: g.source,
+                          kind: g.kind,
+                          tools: g.tools.map((t) => ({
+                            name: t.name,
+                            description: t.description,
+                            readOnly: t.readOnly,
+                            inputSchema: t.inputSchema,
+                          })),
+                        })),
+                        null,
+                        2,
+                      )}
+                    </pre>
+                  ) : filtered.length === 0 ? (
+                    <div className="mcp-empty">没有匹配的工具</div>
+                  ) : (
+                    filtered.map((g) => (
+                      <div key={g.source} className="tools-group">
+                        <div className="tools-group-h">
+                          <span className={"tools-badge k-" + g.kind}>{badge(g.kind)}</span>
+                          <span className="tools-group-name">{g.source}</span>
+                          <span className="tools-group-n">{g.tools.length}</span>
+                        </div>
+                        {g.tools.map((t) => (
+                          <button
+                            key={t.name}
+                            type="button"
+                            className="tool-row"
+                            onClick={() => setToolSel(t)}
+                          >
+                            <span className="tool-name">
+                              {t.name}
+                              {t.readOnly && <span className="tool-ro">只读</span>}
+                            </span>
+                            <span className="tool-desc">{t.description}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ))
+                  )}
+                  {toolView === "list" && (
+                    <div className="tools-count">
+                      显示 {shownTotal} / {toolTotal} 个工具
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+          {/* ── 板块七：密钥（本地加密保险箱，统一管理敏感密钥）── */}
+          {tab === "secrets" && (
+            <div className="secrets-pane">
+              <p className="s-note">
+                密钥本地加密存储(系统钥匙串),明文永不落盘、也永不发给模型。发送时命中的密钥自动用占位符替换,本机执行时以环境变量/占位符回填。
+                {!secretsAvail && <b style={{ color: "var(--danger, #c0392b)" }}> ⚠ 当前系统加密不可用,暂无法安全存储。</b>}
+              </p>
+
+              <div className="sec-add">
+                <div className="sec-add-row">
+                  <input
+                    className="sec-in"
+                    placeholder="名称 (如 openai_api_key)"
+                    value={secNew.name}
+                    onChange={(e) => setSecNew({ ...secNew, name: e.target.value })}
+                  />
+                  <input
+                    className="sec-in"
+                    type="password"
+                    placeholder="密钥值 (加密存储,不回显)"
+                    value={secNew.value}
+                    onChange={(e) => setSecNew({ ...secNew, value: e.target.value })}
+                  />
+                </div>
+                <button type="button" className="sec-more-toggle" onClick={() => setSecMore((v) => !v)}>
+                  {secMore ? "▾ 收起" : "▸ 展开更多（环境变量名 / 备注）"}
+                </button>
+                {secMore && (
+                  <div className="sec-add-row">
+                    <input
+                      className="sec-in"
+                      placeholder="环境变量名 (如 OPENAI_API_KEY,默认同名称)"
+                      value={secNew.envVar}
+                      onChange={(e) => setSecNew({ ...secNew, envVar: e.target.value })}
+                    />
+                    <input
+                      className="sec-in"
+                      placeholder="备注 (可选)"
+                      value={secNew.note}
+                      onChange={(e) => setSecNew({ ...secNew, note: e.target.value })}
+                    />
+                  </div>
+                )}
+                <div className="sec-add-actions">
+                  <button type="button" className="allow" onClick={addSecret} disabled={!secretsAvail}>
+                    + 添加密钥
+                  </button>
+                  <button type="button" onClick={() => setSecImportOpen((v) => !v)} disabled={!secretsAvail}>
+                    从 .env 导入
+                  </button>
+                  {secErr && <span className="sec-err">{secErr}</span>}
+                </div>
+                {secImportOpen && (
+                  <div className="sec-import">
+                    <textarea
+                      className="sec-import-ta"
+                      placeholder={"粘贴 .env 内容，每行 KEY=VALUE\nOPENAI_API_KEY=sk-...\nDB_PASSWORD=..."}
+                      value={secImportText}
+                      onChange={(e) => setSecImportText(e.target.value)}
+                    />
+                    <button type="button" className="allow" onClick={doImportEnv}>
+                      导入
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {secrets.length > 0 && (
+                <div className="sec-reveal-bar">
+                  {revealed ? (
+                    <button type="button" className="sec-reveal-btn on" onClick={() => setRevealed(null)}>
+                      <svg className="sec-ic" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                      </svg>
+                      隐藏明文
+                    </button>
+                  ) : unlockOpen ? (
+                    <div className="sec-unlock">
+                      <input
+                        type="password"
+                        className="sec-in"
+                        autoFocus
+                        placeholder="输入本机账号密码以查看明文"
+                        value={unlockPw}
+                        onChange={(e) => setUnlockPw(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && doUnlock()}
+                      />
+                      <button type="button" className="allow" onClick={doUnlock}>
+                        解锁
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUnlockOpen(false);
+                          setUnlockPw("");
+                          setUnlockErr("");
+                        }}
+                      >
+                        取消
+                      </button>
+                      {unlockErr && <span className="sec-err">{unlockErr}</span>}
+                    </div>
+                  ) : (
+                    <button type="button" className="sec-reveal-btn" onClick={() => setUnlockOpen(true)}>
+                      <svg className="sec-ic" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                      查看明文（需本机账号密码）
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <div className="sec-list">
+                {secrets.length === 0 ? (
+                  <div className="mcp-empty">还没有密钥。把常用密钥加进来,聊天/工具里出现就自动脱敏替换。</div>
+                ) : (
+                  secrets.map((s) => (
+                    <div key={s.id} className="sec-row">
+                      <div className="sec-row-left">
+                        <div className="sec-row-top">
+                          <span className="sec-name">{s.name}</span>
+                          {s.envVar && <span className="sec-env">${s.envVar}</span>}
+                        </div>
+                        <div className="sec-row-sub">
+                          <span className={"sec-mask" + (revealed ? " revealed" : "")}>
+                            {revealed && revealed[s.id] != null ? revealed[s.id] : s.masked}
+                          </span>
+                          {s.note && <span className="sec-row-note">· {s.note}</span>}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="sec-del"
+                        title="删除"
+                        onClick={async () => {
+                          await window.minicc.secretsDelete(s.id);
+                          reloadSecrets();
+                        }}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="btns">
@@ -4783,6 +6039,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           <button className="allow" onClick={() => save()}>
             {tab === "model" ? "保存并切换" : "保存"}
           </button>
+        </div>
         </div>
       </div>
     </div>
@@ -4816,6 +6073,28 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             <button onClick={() => setShowAddStation(false)}>取消</button>
             <button className="allow" onClick={addStation}>
               添加
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* 工具详情：点某个工具弹出，看完整描述 + 入参 Schema */}
+    {toolSel && (
+      <div className="perm-overlay add-st-overlay" onClick={() => setToolSel(null)}>
+        <div className="add-st-dialog tool-detail" onClick={(e) => e.stopPropagation()}>
+          <h3>
+            {toolSel.name}
+            {toolSel.readOnly && <span className="tool-ro">只读</span>}
+          </h3>
+          <p className="s-note tool-detail-desc">{toolSel.description}</p>
+          <div className="tool-detail-label">入参 Schema</div>
+          <pre className="tools-json tool-detail-schema">
+            {JSON.stringify(toolSel.inputSchema, null, 2)}
+          </pre>
+          <div className="btns">
+            <button className="allow" onClick={() => setToolSel(null)}>
+              关闭
             </button>
           </div>
         </div>

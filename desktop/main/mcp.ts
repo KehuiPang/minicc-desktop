@@ -180,6 +180,12 @@ export function loadMcpConfig(): McpServerCfg[] {
 export function mcpTools(): Tool[] {
   return clients.flatMap((c) => c.tools);
 }
+// 按 MCP 服务器分组的工具（给「工具」面板展示用）：只列连上的
+export function mcpToolsBySource(): { server: string; tools: Tool[] }[] {
+  return clients
+    .filter((c) => c.tools.length > 0)
+    .map((c) => ({ server: c.cfg.name, tools: c.tools }));
+}
 export function mcpStatus() {
   return clients.map((c) => ({
     name: c.cfg.name,
