@@ -498,6 +498,27 @@ const brainForgetTool: Tool = {
   },
 };
 
+const brainReadDocTool: Tool = {
+  name: "brain_read_doc",
+  description:
+    "读取知识宫殿等文档库里某文件/文档块的原文。brain_recall 返回的『相关文档』只给摘要+路径；需要完整细节时用它按 file 路径读全文（长期大文本按需路由，不必全量扫）。",
+  readOnly: true,
+  inputSchema: {
+    type: "object",
+    properties: {
+      ref: { type: "string", description: "文档相对路径或块 id（brain_recall 返回的 file 值）" },
+    },
+    required: ["ref"],
+  },
+  async run(input): Promise<ToolResult> {
+    try {
+      return { content: brain.readDoc(String(input.ref || "")) };
+    } catch (e: any) {
+      return { content: `读取失败: ${e.message}`, isError: true };
+    }
+  },
+};
+
 export const ALL_TOOLS: Tool[] = [
   readTool,
   writeTool,
@@ -512,6 +533,7 @@ export const ALL_TOOLS: Tool[] = [
   brainLearnTool,
   brainLinkTool,
   brainForgetTool,
+  brainReadDocTool,
 ];
 
 export const TOOL_MAP: Map<string, Tool> = new Map(ALL_TOOLS.map((t) => [t.name, t]));

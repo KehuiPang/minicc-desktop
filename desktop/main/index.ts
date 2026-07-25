@@ -1662,7 +1662,8 @@ ipcMain.handle("brain:delete-edge", (_e, id: string) => brain.deleteEdgeFromUI(S
 // 文档冷存储（知识宫殿等）：建索引(带进度事件)/统计/读原文
 ipcMain.handle("brain:doc-stats", () => brain.docStats());
 ipcMain.handle("brain:build-docs", async (_e, dir: string) => {
-  await brain.buildDocs(String(dir), (p) => send("evt:brain-docs", p));
+  const abs = String(dir).replace(/^~(?=\/|$)/, homedir());
+  await brain.buildDocs(abs, (p) => send("evt:brain-docs", p));
   return brain.docStats();
 });
 ipcMain.handle("brain:read-doc", (_e, ref: string) => brain.readDoc(String(ref)));

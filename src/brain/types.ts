@@ -39,3 +39,23 @@ export interface BrainGraph {
 }
 
 export const EMPTY_GRAPH: BrainGraph = { version: 1, nodes: [], edges: [] };
+
+// —— 文档冷存储层：知识宫殿等大文本的"长期记忆" ——
+// 概念网络是热索引；这里是按需路由过去读的原文分块（向量化后可语义命中）。
+export interface BrainDoc {
+  id: string; // 稳定 id：`相对路径#块序号`
+  file: string; // 相对索引根目录的路径，如 "figcheck/部署总表.md"
+  title: string; // 该块所属的最近标题
+  headingPath: string; // 标题面包屑，如 "figcheck › 部署 › 前端"
+  text: string; // 块正文
+  embedding?: number[];
+}
+
+export interface BrainDocIndex {
+  version: number;
+  dir: string; // 索引的根目录（绝对路径）
+  builtAt: number;
+  chunks: BrainDoc[];
+}
+
+export const EMPTY_DOC_INDEX: BrainDocIndex = { version: 1, dir: "", builtAt: 0, chunks: [] };

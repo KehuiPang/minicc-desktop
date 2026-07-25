@@ -15,10 +15,18 @@ import {
   type NodeInput,
 } from "./store.js";
 import { embed, cosine, warmupEmbedder, embeddingReady } from "./embed.js";
+import { searchDocs, readDoc, buildDocIndex, docStats, type BuildProgress } from "./docs.js";
 
 export type { BrainGraph, BrainNode, BrainEdge } from "./types.js";
 export { warmupEmbedder, embeddingReady } from "./embed.js";
 export { BRAIN_DIR, GRAPH_FILE } from "./store.js";
+export { readDoc, docStats, DOCS_FILE } from "./docs.js";
+export type { BuildProgress } from "./docs.js";
+
+// 构建/重建文档冷存储索引（知识宫殿等目录）
+export async function buildDocs(dir: string, onProgress?: (p: BuildProgress) => void) {
+  return buildDocIndex(dir, onProgress);
+}
 
 // 把节点编码用的文本（名+别名+类型+摘要+属性）拼成一段，供 embedding
 function nodeText(n: BrainNode): string {
@@ -94,39 +102,50 @@ export async function recall(query: string, limit = 6): Promise<RecallResult> {
 
   // 取种子：关键词命中，或语义足够强（绝对门槛，避免不相关概念因基线偏高被误召）
   const seeds = scored.filter((s) => s.kw > 0 || s.sem >= SEM_STRONG).slice(0, limit);
-  if (!seeds.length) return { text: "", hitNames: [] };
 
-  // 沿边扩展一跳：把种子的直接邻居也纳入（补全"部署脚本/服务器"等关联）
-  const chosen = new Map<string, BrainNode>();
-  const hitEdgeIds: string[] = [];
-  for (const s of seeds) chosen.set(s.n.id, s.n);
-  const byId = new Map(g.nodes.map((n) => [n.id, n]));
-  for (const s of seeds) {
-    for (const e of g.edges) {
-      if (e.from === s.n.id) {
-        hitEdgeIds.push(e.id);
-        const nb = byId.get(e.to);
-        if (nb && chosen.size < limit + 8) chosen.set(nb.id, nb);
+  // —— 概念子图（热索引）——
+  let conceptText = "";
+  const hitNames: string[] = [];
+  if (seeds.length) {
+    // 沿边扩展一跳：把种子的直接邻居也纳入（补全"部署脚本/服务器"等关联）
+    const chosen = new Map<string, BrainNode>();
+    const hitEdgeIds: string[] = [];
+    for (const s of seeds) chosen.set(s.n.id, s.n);
+    const byId = new Map(g.nodes.map((n) => [n.id, n]));
+    for (const s of seeds) {
+      for (const e of g.edges) {
+        if (e.from === s.n.id) {
+          hitEdgeIds.push(e.id);
+          const nb = byId.get(e.to);
+          if (nb && chosen.size < limit + 8) chosen.set(nb.id, nb);
+        }
       }
     }
+    const blocks: string[] = [];
+    for (const n of chosen.values()) {
+      const outs = g.edges
+        .filter((e) => e.from === n.id)
+        .map((e) => ({ relation: e.relation, to: byId.get(e.to)?.name || e.to }));
+      blocks.push(renderNode(n, outs));
+    }
+    reinforce(g, [...chosen.keys()], hitEdgeIds);
+    saveGraph(g);
+    conceptText = `【本地知识网络 · 命中】\n${blocks.join("\n")}`;
+    hitNames.push(...seeds.map((s) => s.n.name));
   }
 
-  // 渲染
-  const blocks: string[] = [];
-  for (const n of chosen.values()) {
-    const outs = g.edges
-      .filter((e) => e.from === n.id)
-      .map((e) => ({ relation: e.relation, to: byId.get(e.to)?.name || e.to }));
-    blocks.push(renderNode(n, outs));
+  // —— 文档冷存储（知识宫殿等原文块，需细节时路由过去读）——
+  let docText = "";
+  const docs = await searchDocs(query, 4, qv ? qv[0] : undefined);
+  if (docs.length) {
+    docText =
+      "【相关文档 · 需要细节用 brain_read_doc 读全文】\n" +
+      docs
+        .map((d) => `· ${d.file}${d.headingPath ? "  〖" + d.headingPath + "〗" : ""}\n  ${d.snippet}`)
+        .join("\n");
   }
 
-  reinforce(g, [...chosen.keys()], hitEdgeIds);
-  saveGraph(g);
-
-  return {
-    text: `【本地知识网络 · 命中】\n${blocks.join("\n")}`,
-    hitNames: seeds.map((s) => s.n.name),
-  };
+  return { text: [conceptText, docText].filter(Boolean).join("\n\n"), hitNames };
 }
 
 // 写入/更新一个概念节点（自动算 embedding）

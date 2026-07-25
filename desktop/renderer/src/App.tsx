@@ -324,6 +324,7 @@ export function App() {
   autoRef.current = autoMode;
   const streamRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true); // 用户是否贴着底部：滚上去看历史时暂停自动吸底，滚回底部再恢复
+  const forceBottomRef = useRef(false); // 切换会话:内容异步改高，需多帧兜底吸底(否则要点两下)
   const taRef = useRef<HTMLTextAreaElement>(null);
   const history = useRef<string[]>([]);
   const histIdx = useRef<number>(-1);
@@ -609,6 +610,7 @@ export function App() {
         case "evt:session-loaded":
           setCurrentId(payload.id);
           atBottomRef.current = true; // 打开/切换会话：定位到最新(底部)，不用手滚
+          forceBottomRef.current = true; // 切换会话：多帧兜底吸底，一次点击就到最新
           setItems(messagesToItems(payload.messages));
           break;
         case "evt:assistant-delta":
@@ -716,11 +718,22 @@ export function App() {
     if (!atBottomRef.current) return;
     const el = streamRef.current;
     if (!el) return;
-    el.scrollTo({ top: el.scrollHeight });
+    const toBottom = () => el.scrollTo({ top: el.scrollHeight });
+    toBottom();
     // 二次校正：长会话/代码高亮/图片会在下一帧改变高度，再吸一次确保真到底
     requestAnimationFrame(() => {
-      if (atBottomRef.current) el.scrollTo({ top: el.scrollHeight });
+      if (atBottomRef.current) toBottom();
     });
+    // 切换会话：内容(markdown/代码高亮/图片)会在随后几帧持续改变高度，多次兜底吸底，
+    // 保证一次点击就停在最新消息，而不用点两下。
+    if (forceBottomRef.current) {
+      forceBottomRef.current = false;
+      [50, 130, 260, 450].forEach((ms) =>
+        setTimeout(() => {
+          if (atBottomRef.current) toBottom();
+        }, ms),
+      );
+    }
   }, [items, busy, pending]);
 
   useEffect(() => {
@@ -4945,6 +4958,49 @@ function SettingsModal({ onClose, liveModels }: { onClose: () => void; liveModel
                         </div>
                       )}
                     </div>
+                  </div>
+                  <div
+                    style={{
+                      borderTop: "1px solid var(--border)",
+                      paddingTop: 10,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 6,
+                    }}
+                  >
+                    <span className="s-note" style={{ margin: 0 }}>
+                      📚 文档库（冷存储 · 知识宫殿等长期大文本，按需路由读原文）· 已索引{" "}
+                      <b>{docStat.chunks}</b> 块 / <b>{docStat.files}</b> 文档
+                    </span>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input
+                        style={{ flex: 1 }}
+                        placeholder="要索引的目录，如 ~/Documents/tanxun/知识宫殿"
+                        value={docDir}
+                        onChange={(e) => setDocDir(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        disabled={docBuilding || !docDir.trim()}
+                        onClick={async () => {
+                          setDocBuilding(true);
+                          setDocProg("准备…");
+                          try {
+                            const s = await window.minicc.brainBuildDocs(docDir.trim());
+                            setDocStat(s);
+                          } finally {
+                            setDocBuilding(false);
+                          }
+                        }}
+                      >
+                        {docBuilding ? "索引中…" : docStat.chunks > 0 ? "重建索引" : "建立索引"}
+                      </button>
+                    </div>
+                    {docProg && (
+                      <span className="s-note" style={{ margin: 0 }}>
+                        {docProg}
+                      </span>
+                    )}
                   </div>
                   <p className="s-note pp-fixed">
                     存于 <code>~/.minicc/brain/graph.json</code>，向量模型在 <code>~/.minicc/brain/models</code>。
