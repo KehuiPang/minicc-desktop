@@ -67,7 +67,16 @@ import {
 import { getAccount, logout } from "./account.js";
 import { claudeOAuthLogin, claudeOAuthOpenBrowser, claudeOAuthExchange } from "./claude-oauth.js";
 import { codexOAuthLogin } from "./codex-oauth.js";
-import { wuweiLogin, wuweiRefresh, wuweiFetchMe } from "./wuwei-auth.js";
+import {
+  wuweiLogin,
+  wuweiRefresh,
+  wuweiFetchMe,
+  wuweiPasswordLogin,
+  wuweiSendCode,
+  wuweiCodeLogin,
+  wuweiRegister,
+  type WuweiSession,
+} from "./wuwei-auth.js";
 import { saveWuweiSession, loadWuweiSession, clearWuweiSession } from "./wuwei-session.js";
 import { getDeviceId } from "../../src/device-id.js";
 import { log, LOG_FILE } from "./logger.js";
@@ -2159,6 +2168,24 @@ ipcMain.handle("account:wuwei-login", async () => {
   if (me === "unauthorized" || !me) return null;
   return me;
 });
+// —— 应用内登录（邮箱密码/邮箱注册/手机验证码）：成功存会话+返回 {me}，失败返回 {error:文案} ——
+async function finishWuweiSignin(r: WuweiSession | string): Promise<{ me?: unknown; error?: string }> {
+  if (typeof r === "string") return { error: r };
+  saveWuweiSession(r);
+  const me = await wuweiFetchMe(r.accessToken);
+  if (me === "unauthorized" || !me) return { error: "登录成功但拉取账号失败" };
+  return { me };
+}
+ipcMain.handle("account:wuwei-password-login", (_e, identifier: string, password: string) =>
+  wuweiPasswordLogin(identifier, password).then(finishWuweiSignin),
+);
+ipcMain.handle("account:wuwei-register", (_e, email: string, code: string, password: string) =>
+  wuweiRegister(email, code, password).then(finishWuweiSignin),
+);
+ipcMain.handle("account:wuwei-code-login", (_e, target: string, code: string) =>
+  wuweiCodeLogin(target, code).then(finishWuweiSignin),
+);
+ipcMain.handle("account:wuwei-send-code", (_e, target: string) => wuweiSendCode(target));
 // 冷启动/刷新：读本地会话 → /api/me；401 走 /api/refresh 续期后重试。
 ipcMain.handle("account:wuwei-me", async () => {
   const sess = loadWuweiSession();

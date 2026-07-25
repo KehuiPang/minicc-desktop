@@ -117,6 +117,10 @@ export interface MiniccApi {
   wuweiMe(): Promise<WuweiMe | null>;
   wuweiLogout(): Promise<boolean>;
   wuweiDeviceId(): Promise<string>;
+  wuweiPasswordLogin(identifier: string, password: string): Promise<{ me?: WuweiMe; error?: string }>;
+  wuweiRegister(email: string, code: string, password: string): Promise<{ me?: WuweiMe; error?: string }>;
+  wuweiCodeLogin(target: string, code: string): Promise<{ me?: WuweiMe; error?: string }>;
+  wuweiSendCode(target: string): Promise<true | string>;
   fetchModels(): Promise<string[]>;
   claudeOauthOpen(): Promise<boolean>;
   claudeOauthExchange(code: string): Promise<string | null>;

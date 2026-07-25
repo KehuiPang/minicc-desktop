@@ -142,6 +142,82 @@ export async function wuweiRefresh(refreshToken: string): Promise<WuweiSession |
   }
 }
 
+// —— 应用内登录（邮箱密码 / 手机验证码），不跳浏览器。后端契约见下，需 wuwei-site 实现 ——
+// 统一返回：成功=WuweiSession；失败=错误文案字符串。
+type SigninResp = { access_token?: string; refresh_token?: string; expires_at?: number; error?: string };
+function toSession(j: SigninResp): WuweiSession | null {
+  if (!j.access_token) return null;
+  return { accessToken: j.access_token, refreshToken: j.refresh_token ?? "", expiresAt: (j.expires_at || 0) * 1000 };
+}
+
+/** 邮箱/手机号 + 密码 登录（identifier 自动判断邮箱或手机号）。POST 官网 /api/auth/password。 */
+export async function wuweiPasswordLogin(identifier: string, password: string): Promise<WuweiSession | string> {
+  try {
+    const res = await fetch(`${SITE}/api/auth/password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier, password }),
+    });
+    const j = (await res.json().catch(() => ({}))) as SigninResp;
+    if (!res.ok || j.error) return j.error || `登录失败（${res.status}）`;
+    return toSession(j) || "登录返回异常";
+  } catch (e) {
+    log("wuweiAuth", "password 登录异常", String(e));
+    return "网络错误，请重试";
+  }
+}
+
+/** 发送手机/邮箱验证码。POST 官网 /api/auth/send-code。返回 true 或错误文案。 */
+export async function wuweiSendCode(target: string): Promise<true | string> {
+  try {
+    const res = await fetch(`${SITE}/api/auth/send-code`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target }),
+    });
+    const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    if (!res.ok || j.error) return j.error || `发送失败（${res.status}）`;
+    return true;
+  } catch (e) {
+    log("wuweiAuth", "send-code 异常", String(e));
+    return "网络错误，请重试";
+  }
+}
+
+/** 验证码登录（手机号或邮箱 + code）。POST 官网 /api/auth/verify-code。 */
+export async function wuweiCodeLogin(target: string, code: string): Promise<WuweiSession | string> {
+  try {
+    const res = await fetch(`${SITE}/api/auth/verify-code`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target, code }),
+    });
+    const j = (await res.json().catch(() => ({}))) as SigninResp;
+    if (!res.ok || j.error) return j.error || `验证失败（${res.status}）`;
+    return toSession(j) || "登录返回异常";
+  } catch (e) {
+    log("wuweiAuth", "code 登录异常", String(e));
+    return "网络错误，请重试";
+  }
+}
+
+/** 邮箱注册：先 send-code 验证邮箱，再带 code + 新密码注册。POST 官网 /api/auth/register。 */
+export async function wuweiRegister(email: string, code: string, password: string): Promise<WuweiSession | string> {
+  try {
+    const res = await fetch(`${SITE}/api/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, code, password }),
+    });
+    const j = (await res.json().catch(() => ({}))) as SigninResp;
+    if (!res.ok || j.error) return j.error || `注册失败（${res.status}）`;
+    return toSession(j) || "注册返回异常";
+  } catch (e) {
+    log("wuweiAuth", "register 异常", String(e));
+    return "网络错误，请重试";
+  }
+}
+
 /** 查账号 + 无为币余额。401 视为 token 失效由调用方决定是否 refresh。 */
 export async function wuweiFetchMe(accessToken: string): Promise<WuweiMe | "unauthorized" | null> {
   try {

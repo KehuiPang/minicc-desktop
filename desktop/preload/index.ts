@@ -186,6 +186,14 @@ contextBridge.exposeInMainWorld("minicc", {
   wuweiMe: () => ipcRenderer.invoke("account:wuwei-me") as Promise<WuweiMe | null>,
   wuweiLogout: () => ipcRenderer.invoke("account:wuwei-logout") as Promise<boolean>,
   wuweiDeviceId: () => ipcRenderer.invoke("account:wuwei-device-id") as Promise<string>,
+  // 应用内登录（不跳浏览器）：邮箱密码 / 邮箱注册 / 手机(或邮箱)验证码 / 发验证码
+  wuweiPasswordLogin: (identifier: string, password: string) =>
+    ipcRenderer.invoke("account:wuwei-password-login", identifier, password) as Promise<{ me?: WuweiMe; error?: string }>,
+  wuweiRegister: (email: string, code: string, password: string) =>
+    ipcRenderer.invoke("account:wuwei-register", email, code, password) as Promise<{ me?: WuweiMe; error?: string }>,
+  wuweiCodeLogin: (target: string, code: string) =>
+    ipcRenderer.invoke("account:wuwei-code-login", target, code) as Promise<{ me?: WuweiMe; error?: string }>,
+  wuweiSendCode: (target: string) => ipcRenderer.invoke("account:wuwei-send-code", target) as Promise<true | string>,
   fetchModels: () => ipcRenderer.invoke("models:fetch") as Promise<string[]>,
   // 系统浏览器授权：第1步开浏览器，第2步用授权码换 token
   claudeOauthOpen: () => ipcRenderer.invoke("account:claude-oauth-open") as Promise<boolean>,

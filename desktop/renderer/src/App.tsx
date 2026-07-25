@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import type { WuweiMe } from "../../main/wuwei-auth.js";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -221,6 +222,204 @@ function RefreshIcon({ size = 13 }: { size?: number }) {
   );
 }
 
+// 应用内登录框（邮箱密码登录 / 邮箱验证码注册 / 手机验证码直登注册 / Google浏览器兜底）
+// 后端契约（需 wuwei-site 实现）：
+//   POST /api/auth/password    {identifier,password}     → {access_token,refresh_token,expires_at}|{error}
+//   POST /api/auth/send-code   {target}                  → {ok}|{error}   (target=邮箱或手机号)
+//   POST /api/auth/register    {email,code,password}     → {...tokens}|{error}
+//   POST /api/auth/verify-code {target,code}             → {...tokens}|{error}  (无账号自动注册)
+function WuweiLoginModal({
+  incentive,
+  onClose,
+  onSuccess,
+}: {
+  incentive?: boolean;
+  onClose: () => void;
+  onSuccess: (me: WuweiMe) => void;
+}) {
+  type Mode = "email-login" | "email-register" | "phone";
+  const [mode, setMode] = useState<Mode>("email-login");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [cooldown, setCooldown] = useState(0);
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
+
+  async function sendCode() {
+    const target = mode === "phone" ? phone.trim() : email.trim();
+    if (!target) {
+      setErr(mode === "phone" ? "请输入手机号" : "请输入邮箱");
+      return;
+    }
+    setBusy(true);
+    setErr("");
+    const r = await window.minicc.wuweiSendCode(target);
+    setBusy(false);
+    if (r === true) setCooldown(60);
+    else setErr(typeof r === "string" ? r : "发送失败");
+  }
+  async function submit() {
+    setBusy(true);
+    setErr("");
+    let res: { me?: WuweiMe; error?: string };
+    if (mode === "email-login") res = await window.minicc.wuweiPasswordLogin(email.trim(), password);
+    else if (mode === "email-register") res = await window.minicc.wuweiRegister(email.trim(), code.trim(), password);
+    else res = await window.minicc.wuweiCodeLogin(phone.trim(), code.trim());
+    setBusy(false);
+    if (res.me) onSuccess(res.me);
+    else setErr(res.error || "操作失败");
+  }
+  async function googleLogin() {
+    setBusy(true);
+    setErr("");
+    const me = await window.minicc.wuweiLogin();
+    setBusy(false);
+    if (me) onSuccess(me);
+    else setErr("Google 登录未完成");
+  }
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    padding: "9px 11px",
+    borderRadius: 8,
+    border: "1px solid #2A3038",
+    background: "#14171C",
+    color: "#F4F6F8",
+    fontSize: 13,
+    marginBottom: 9,
+    outline: "none",
+    boxSizing: "border-box",
+  };
+  const tabStyle = (on: boolean): React.CSSProperties => ({
+    flex: 1,
+    padding: "7px 0",
+    fontSize: 13,
+    cursor: "pointer",
+    background: "none",
+    border: "none",
+    color: on ? "#F4F6F8" : "#6F9FAD",
+    fontWeight: on ? 600 : 400,
+    borderBottom: on ? "2px solid #C05F3C" : "2px solid transparent",
+  });
+
+  return (
+    <>
+      <div className="mq-overlay" onClick={onClose} />
+      <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+        <div
+          style={{
+            width: 340,
+            maxWidth: "90vw",
+            background: "#16191E",
+            color: "#F4F6F8",
+            border: "1px solid #274A63",
+            borderRadius: 14,
+            padding: "22px 22px 18px",
+            boxShadow: "0 12px 40px rgba(0,0,0,.5)",
+          }}
+        >
+          <div style={{ textAlign: "center", fontSize: 15, fontWeight: 600, marginBottom: incentive ? 6 : 14 }}>
+            登录 / 注册无为账号
+          </div>
+          {incentive && (
+            <div style={{ textAlign: "center", fontSize: 12, color: "#6F9FAD", marginBottom: 14 }}>
+              注册即得 <b style={{ color: "#C05F3C" }}>100</b> 无为币 · 每日签到再领 10
+            </div>
+          )}
+          {/* 邮箱/手机 切换 */}
+          <div style={{ display: "flex", marginBottom: 14 }}>
+            <button style={tabStyle(mode !== "phone")} onClick={() => { setMode("email-login"); setErr(""); }}>
+              邮箱
+            </button>
+            <button style={tabStyle(mode === "phone")} onClick={() => { setMode("phone"); setErr(""); }}>
+              手机号
+            </button>
+          </div>
+
+          {mode === "phone" ? (
+            <>
+              <input style={inputStyle} placeholder="手机号" value={phone} onChange={(e) => setPhone(e.target.value)} />
+              <div style={{ display: "flex", gap: 8 }}>
+                <input style={{ ...inputStyle, flex: 1 }} placeholder="验证码" value={code} onChange={(e) => setCode(e.target.value)} />
+                <button
+                  onClick={sendCode}
+                  disabled={busy || cooldown > 0}
+                  style={{ flex: "0 0 auto", padding: "0 12px", height: 36, borderRadius: 8, border: "1px solid #274A63", background: "none", color: "#6F9FAD", fontSize: 12, cursor: cooldown > 0 ? "default" : "pointer", marginBottom: 9 }}
+                >
+                  {cooldown > 0 ? `${cooldown}s` : "获取验证码"}
+                </button>
+              </div>
+              <div style={{ fontSize: 11, color: "#6F9FAD", marginBottom: 12 }}>没有账号将自动注册</div>
+            </>
+          ) : (
+            <>
+              <input style={inputStyle} placeholder="邮箱" value={email} onChange={(e) => setEmail(e.target.value)} />
+              {mode === "email-register" && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input style={{ ...inputStyle, flex: 1 }} placeholder="邮箱验证码" value={code} onChange={(e) => setCode(e.target.value)} />
+                  <button
+                    onClick={sendCode}
+                    disabled={busy || cooldown > 0}
+                    style={{ flex: "0 0 auto", padding: "0 12px", height: 36, borderRadius: 8, border: "1px solid #274A63", background: "none", color: "#6F9FAD", fontSize: 12, cursor: cooldown > 0 ? "default" : "pointer", marginBottom: 9 }}
+                  >
+                    {cooldown > 0 ? `${cooldown}s` : "获取验证码"}
+                  </button>
+                </div>
+              )}
+              <input style={inputStyle} type="password" placeholder={mode === "email-register" ? "设置密码" : "密码"} value={password} onChange={(e) => setPassword(e.target.value)} />
+              <div style={{ fontSize: 11, marginBottom: 12 }}>
+                <span
+                  style={{ color: "#6F9FAD", cursor: "pointer" }}
+                  onClick={() => { setMode(mode === "email-register" ? "email-login" : "email-register"); setErr(""); }}
+                >
+                  {mode === "email-register" ? "已有账号，去登录" : "没有账号？邮箱注册"}
+                </span>
+              </div>
+            </>
+          )}
+
+          {err && <div style={{ color: "#E0876B", fontSize: 12, marginBottom: 10, textAlign: "center" }}>{err}</div>}
+
+          <button
+            onClick={submit}
+            disabled={busy}
+            style={{ width: "100%", padding: "10px", borderRadius: 9, border: "none", background: "#C05F3C", color: "#F4F6F8", fontSize: 14, fontWeight: 600, cursor: busy ? "default" : "pointer", marginBottom: 12 }}
+          >
+            {busy ? "处理中…" : mode === "email-register" ? "注册" : "登录 / 注册"}
+          </button>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#3A424C", fontSize: 11, margin: "2px 0 12px" }}>
+            <div style={{ flex: 1, height: 1, background: "#2A3038" }} />
+            或
+            <div style={{ flex: 1, height: 1, background: "#2A3038" }} />
+          </div>
+          <button
+            onClick={googleLogin}
+            disabled={busy}
+            style={{ width: "100%", padding: "9px", borderRadius: 9, border: "1px solid #2A3038", background: "none", color: "#F4F6F8", fontSize: 13, cursor: "pointer", marginBottom: 8 }}
+          >
+            用 Google 登录（浏览器）
+          </button>
+          <button
+            disabled
+            title="即将支持"
+            style={{ width: "100%", padding: "9px", borderRadius: 9, border: "1px solid #2A3038", background: "none", color: "#4A525C", fontSize: 13, cursor: "not-allowed" }}
+          >
+            微信登录（即将支持）
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export function App() {
   const [items, setItems] = useState<Item[]>([]);
   const [now, setNow] = useState(() => Date.now()); // 相对时间戳每 30s 刷新一次
@@ -384,7 +583,8 @@ export function App() {
     email: null,
   });
   const [showAcctMenu, setShowAcctMenu] = useState(false);
-  const [showLoginGate, setShowLoginGate] = useState(false); // 硬门槛：未登录点发送时弹登录注册
+  const [showLoginForm, setShowLoginForm] = useState(false); // 应用内登录框
+  const [loginResume, setLoginResume] = useState(false); // 登录成功后是否续发刚才拦下的消息
   const [webLoginBusy, setWebLoginBusy] = useState(false);
   const [authBusy, setAuthBusy] = useState(false); // 失败处一键授权 Claude 进行中
   const [codexBusy, setCodexBusy] = useState(false); // Codex 一键授权进行中
@@ -397,42 +597,22 @@ export function App() {
   // 灰度开关（C2）：订阅版是否显示，完全由后端 flags 决定，默认隐藏。客户端只渲染不判定。
   const showSubscription = !!wuwei?.flags?.includes("subscription");
   const [wuweiBusy, setWuweiBusy] = useState(false);
-  async function doWuweiLogin() {
-    setWuweiBusy(true);
-    try {
-      const me = await window.minicc.wuweiLogin();
-      if (me) {
-        setWuwei(me);
-        push({ type: "notice", text: `无为账号已登录：${me.user.name || me.user.email || "用户"}，无为币 ${me.coin.balance}` });
-      } else {
-        push({ type: "notice", text: "无为登录未完成或已取消。" });
-      }
-    } finally {
-      setWuweiBusy(false);
-    }
-  }
   async function doWuweiLogout() {
     await window.minicc.wuweiLogout();
     setWuwei(null);
   }
-  // 门槛弹框里登录：成功后关框并自动续发刚才拦下的内容
-  async function loginAndResume() {
-    setWuweiBusy(true);
-    try {
-      const me = await window.minicc.wuweiLogin();
-      if (me) {
-        setWuwei(me);
-        setShowLoginGate(false);
-        const t = input.trim();
-        if (t || pendingImages.length) {
-          doSend(t, pendingImages);
-          clearComposer();
-        }
-      } else {
-        push({ type: "notice", text: "登录未完成，发送已取消。" });
+  // 应用内登录框成功回调：更新账号 + 关框 + (若从发送门槛来)续发刚才拦下的消息
+  function onWuweiLoggedIn(me: WuweiMe) {
+    setWuwei(me);
+    setShowLoginForm(false);
+    push({ type: "notice", text: `无为账号已登录：${me.user.name || me.user.email || "用户"}` });
+    if (loginResume) {
+      const t = input.trim();
+      if (t || pendingImages.length) {
+        doSend(t, pendingImages);
+        clearComposer();
       }
-    } finally {
-      setWuweiBusy(false);
+      setLoginResume(false);
     }
   }
   async function doCodexLogin() {
@@ -1035,7 +1215,8 @@ export function App() {
     }
     // 硬门槛：未登录无为账号不能发送 → 弹登录注册（保留输入内容，登录后自动续发）
     if (!wuwei) {
-      setShowLoginGate(true);
+      setLoginResume(true);
+      setShowLoginForm(true);
       return;
     }
     setSuggestion(""); // 发送后清掉旧的下一步建议(回复完会重新生成)
@@ -1722,7 +1903,8 @@ export function App() {
                         <button
                           onClick={() => {
                             setShowAcctMenu(false);
-                            void doWuweiLogin();
+                            setLoginResume(false);
+                            setShowLoginForm(true);
                           }}
                           style={{
                             width: "100%",
@@ -2597,75 +2779,16 @@ export function App() {
           onKeepRecent={changeKeepRecent}
         />
       )}
-      {/* 硬门槛登录框：未登录点发送时弹出（转化节点·注册领币） */}
-      {showLoginGate && (
-        <>
-          <div className="mq-overlay" onClick={() => setShowLoginGate(false)} />
-          <div
-            style={{
-              position: "fixed",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              zIndex: 1000,
-            }}
-          >
-            <div
-              style={{
-                width: 360,
-                maxWidth: "90vw",
-                background: "#16191E",
-                color: "#F4F6F8",
-                border: "1px solid #274A63",
-                borderRadius: 14,
-                padding: "26px 24px",
-                boxShadow: "0 12px 40px rgba(0,0,0,.5)",
-                textAlign: "center",
-              }}
-            >
-              <div style={{ fontSize: 30, marginBottom: 8, color: "#C05F3C" }}>◕</div>
-              <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 14 }}>登录无为账号后开始使用</div>
-              <div style={{ fontSize: 13, lineHeight: 1.8, color: "#B9C2CC", marginBottom: 22 }}>
-                注册新用户立得 <b style={{ color: "#6F9FAD" }}>100 无为币</b>（约 100 次对话）
-                <br />
-                每日签到再领 <b style={{ color: "#6F9FAD" }}>10 无为币</b>，连签 7 天额外 +30
-              </div>
-              <button
-                onClick={loginAndResume}
-                disabled={wuweiBusy}
-                style={{
-                  width: "100%",
-                  padding: "11px",
-                  borderRadius: 8,
-                  border: "none",
-                  background: "#C05F3C",
-                  color: "#F4F6F8",
-                  fontSize: 14,
-                  cursor: wuweiBusy ? "default" : "pointer",
-                  marginBottom: 10,
-                }}
-              >
-                {wuweiBusy ? "登录中…（在浏览器完成）" : "登录 / 注册"}
-              </button>
-              <button
-                onClick={() => setShowLoginGate(false)}
-                style={{
-                  width: "100%",
-                  padding: "8px",
-                  borderRadius: 8,
-                  border: "none",
-                  background: "none",
-                  color: "#6F9FAD",
-                  fontSize: 13,
-                  cursor: "pointer",
-                }}
-              >
-                取消
-              </button>
-            </div>
-          </div>
-        </>
+      {/* 应用内登录框：邮箱/手机号/Google。未登录点发送(loginResume)或点账号登录时弹出 */}
+      {showLoginForm && (
+        <WuweiLoginModal
+          incentive={loginResume}
+          onClose={() => {
+            setShowLoginForm(false);
+            setLoginResume(false);
+          }}
+          onSuccess={onWuweiLoggedIn}
+        />
       )}
       {secretPrompt && (
         <div className="perm-overlay" onClick={() => setSecretPrompt(null)}>
