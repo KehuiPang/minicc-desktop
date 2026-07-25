@@ -228,7 +228,7 @@ export function App() {
     canGoForward?: boolean;
   }>({});
   const [showSettings, setShowSettings] = useState(false);
-  const [showAppSettings, setShowAppSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState("model"); // 统一设置页的初始/当前左侧菜单项
   const [curProviderId, setCurProviderId] = useState("");
   const [liveModels, setLiveModels] = useState<Record<string, string[]>>({}); // 各平台实时拉到的模型
   const [stations, setStations] = useState<Station[]>([]); // 自定义中转站
@@ -1439,6 +1439,7 @@ export function App() {
                       className="acct-menu-item"
                       onClick={() => {
                         setShowAcctMenu(false);
+                        setSettingsTab("model");
                         setShowSettings(true);
                       }}
                     >
@@ -1448,7 +1449,8 @@ export function App() {
                       className="acct-menu-item"
                       onClick={() => {
                         setShowAcctMenu(false);
-                        setShowAppSettings(true);
+                        setSettingsTab("general");
+                        setShowSettings(true);
                       }}
                     >
                       设置
@@ -2216,7 +2218,20 @@ export function App() {
           }}
         />
       )}
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} liveModels={liveModels} />}
+      {showSettings && (
+        <SettingsModal
+          onClose={() => setShowSettings(false)}
+          liveModels={liveModels}
+          initialTab={settingsTab}
+          groupMode={groupMode}
+          onGroupMode={changeGroupMode}
+          streamMode={streamMode}
+          streamSpeed={streamSpeed}
+          onStream={changeStream}
+          keepRecent={keepRecent}
+          onKeepRecent={changeKeepRecent}
+        />
+      )}
       {secretPrompt && (
         <div className="perm-overlay" onClick={() => setSecretPrompt(null)}>
           <div className="add-st-dialog sec-prompt" onClick={(e) => e.stopPropagation()}>
@@ -2283,18 +2298,6 @@ export function App() {
             </div>
           </div>
         </div>
-      )}
-      {showAppSettings && (
-        <AppSettingsModal
-          onClose={() => setShowAppSettings(false)}
-          groupMode={groupMode}
-          onGroupMode={changeGroupMode}
-          streamMode={streamMode}
-          streamSpeed={streamSpeed}
-          onStream={changeStream}
-          keepRecent={keepRecent}
-          onKeepRecent={changeKeepRecent}
-        />
       )}
       {lightbox && (
         <div className="lightbox" onClick={() => setLightbox(null)}>
@@ -3558,7 +3561,40 @@ function textToAttrs(text: string): Record<string, string> {
   return out;
 }
 
-function SettingsModal({ onClose, liveModels }: { onClose: () => void; liveModels: Record<string, string[]> }) {
+function SettingsModal({
+  onClose,
+  liveModels,
+  initialTab,
+  groupMode,
+  onGroupMode,
+  streamMode,
+  streamSpeed,
+  onStream,
+  keepRecent,
+  onKeepRecent,
+}: {
+  onClose: () => void;
+  liveModels: Record<string, string[]>;
+  initialTab?: string;
+  groupMode: "manual" | "date" | "project";
+  onGroupMode: (m: "manual" | "date" | "project") => void;
+  streamMode: "typewriter" | "stream" | "instant";
+  streamSpeed: number;
+  onStream: (mode: "typewriter" | "stream" | "instant", speed: number) => void;
+  keepRecent: number;
+  onKeepRecent: (n: number) => void;
+}) {
+  // 界面主题（并入设置页「外观」）
+  const [uiTheme, setUiTheme] = useState("dark");
+  useEffect(() => {
+    window.minicc.getSettings().then((r: any) => setUiTheme(r?.settings?.theme || "dark"));
+  }, []);
+  async function pickTheme(t: string) {
+    setUiTheme(t);
+    document.documentElement.setAttribute("data-theme", t);
+    const r: any = await window.minicc.getSettings();
+    window.minicc.setSettings({ ...(r?.settings || {}), theme: t });
+  }
   const [pid, setPid] = useState("codex");
   const [model, setModel] = useState(PRESETS[0].models[0]);
   const [apiKey, setApiKey] = useState("");
@@ -3603,7 +3639,9 @@ function SettingsModal({ onClose, liveModels }: { onClose: () => void; liveModel
   hiddenRef.current = hidden;
   const [dragOverIdx, setDragOverIdx] = useState(-1); // 拖拽悬停到第几行(高亮)
   const dragIdxRef = useRef(-1); // 拖起始行
-  const [tab, setTab] = useState<"model" | "platforms" | "prompt" | "memory" | "brain" | "mcp" | "tools" | "secrets">("model"); // 设置分块标签页
+  const [tab, setTab] = useState<
+    "general" | "display" | "model" | "platforms" | "prompt" | "memory" | "brain" | "mcp" | "tools" | "secrets"
+  >((initialTab as any) || "model"); // 设置分块标签页(左侧菜单)
   const [maxed, setMaxed] = useState(false); // 设置弹窗最大化(知识网络等大结构需放大看)
   const [memory, setMemory] = useState(""); // 全局长期记忆
   const memoryTouchedRef = useRef(false); // 是否改过记忆(保存时才写)
@@ -4203,37 +4241,25 @@ function SettingsModal({ onClose, liveModels }: { onClose: () => void; liveModel
   return (
     <>
     <div className="perm-overlay">
-      <div className={"settings tabbed" + (maxed ? " maxed" : "")} onClick={(e) => e.stopPropagation()}>
-        <div className="settings-titlebar">
-          <h3>模型设置</h3>
-          <div className="settings-winbtns">
-            <button
-              type="button"
-              className="set-win-btn"
-              title={maxed ? "还原窗口大小" : "最大化窗口（知识网络等大结构放大看）"}
-              onClick={() => setMaxed((v) => !v)}
-            >
-              {maxed ? (
-                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <rect x="3" y="5" width="8" height="8" rx="1.3" stroke="currentColor" strokeWidth="1.4" />
-                  <path d="M5.5 5V3.5A1.2 1.2 0 016.7 2.3H12.5A1.2 1.2 0 0113.7 3.5V9.3A1.2 1.2 0 0112.5 10.5H11" stroke="currentColor" strokeWidth="1.4" />
-                </svg>
-              ) : (
-                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <rect x="2.8" y="2.8" width="10.4" height="10.4" rx="1.4" stroke="currentColor" strokeWidth="1.4" />
-                </svg>
-              )}
-            </button>
-            <button type="button" className="set-win-btn" title="关闭" onClick={onClose}>
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        {/* 分块：一个板块只干一件事 */}
-        <div className="set-tabs">
+      <div className={"settings tabbed sidenav" + (maxed ? " maxed" : "")} onClick={(e) => e.stopPropagation()}>
+        {/* 左侧竖排菜单 */}
+        <aside className="set-side">
+          <div className="set-side-title">设置</div>
+          <nav className="set-tabs">
+          <button
+            type="button"
+            className={"set-tab" + (tab === "general" ? " on" : "")}
+            onClick={() => setTab("general")}
+          >
+            通用
+          </button>
+          <button
+            type="button"
+            className={"set-tab" + (tab === "display" ? " on" : "")}
+            onClick={() => setTab("display")}
+          >
+            外观
+          </button>
           <button
             type="button"
             className={"set-tab" + (tab === "model" ? " on" : "")}
@@ -4290,9 +4316,158 @@ function SettingsModal({ onClose, liveModels }: { onClose: () => void; liveModel
           >
             密钥
           </button>
-        </div>
+          </nav>
+        </aside>
+
+        {/* 右侧主区：头(窗口按钮) + 内容 + 底部保存 */}
+        <div className="set-main">
+          <div className="set-main-head">
+            <div className="settings-winbtns">
+              <button
+                type="button"
+                className="set-win-btn"
+                title={maxed ? "还原窗口大小" : "最大化窗口"}
+                onClick={() => setMaxed((v) => !v)}
+              >
+                {maxed ? (
+                  <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="3" y="5" width="8" height="8" rx="1.3" stroke="currentColor" strokeWidth="1.4" />
+                    <path d="M5.5 5V3.5A1.2 1.2 0 016.7 2.3H12.5A1.2 1.2 0 0113.7 3.5V9.3A1.2 1.2 0 0112.5 10.5H11" stroke="currentColor" strokeWidth="1.4" />
+                  </svg>
+                ) : (
+                  <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="2.8" y="2.8" width="10.4" height="10.4" rx="1.4" stroke="currentColor" strokeWidth="1.4" />
+                  </svg>
+                )}
+              </button>
+              <button type="button" className="set-win-btn" title="关闭" onClick={onClose}>
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
+          </div>
 
         <div className="set-body">
+          {/* ── 通用：会话分组 + 上下文压缩 + 账号读取 ── */}
+          {tab === "general" && (
+            <>
+              <div className="app-set-group">会话分组</div>
+              <div className="theme-pick" style={{ marginBottom: "6px" }}>
+                {[
+                  { id: "manual", label: "手动分组" },
+                  { id: "date", label: "按日期" },
+                  { id: "project", label: "按项目" },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className={"theme-opt" + (groupMode === m.id ? " on" : "")}
+                    onClick={() => onGroupMode(m.id as any)}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <div className="app-set-hint" style={{ marginBottom: "16px" }}>
+                手动：右键会话移动/新建分组、可拖拽排序；按日期/按项目：自动分组（项目名由 AI 按会话内容归纳）。
+              </div>
+              <div className="app-set-group">上下文压缩</div>
+              <div className="app-set-row" style={{ cursor: "default", gap: "10px" }}>
+                <div className="app-set-label" style={{ whiteSpace: "nowrap" }}>
+                  保留最近条数
+                </div>
+                <input
+                  type="range"
+                  min={4}
+                  max={40}
+                  step={2}
+                  value={keepRecent}
+                  onChange={(e) => onKeepRecent(Number(e.target.value))}
+                  style={{ flex: 1 }}
+                />
+                <div className="app-set-hint" style={{ minWidth: 40, textAlign: "right" }}>
+                  {keepRecent} 条
+                </div>
+              </div>
+              <div className="app-set-hint" style={{ marginBottom: "16px" }}>
+                上下文超限时，会把更早的消息总结成要点摘要、保留最近这么多条原文。数字越大越不易“失忆”，但更费上下文。
+              </div>
+              <div className="app-set-group">Claude 订阅</div>
+              <div className="app-set-row" style={{ cursor: "default" }}>
+                <div className="app-set-text">
+                  <div className="app-set-label">账号信息自动读取</div>
+                  <div className="app-set-hint">
+                    用户名 / 邮箱 / 套餐直接从本机 Claude Code 配置（~/.claude.json）读取，随 Claude Code
+                    自动保持最新，无需登录或填 token。额度（5小时/周）发消息后从响应头刷新。
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── 外观：输出方式 + 界面主题 ── */}
+          {tab === "display" && (
+            <>
+              <div className="app-set-group">输出方式</div>
+              <div className="theme-pick" style={{ marginBottom: "6px" }}>
+                {[
+                  { id: "stream", label: "流式（一下出）" },
+                  { id: "typewriter", label: "打字机（匀速）" },
+                  { id: "instant", label: "回完一次性" },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className={"theme-opt" + (streamMode === m.id ? " on" : "")}
+                    onClick={() => onStream(m.id as any, streamSpeed)}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              {streamMode === "typewriter" && (
+                <div className="app-set-row" style={{ cursor: "default", gap: "10px" }}>
+                  <div className="app-set-label" style={{ whiteSpace: "nowrap" }}>
+                    打字机速度
+                  </div>
+                  <input
+                    type="range"
+                    min={80}
+                    max={2000}
+                    step={20}
+                    value={streamSpeed}
+                    onChange={(e) => onStream("typewriter", Number(e.target.value))}
+                    style={{ flex: 1 }}
+                  />
+                  <div className="app-set-hint" style={{ minWidth: 66, textAlign: "right" }}>
+                    {streamSpeed} 字/秒
+                  </div>
+                </div>
+              )}
+              <div className="app-set-hint" style={{ marginBottom: "16px" }}>
+                流式=收到即刻整批显示；打字机=匀速逐字，最丝滑；回完一次性=回复期间不显示、完成后整段出。
+              </div>
+              <div className="app-set-group">界面主题</div>
+              <div className="theme-pick" style={{ marginBottom: "14px" }}>
+                {[
+                  { id: "dark", label: "暗色" },
+                  { id: "light", label: "白色" },
+                  { id: "gold", label: "淡金" },
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className={"theme-opt theme-" + t.id + (uiTheme === t.id ? " on" : "")}
+                    onClick={() => pickTheme(t.id)}
+                  >
+                    <span className="theme-sw" />
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           {/* ── 板块一：模型（选平台 / 打通模型 / 填凭证）── */}
           {tab === "model" && (
             <>
@@ -5536,6 +5711,7 @@ function SettingsModal({ onClose, liveModels }: { onClose: () => void; liveModel
           <button className="allow" onClick={() => save()}>
             {tab === "model" ? "保存并切换" : "保存"}
           </button>
+        </div>
         </div>
       </div>
     </div>
