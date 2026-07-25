@@ -3,6 +3,7 @@
 // 关键容错：模型加载/推理失败一律不抛，返回 null → 上层 recall 自动退化为关键词匹配。
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { existsSync } from "node:fs";
 
 const MODEL = "Xenova/multilingual-e5-small";
 export const EMBED_DIM = 384;
@@ -11,18 +12,18 @@ export const MODELS_DIR = join(homedir(), ".minicc", "brain", "models");
 let extractorPromise: Promise<any> | null = null;
 let failed = false; // 加载失败过就别反复重试拖慢每次调用
 
-// 是否强制允许在 Electron 里加载原生 onnxruntime-node（默认关；待 wasm 后端就绪后可开）
-const ALLOW_ELECTRON_NATIVE = process.env.MINICC_BRAIN_NATIVE === "1";
+// 打包 Electron 里 transformers 的 onnxruntime-node 被 alias 成 onnxruntime-web(wasm)，
+// 其 .wasm 文件随 @xenova/transformers/dist 一起解压到 app.asar.unpacked，需把 wasmPaths 指过去。
+// 系统 node(CLI/测试)用 onnxruntime-node 原生后端，process.resourcesPath 为空，返回 undefined 不影响。
+function wasmDir(): string | undefined {
+  const rp = (process as unknown as { resourcesPath?: string }).resourcesPath;
+  if (!rp) return undefined;
+  const p = join(rp, "app.asar.unpacked", "node_modules", "@xenova", "transformers", "dist");
+  return existsSync(p) ? p + "/" : undefined;
+}
 
 async function getExtractor(): Promise<any | null> {
   if (failed) return null;
-  // Electron 打包环境加载 onnxruntime-node 原生模块会直接 SIGTRAP 崩溃（与 Electron 的 Node ABI 不兼容）；
-  // 系统 node（CLI/测试）不受影响。打包版暂时禁用本地向量，检索自动降级为关键词，待换 wasm 后端后恢复。
-  if (process.versions?.electron && !ALLOW_ELECTRON_NATIVE) {
-    failed = true;
-    console.warn("[brain] Electron 环境暂禁用本地向量(onnxruntime-node 不兼容)，检索降级为关键词");
-    return null;
-  }
   if (!extractorPromise) {
     extractorPromise = (async () => {
       const { pipeline, env } = await import("@xenova/transformers");
@@ -30,6 +31,12 @@ async function getExtractor(): Promise<any | null> {
       env.remoteHost = process.env.HF_ENDPOINT || process.env.HF_MIRROR || "https://hf-mirror.com";
       env.cacheDir = MODELS_DIR; // 可写目录（打包后 node_modules 只读）
       env.allowLocalModels = true;
+      // Electron: onnxruntime-web(wasm) 需要 .wasm 文件路径 + 单线程(避免打包环境 worker 问题)
+      const wd = wasmDir();
+      if (wd) {
+        env.backends.onnx.wasm.wasmPaths = wd;
+        env.backends.onnx.wasm.numThreads = 1;
+      }
       return pipeline("feature-extraction", MODEL);
     })().catch((e) => {
       failed = true;
