@@ -1610,21 +1610,7 @@ export function App() {
                   className="acct-name"
                   title={wuwei ? wuwei.user.name || wuwei.user.email || "无为用户" : "游客（未登录）"}
                 >
-                  {wuweiBusy ? (
-                    "登录中…"
-                  ) : wuwei ? (
-                    <>
-                      {wuwei.user.name || wuwei.user.email || "无为用户"}
-                      <span
-                        style={{ color: "#6F9FAD", marginLeft: 6, display: "inline-flex", alignItems: "center", gap: 3 }}
-                      >
-                        <CoinIcon size={13} />
-                        {wuwei.coin.balance}
-                      </span>
-                    </>
-                  ) : (
-                    "游客"
-                  )}
+                  {wuweiBusy ? "登录中…" : wuwei ? wuwei.user.name || wuwei.user.email || "无为用户" : "游客"}
                 </div>
                 <span className="acct-caret">⋯</span>
               </button>
