@@ -626,6 +626,11 @@ async function silentRefreshAccount(pid: string) {
 }
 
 // 账号信息随当前平台变化：Codex→ChatGPT邮箱；DeepSeek→余额；其它→是否填了key
+// 当前平台 id（用于按平台读写订阅额度快照，避免串台）
+function curProviderId(): string {
+  const st = loadSettings();
+  return st?.providerId || (loadConfig().provider === "codex" ? "codex" : "");
+}
 async function emitAccount() {
   const st = loadSettings();
   const pid = st?.providerId || (loadConfig().provider === "codex" ? "codex" : "");
@@ -642,6 +647,8 @@ async function emitAccount() {
       nickname,
       avatar,
     });
+    const rl = loadRateLimits("codex"); // 上次的 Codex 订阅额度快照，切过来即显示（检测/发消息再刷新）
+    if (rl) send("evt:ratelimits", rl);
     return;
   }
   if (pid === "claude-oauth") {
@@ -661,7 +668,7 @@ async function emitAccount() {
       avatar,
     });
     if (plan) {
-      const rl = loadRateLimits() || {};
+      const rl = loadRateLimits(pid) || {};
       send("evt:ratelimits", { ...rl, planType: plan }); // 套餐显示在订阅额度面板
     }
     return;
@@ -681,7 +688,7 @@ async function emitAccount() {
       expired,
     });
     if (u?.rateLimits) {
-      saveRateLimits(u.rateLimits); // 记住，下次打开直接显示
+      saveRateLimits(pid, u.rateLimits); // 记住，下次打开直接显示
       send("evt:ratelimits", u.rateLimits);
     }
     return;
@@ -1024,7 +1031,7 @@ function bootstrapSessions() {
   const a = getAgent(currentId);
   send("evt:sessions", listSessions());
   send("evt:session-loaded", { id: currentId, messages: a ? a.getMessages() : [] });
-  const rl = loadRateLimits(); // 上次的订阅额度快照（账号级），打开即显示
+  const rl = loadRateLimits(curProviderId()); // 上次的订阅额度快照（按平台），打开即显示
   if (rl) send("evt:ratelimits", rl);
   sendUsageFor(currentId); // 当前会话自己的用量
 }
@@ -1370,7 +1377,7 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
         onUsage: (u) => send("evt:usage", { sid: useId, usage: u }),
         onRateLimits: (rl) => {
           log("ratelimits", "5h=", rl.primaryUsedPercent, "% 周=", rl.secondaryUsedPercent, "%");
-          saveRateLimits(rl); // 记住，下次打开直接显示
+          saveRateLimits(curProviderId(), rl); // 记住（按平台），下次打开直接显示
           send("evt:ratelimits", rl);
         },
         onCompact: (b, a) => send("evt:compact", { sid: useId, before: b, after: a }),
@@ -1635,7 +1642,7 @@ ipcMain.handle("session:bootstrap", () => {
     currentId,
     messages: a ? a.getMessages() : [],
     usage: a ? a.getUsage() : EMPTY_USAGE,
-    rateLimits: loadRateLimits() || null,
+    rateLimits: loadRateLimits(curProviderId()) || null,
   };
 });
 
@@ -2272,14 +2279,22 @@ ipcMain.handle("conn:check", async () => {
   try {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), 25000);
-    // 极小 ping：不带工具、只发一句，验证鉴权+连通
+    // 极小 ping：不带工具、只发一句，验证鉴权+连通。顺带捕获响应里的订阅额度/余额头，切平台检测即刷新
     await provider.complete(
       "",
       [{ role: "user", content: [{ type: "text", text: "ping" }] }],
       [],
-      { signal: ac.signal },
+      {
+        signal: ac.signal,
+        onRateLimits: (rl: unknown) => {
+          const pid = curProviderId();
+          saveRateLimits(pid, rl);
+          send("evt:ratelimits", rl);
+        },
+      },
     );
     clearTimeout(timer);
+    void emitAccount(); // 检测通过后刷新账户/余额(DeepSeek 等计费平台余额也随检测更新)
     return { status: "green", reason: `已连通 · ${backendLabel} / ${modelLabel}，可随时使用。` };
   } catch (e: any) {
     const msg = e?.message ? String(e.message) : String(e);

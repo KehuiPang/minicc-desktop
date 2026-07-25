@@ -77,18 +77,29 @@ export function saveWindowBounds(b: WindowBounds) {
   }
 }
 
-// 订阅额度快照持久化（打开就显示上次，不必等发消息刷新）
-export function loadRateLimits(): unknown {
+// 订阅额度快照持久化（打开就显示上次，不必等发消息刷新）——按平台分开存，避免串台
+// 存储结构：{ [providerId]: rateLimits }
+export function loadRateLimits(pid?: string): unknown {
   try {
-    return JSON.parse(readFileSync(RL, "utf8"));
+    const all = JSON.parse(readFileSync(RL, "utf8")) as Record<string, unknown> | null;
+    if (!all || typeof all !== "object" || Array.isArray(all)) return null;
+    return pid ? (all[pid] ?? null) : null;
   } catch {
     return null;
   }
 }
-export function saveRateLimits(rl: unknown) {
+export function saveRateLimits(pid: string, rl: unknown) {
   try {
     mkdirSync(DIR, { recursive: true });
-    writeFileSync(RL, JSON.stringify(rl));
+    let all: Record<string, unknown> = {};
+    try {
+      const cur = JSON.parse(readFileSync(RL, "utf8"));
+      if (cur && typeof cur === "object" && !Array.isArray(cur)) all = cur;
+    } catch {
+      /* 首次或旧格式，重建 */
+    }
+    all[pid] = rl;
+    writeFileSync(RL, JSON.stringify(all));
   } catch {
     /* ignore */
   }
