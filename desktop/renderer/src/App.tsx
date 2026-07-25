@@ -732,6 +732,7 @@ export function App() {
       baseUrl: p.fixedBaseUrl ? p.baseUrl : slot.baseUrl || p.baseUrl,
       model: p.models[0] || cur.model,
     });
+    setRate(null); // 清掉上一个平台的订阅额度残留(余额类无 evt:ratelimits 不会覆盖)，新平台 emitAccount 会重推
     setCurProviderId(p.id);
     setShowProviderMenu(false);
   }
@@ -2448,11 +2449,10 @@ export function App() {
               <div className="u-fill" style={{ width: ctxPct + "%" }} />
             </div>
 
-            {/* 余额登录过期：给个可点的刷新入口，去网站授权后自动刷新（余额可用时不显示） */}
-            {(account.providerId === "deepseek" ||
-              account.providerId === "zhipu" ||
-              account.providerId === "kimi-sub") &&
-              !account.balance?.total && (
+            {/* 余额/额度未登录或过期：给个可点登录入口（kimi看额度rate，deepseek/zhipu看余额；有数据就不显示） */}
+            {((account.providerId === "kimi-sub" && (account.expired || !rate)) ||
+              ((account.providerId === "deepseek" || account.providerId === "zhipu") &&
+                (account.expired || !account.balance?.total))) && (
                 <div
                   className="u-row"
                   style={{ color: "#C05F3C", cursor: webLoginBusy ? "default" : "pointer", alignItems: "center" }}
