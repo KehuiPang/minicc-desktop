@@ -67,6 +67,24 @@ contextBridge.exposeInMainWorld("minicc", {
       status: { name: string; status: string; error: string; tools: number }[];
     }>,
   setMcp: (text: string) => ipcRenderer.send("mcp:set", text),
+  // 本地密钥管理器
+  secretsList: () =>
+    ipcRenderer.invoke("secrets:list") as Promise<{
+      entries: { id: string; name: string; envVar: string; masked: string; note?: string; createdAt: number }[];
+      available: boolean;
+    }>,
+  secretsAdd: (input: { name?: string; envVar?: string; value: string; note?: string }) =>
+    ipcRenderer.invoke("secrets:add", input) as Promise<{ ok: boolean; error?: string; entry?: any }>,
+  secretsUpdate: (id: string, patch: { name?: string; envVar?: string; note?: string; value?: string }) =>
+    ipcRenderer.invoke("secrets:update", id, patch) as Promise<{ ok: boolean; error?: string }>,
+  secretsDelete: (id: string) => ipcRenderer.invoke("secrets:delete", id) as Promise<{ ok: boolean }>,
+  secretsImportEnv: (text: string) =>
+    ipcRenderer.invoke("secrets:import-env", text) as Promise<{ ok: boolean; count?: number; error?: string }>,
+  secretsScan: (text: string) =>
+    ipcRenderer.invoke("secrets:scan", text) as Promise<{
+      redacted: string;
+      candidates: { value: string; masked: string; kind: string; suggestedName: string }[];
+    }>,
   getTools: () =>
     ipcRenderer.invoke("tools:get") as Promise<{
       groups: {

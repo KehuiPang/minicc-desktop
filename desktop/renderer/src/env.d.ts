@@ -26,6 +26,18 @@ export interface MiniccApi {
   setMemory(text: string): void;
   getMcp(): Promise<{ config: string; status: { name: string; status: string; error: string; tools: number }[] }>;
   setMcp(text: string): void;
+  secretsList(): Promise<{
+    entries: { id: string; name: string; envVar: string; masked: string; note?: string; createdAt: number }[];
+    available: boolean;
+  }>;
+  secretsAdd(input: { name?: string; envVar?: string; value: string; note?: string }): Promise<{ ok: boolean; error?: string; entry?: any }>;
+  secretsUpdate(id: string, patch: { name?: string; envVar?: string; note?: string; value?: string }): Promise<{ ok: boolean; error?: string }>;
+  secretsDelete(id: string): Promise<{ ok: boolean }>;
+  secretsImportEnv(text: string): Promise<{ ok: boolean; count?: number; error?: string }>;
+  secretsScan(text: string): Promise<{
+    redacted: string;
+    candidates: { value: string; masked: string; kind: string; suggestedName: string }[];
+  }>;
   getTools(): Promise<{
     groups: {
       source: string;

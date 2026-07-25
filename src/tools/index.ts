@@ -132,6 +132,8 @@ const bashTool: Tool = {
         maxBuffer: 10 * 1024 * 1024,
         shell: "/bin/bash",
         signal: ctx.signal, // 用户停止→杀子进程,别再干等超时
+        // 本地密钥以环境变量注入子进程：模型只写 $OPENAI_API_KEY 即可，全程不接触明文
+        env: ctx.env ? { ...process.env, ...ctx.env } : process.env,
       });
       const out = [stdout, stderr].filter(Boolean).join("\n").trim();
       return { content: out || "(无输出)" };

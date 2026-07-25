@@ -245,6 +245,15 @@ export function App() {
   const sidebarWRef = useRef(sidebarW);
   sidebarWRef.current = sidebarW;
   const [pendingImages, setPendingImages] = useState<string[]>([]);
+  // 发送前检测到的疑似新密钥→确认弹窗
+  type SecCand = { value: string; masked: string; kind: string; suggestedName: string };
+  const [secretPrompt, setSecretPrompt] = useState<{
+    text: string;
+    imgs: string[];
+    inject: boolean;
+    candidates: SecCand[];
+    checked: boolean[];
+  } | null>(null);
   const [account, setAccount] = useState<{
     loggedIn: boolean;
     email: string | null;
@@ -816,6 +825,20 @@ export function App() {
     if (taRef.current) taRef.current.style.height = "auto";
   }
 
+  // 真正把消息投递出去(注入 or 新发)——已入库密钥由主进程兜底脱敏
+  function dispatchMessage(text: string, imgs: string[], inject: boolean) {
+    if (inject) {
+      push({ type: "user", text, images: imgs.length ? imgs : undefined, ts: Date.now() });
+      if (text) {
+        history.current.push(text);
+        histIdx.current = history.current.length;
+      }
+      window.minicc.inject(currentId, text, imgs.length ? imgs : undefined);
+    } else {
+      doSend(text, imgs);
+    }
+  }
+
   function submit() {
     const text = input.trim();
     if (!text && pendingImages.length === 0) return;
@@ -826,18 +849,31 @@ export function App() {
     }
     setSuggestion(""); // 发送后清掉旧的下一步建议(回复完会重新生成)
     const imgs = pendingImages;
-    if (busy) {
-      // 跑动中：实时注入到当前回合，AI 会在下一步综合权衡、优先处理，不必等整轮跑完
-      push({ type: "user", text, images: imgs.length ? imgs : undefined, ts: Date.now() });
-      if (text) {
-        history.current.push(text);
-        histIdx.current = history.current.length;
+    const inject = busy; // 跑动中→注入到当前回合
+    // 发送前扫描敏感密钥：已入库的静默替换,新出现的弹窗让用户确认
+    window.minicc.secretsScan(text).then((r) => {
+      if (r.candidates.length > 0) {
+        setSecretPrompt({ text, imgs, inject, candidates: r.candidates, checked: r.candidates.map(() => true) });
+        return; // 等用户在弹窗里决定,先不发
       }
-      window.minicc.inject(currentId, text, imgs.length ? imgs : undefined);
+      dispatchMessage(text, imgs, inject);
       clearComposer();
-      return;
+    });
+  }
+
+  // 密钥确认弹窗：存入选中的,再发送
+  async function confirmSecretPrompt(store: boolean) {
+    const sp = secretPrompt;
+    if (!sp) return;
+    if (store) {
+      for (let i = 0; i < sp.candidates.length; i++) {
+        if (!sp.checked[i]) continue;
+        const c = sp.candidates[i];
+        await window.minicc.secretsAdd({ name: c.suggestedName, value: c.value });
+      }
     }
-    doSend(text, imgs);
+    setSecretPrompt(null);
+    dispatchMessage(sp.text, sp.imgs, sp.inject); // 存入后主进程会把它们替换成占位符
     clearComposer();
   }
 
@@ -2122,6 +2158,40 @@ export function App() {
         />
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {secretPrompt && (
+        <div className="perm-overlay" onClick={() => setSecretPrompt(null)}>
+          <div className="add-st-dialog sec-prompt" onClick={(e) => e.stopPropagation()}>
+            <h3>🔒 检测到疑似密钥</h3>
+            <p className="s-note">
+              发现下面的敏感信息。勾选要存入本地密钥管理器的项——存入后会加密保存,并在发给 AI 前用占位符替换,之后每次自动识别。
+            </p>
+            <div className="sec-cand-list">
+              {secretPrompt.candidates.map((c, i) => (
+                <label key={i} className="sec-cand">
+                  <input
+                    type="checkbox"
+                    checked={secretPrompt.checked[i]}
+                    onChange={(e) => {
+                      const checked = [...secretPrompt.checked];
+                      checked[i] = e.target.checked;
+                      setSecretPrompt({ ...secretPrompt, checked });
+                    }}
+                  />
+                  <span className="sec-cand-kind">{c.kind}</span>
+                  <span className="sec-cand-val">{c.masked}</span>
+                </label>
+              ))}
+            </div>
+            <div className="btns">
+              <button onClick={() => setSecretPrompt(null)}>取消发送</button>
+              <button onClick={() => confirmSecretPrompt(false)}>不存,直接发</button>
+              <button className="allow" onClick={() => confirmSecretPrompt(true)}>
+                存入并替换后发送
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {showAppSettings && (
         <AppSettingsModal
           onClose={() => setShowAppSettings(false)}
@@ -3418,7 +3488,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   hiddenRef.current = hidden;
   const [dragOverIdx, setDragOverIdx] = useState(-1); // 拖拽悬停到第几行(高亮)
   const dragIdxRef = useRef(-1); // 拖起始行
-  const [tab, setTab] = useState<"model" | "platforms" | "prompt" | "memory" | "mcp" | "tools">("model"); // 设置分块标签页
+  const [tab, setTab] = useState<"model" | "platforms" | "prompt" | "memory" | "mcp" | "tools" | "secrets">("model"); // 设置分块标签页
   const [memory, setMemory] = useState(""); // 全局长期记忆
   const memoryTouchedRef = useRef(false); // 是否改过记忆(保存时才写)
   const [mcpConfig, setMcpConfig] = useState(""); // MCP 服务器配置(JSON，源真相)
@@ -3467,6 +3537,49 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
       setToolTotal(r.total);
     });
   }, [tab]);
+  // ── 密钥管理器 ──
+  type SecretRow = { id: string; name: string; envVar: string; masked: string; note?: string; createdAt: number };
+  const [secrets, setSecrets] = useState<SecretRow[]>([]);
+  const [secretsAvail, setSecretsAvail] = useState(true);
+  const [secNew, setSecNew] = useState({ name: "", envVar: "", value: "", note: "" });
+  const [secImportOpen, setSecImportOpen] = useState(false);
+  const [secImportText, setSecImportText] = useState("");
+  const [secErr, setSecErr] = useState("");
+  const reloadSecrets = () =>
+    window.minicc.secretsList().then((r) => {
+      setSecrets(r.entries);
+      setSecretsAvail(r.available);
+    });
+  useEffect(() => {
+    if (tab === "secrets") reloadSecrets();
+  }, [tab]);
+  async function addSecret() {
+    setSecErr("");
+    if (!secNew.value.trim()) {
+      setSecErr("请填入密钥值");
+      return;
+    }
+    const r = await window.minicc.secretsAdd({
+      name: secNew.name.trim() || undefined,
+      envVar: secNew.envVar.trim() || undefined,
+      value: secNew.value,
+      note: secNew.note.trim() || undefined,
+    });
+    if (!r.ok) {
+      setSecErr(r.error || "添加失败");
+      return;
+    }
+    setSecNew({ name: "", envVar: "", value: "", note: "" });
+    reloadSecrets();
+  }
+  async function doImportEnv() {
+    const r = await window.minicc.secretsImportEnv(secImportText);
+    if (r.ok) {
+      setSecImportText("");
+      setSecImportOpen(false);
+      reloadSecrets();
+    } else setSecErr(r.error || "导入失败");
+  }
   // 内置平台 + 中转站(合并成一份预设列表；下拉与查找都用它)
   const allPresets = [...PRESETS, ...stations.map(stationToPreset)];
   const orderedPresets = arrangePresets(allPresets, order, hidden, true);
@@ -3964,6 +4077,13 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             onClick={() => setTab("tools")}
           >
             工具
+          </button>
+          <button
+            type="button"
+            className={"set-tab" + (tab === "secrets" ? " on" : "")}
+            onClick={() => setTab("secrets")}
+          >
+            密钥
           </button>
         </div>
 
@@ -4714,6 +4834,98 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                 </div>
               );
             })()}
+
+          {/* ── 板块七：密钥（本地加密保险箱，统一管理敏感密钥）── */}
+          {tab === "secrets" && (
+            <div className="secrets-pane">
+              <p className="s-note">
+                密钥本地加密存储(系统钥匙串),明文永不落盘、也永不发给模型。发送时命中的密钥自动用占位符替换,本机执行时以环境变量/占位符回填。
+                {!secretsAvail && <b style={{ color: "var(--danger, #c0392b)" }}> ⚠ 当前系统加密不可用,暂无法安全存储。</b>}
+              </p>
+
+              <div className="sec-add">
+                <div className="sec-add-row">
+                  <input
+                    className="sec-in"
+                    placeholder="名称 (如 openai_api_key)"
+                    value={secNew.name}
+                    onChange={(e) => setSecNew({ ...secNew, name: e.target.value })}
+                  />
+                  <input
+                    className="sec-in"
+                    placeholder="环境变量名 (如 OPENAI_API_KEY,可留空)"
+                    value={secNew.envVar}
+                    onChange={(e) => setSecNew({ ...secNew, envVar: e.target.value })}
+                  />
+                </div>
+                <div className="sec-add-row">
+                  <input
+                    className="sec-in"
+                    type="password"
+                    placeholder="密钥值 (加密存储,不回显)"
+                    value={secNew.value}
+                    onChange={(e) => setSecNew({ ...secNew, value: e.target.value })}
+                  />
+                  <input
+                    className="sec-in"
+                    placeholder="备注 (可选)"
+                    value={secNew.note}
+                    onChange={(e) => setSecNew({ ...secNew, note: e.target.value })}
+                  />
+                </div>
+                <div className="sec-add-actions">
+                  <button type="button" className="allow" onClick={addSecret} disabled={!secretsAvail}>
+                    + 添加密钥
+                  </button>
+                  <button type="button" onClick={() => setSecImportOpen((v) => !v)} disabled={!secretsAvail}>
+                    从 .env 导入
+                  </button>
+                  {secErr && <span className="sec-err">{secErr}</span>}
+                </div>
+                {secImportOpen && (
+                  <div className="sec-import">
+                    <textarea
+                      className="sec-import-ta"
+                      placeholder={"粘贴 .env 内容，每行 KEY=VALUE\nOPENAI_API_KEY=sk-...\nDB_PASSWORD=..."}
+                      value={secImportText}
+                      onChange={(e) => setSecImportText(e.target.value)}
+                    />
+                    <button type="button" className="allow" onClick={doImportEnv}>
+                      导入
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="sec-list">
+                {secrets.length === 0 ? (
+                  <div className="mcp-empty">还没有密钥。把常用密钥加进来,聊天/工具里出现就自动脱敏替换。</div>
+                ) : (
+                  secrets.map((s) => (
+                    <div key={s.id} className="sec-row">
+                      <div className="sec-row-main">
+                        <span className="sec-name">{s.name}</span>
+                        <span className="sec-mask">{s.masked}</span>
+                        {s.envVar && <span className="sec-env">${s.envVar}</span>}
+                      </div>
+                      {s.note && <span className="sec-row-note">{s.note}</span>}
+                      <button
+                        type="button"
+                        className="sec-del"
+                        title="删除"
+                        onClick={async () => {
+                          await window.minicc.secretsDelete(s.id);
+                          reloadSecrets();
+                        }}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="btns">

@@ -1,6 +1,13 @@
 // Electron 主进程：创建窗口，复用 minicc 核心(agent/tools/config)，
 // 通过 IPC 把 Agent 流式 hooks 推给渲染进程，权限确认走 IPC 往返。
-import { app, BrowserWindow, WebContentsView, ipcMain, protocol, net, shell, session, clipboard, Menu } from "electron";
+import { app, BrowserWindow, WebContentsView, ipcMain, protocol, net, shell, session, clipboard, Menu, safeStorage } from "electron";
+const safeStorageOk = () => {
+  try {
+    return safeStorage.isEncryptionAvailable();
+  } catch {
+    return false;
+  }
+};
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -13,6 +20,7 @@ import { systemPrompt, renderPrompt, DEFAULT_SYSTEM_PROMPT } from "../../src/age
 import { ALL_TOOLS, TOOL_MAP, MEMORY_FILE } from "../../src/tools/index.js";
 import type { Tool, ToolResult } from "../../src/types.js";
 import { connectMcp, mcpTools, mcpToolsBySource, mcpStatus, loadMcpConfig, searchMcpRegistry, MCP_CONFIG_PATH } from "./mcp.js";
+import * as secrets from "./secrets.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -791,6 +799,7 @@ function buildSysPrompt(cwd: string, model: string, providerId?: string): string
   base +=
     `\n\n## 长期记忆\n用户说“记住…/以后…/我喜欢…”或出现值得长期保留的信息(偏好、称呼、事实、项目背景)时，调用 remember 工具写入；它会在之后每次对话自动加载。`;
   if (mem) base += `\n\n已记住（需主动遵守/参考）：\n${mem}`;
+  base += secrets.SECRETS_SYSTEM_NOTE; // 告知模型：密钥走本地保险箱/环境变量，无需明文
   return base;
 }
 
@@ -932,9 +941,36 @@ const browserClickTool: Tool = {
   },
 };
 const BROWSER_TOOLS: Tool[] = [browserOpenTool, browserReadTool, browserClickTool];
-// 桌面版工具集 = 共享工具 + 浏览器工具 + 动态 MCP 工具(连上后加入)
+
+// 密钥安全包装：入参占位符→真实值回填、bash 注入密钥环境变量、工具结果→脱敏后再回给模型。
+// 闭环:模型能用密钥(env/占位符)但读不回明文(输出被脱敏)，想 echo 偷取也会被拦。
+function deepRehydrate(input: Record<string, unknown>): Record<string, unknown> {
+  const walk = (v: unknown): unknown => {
+    if (typeof v === "string") return secrets.rehydrate(v);
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === "object") {
+      const o: Record<string, unknown> = {};
+      for (const [k, val] of Object.entries(v)) o[k] = walk(val);
+      return o;
+    }
+    return v;
+  };
+  return walk(input) as Record<string, unknown>;
+}
+function wrapSecret(t: Tool): Tool {
+  return {
+    ...t,
+    async run(input, ctx) {
+      const realInput = deepRehydrate(input); // 占位符→明文，供本机执行
+      const r = await t.run(realInput, { ...ctx, env: secrets.envForTools() });
+      return { ...r, content: secrets.redact(r.content).text }; // 结果里的明文→占位符再回模型
+    },
+  };
+}
+
+// 桌面版工具集 = 共享工具 + 浏览器工具 + 动态 MCP 工具(连上后加入)，全部过密钥安全包装
 function desktopTools(): Tool[] {
-  return [...ALL_TOOLS, ...BROWSER_TOOLS, ...mcpTools()];
+  return [...ALL_TOOLS, ...BROWSER_TOOLS, ...mcpTools()].map(wrapSecret);
 }
 function desktopToolMap(): Map<string, Tool> {
   return new Map(desktopTools().map((t) => [t.name, t]));
@@ -1235,6 +1271,7 @@ app.on("window-all-closed", () => {
 // —— IPC：渲染 → 主 ——
 // 多任务：sid 指定跑哪个会话(前端传 currentId)，各会话各自异步、互不阻塞。事件都带 sid，前端只把当前可见会话的更新画出来。
 async function startTurn(useId: string, text: string, images?: string[], sysOverride?: string) {
+  text = secrets.redact(text).text; // 兜底：已入库密钥出现在消息里→占位符替换，永不出网到模型
   const agent = getAgent(useId);
   if (!agent) {
     send("evt:error", { sid: useId, message: "未初始化：缺少模型凭证。请确认 ~/.codex/auth.json 或设置 API key 后重启。" });
@@ -1313,6 +1350,7 @@ ipcMain.on("chat:send", (_e, sid: string, text: string, images?: string[]) => {
 // 运行中注入新需求：正在跑→注入到当前循环边界(AI 综合权衡/优先处理，不必等整轮跑完)；没在跑→当普通发送
 ipcMain.on("chat:inject", (_e, sid: string, text: string, images?: string[]) => {
   const useId = sid || currentId;
+  text = secrets.redact(text).text; // 同发送路径：注入的文本也脱敏
   const agent = getAgent(useId);
   if (agent && runs.has(useId)) {
     agent.injectUser(text, images);
@@ -1614,6 +1652,46 @@ ipcMain.on("mcp:set", (_e, text: string) => {
   });
 });
 ipcMain.handle("mcp:search", (_e, query: string, cursor?: string) => searchMcpRegistry(query, cursor));
+
+// —— 本地密钥管理器 ——
+ipcMain.handle("secrets:list", () => {
+  try {
+    return { entries: secrets.listSecrets(), available: safeStorageOk() };
+  } catch {
+    return { entries: [], available: safeStorageOk() };
+  }
+});
+ipcMain.handle("secrets:add", (_e, input: { name?: string; envVar?: string; value: string; note?: string }) => {
+  try {
+    return { ok: true, entry: secrets.addSecret(input) };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+});
+ipcMain.handle("secrets:update", (_e, id: string, patch: any) => {
+  try {
+    secrets.updateSecret(id, patch);
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+});
+ipcMain.handle("secrets:delete", (_e, id: string) => {
+  secrets.deleteSecret(id);
+  return { ok: true };
+});
+ipcMain.handle("secrets:import-env", (_e, text: string) => {
+  try {
+    return { ok: true, count: secrets.importEnv(text) };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+});
+// 发送前扫描：脱敏已入库密钥 + 返回尚未入库的疑似新密钥(给确认弹窗)
+ipcMain.handle("secrets:scan", (_e, text: string) => {
+  const redacted = secrets.redact(text).text;
+  return { redacted, candidates: secrets.detect(redacted) };
+});
 
 // 「工具」面板：把当前生效的全部工具（内置 + 浏览器 + 各 MCP 服务器）按来源分组返回
 ipcMain.handle("tools:get", () => {

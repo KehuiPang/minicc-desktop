@@ -31,6 +31,7 @@ export interface ToolSpec {
 export interface ToolContext {
   cwd: string;
   signal?: AbortSignal; // 中断信号：用户停止时传入，长命令(bash/grep)据此杀子进程
+  env?: Record<string, string>; // 本地密钥注入(仅本机子进程可见，模型看不到)：bash 工具据此合并环境变量
 }
 
 export interface ToolResult {

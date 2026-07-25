@@ -3038,3 +3038,57 @@ body {
 .tool-detail-desc { margin: 4px 0 14px; color: var(--text-dim); }
 .tool-detail-label { font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
 .tool-detail-schema { max-height: 340px; }
+
+/* ── 设置·「密钥」面板 + 发送前确认弹窗 ── */
+.secrets-pane { display: flex; flex-direction: column; }
+.sec-add {
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin: 8px 0 14px;
+  background: var(--accent-soft);
+}
+.sec-add-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.sec-in {
+  flex: 1 1 0; min-width: 0; font-size: 13px; padding: 7px 10px;
+  border: 1px solid var(--border-strong); border-radius: 7px;
+  background: var(--bg); color: var(--text);
+}
+.sec-add-actions { display: flex; align-items: center; gap: 10px; }
+.sec-err { font-size: 12px; color: var(--danger, #c0392b); }
+.sec-import { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.sec-import-ta {
+  width: 100%; min-height: 96px; font-size: 12px; font-family: var(--mono, ui-monospace, monospace);
+  padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 7px;
+  background: var(--bg); color: var(--text); resize: vertical;
+}
+
+.sec-list { display: flex; flex-direction: column; gap: 6px; }
+.sec-row {
+  display: flex; align-items: center; gap: 10px;
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
+}
+.sec-row-main { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; min-width: 0; }
+.sec-name { font-size: 13px; font-weight: 600; color: var(--text); font-family: var(--mono, ui-monospace, monospace); }
+.sec-mask { font-size: 12px; color: var(--text-muted); font-family: var(--mono, ui-monospace, monospace); }
+.sec-env {
+  font-size: 11px; color: var(--accent); border: 1px solid var(--accent);
+  border-radius: 4px; padding: 0 6px; font-family: var(--mono, ui-monospace, monospace);
+}
+.sec-row-note { font-size: 12px; color: var(--text-muted); }
+.sec-del {
+  flex: 0 0 auto; font-size: 12px; color: var(--text-muted);
+  border: 1px solid var(--border-strong); border-radius: 6px; padding: 3px 10px;
+  background: transparent; cursor: pointer;
+}
+.sec-del:hover { color: var(--danger, #c0392b); border-color: var(--danger, #c0392b); }
+
+/* 发送前确认弹窗 */
+.sec-prompt { max-width: 480px; width: 480px; }
+.sec-cand-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 4px; }
+.sec-cand {
+  display: flex; align-items: center; gap: 10px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
+}
+.sec-cand-kind {
+  font-size: 11px; color: var(--accent); border: 1px solid var(--accent);
+  border-radius: 4px; padding: 0 6px;
+}
+.sec-cand-val { font-size: 13px; color: var(--text); font-family: var(--mono, ui-monospace, monospace); }
