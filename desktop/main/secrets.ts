@@ -100,6 +100,21 @@ export function addSecret(input: { name?: string; envVar?: string; value: string
   const v = load();
   const value = String(input.value ?? "");
   if (!value) throw new Error("密钥值为空");
+  // 值去重:已存在同一明文→直接返回既有条目,不重复添加
+  for (const e of v.entries) {
+    try {
+      if (decrypt(e.enc) === value) {
+        // 顺带补上备注(如果原来没有、这次带了)
+        if (!e.note && input.note?.trim()) {
+          e.note = input.note.trim();
+          persist();
+        }
+        return { id: e.id, name: e.name, envVar: e.envVar, masked: mask(value), note: e.note, createdAt: e.createdAt };
+      }
+    } catch {
+      /* 解不开的跳过 */
+    }
+  }
   let name = normName(input.name || "secret");
   // 名字撞车则加后缀，保证占位符唯一
   const used = new Set(v.entries.map((e) => e.name));
@@ -217,6 +232,19 @@ export function rehydrate(text: string): string {
   return out;
 }
 
+// ---- 查看明文：返回每条的真实值（调用方须先通过本机账号密码校验） ----
+export function revealAll(): { id: string; value: string }[] {
+  const out: { id: string; value: string }[] = [];
+  for (const e of load().entries) {
+    try {
+      out.push({ id: e.id, value: decrypt(e.enc) });
+    } catch {
+      out.push({ id: e.id, value: "⚠ 无法解密" });
+    }
+  }
+  return out;
+}
+
 // ---- 环境变量注入表：给本机 bash 子进程用 ----
 export function envForTools(): Record<string, string> {
   const env: Record<string, string> = {};
@@ -232,8 +260,8 @@ export function envForTools(): Record<string, string> {
 }
 
 // ---- 检测：找出「尚未入库」的疑似新密钥（给发送前确认弹窗用） ----
-// valueGroup 指定用哪个捕获组作为真正的密钥值（默认整段 m[0]）
-const DETECTORS: { kind: string; re: RegExp; valueGroup?: number }[] = [
+// valueGroup 指定用哪个捕获组作为真正的密钥值（默认整段 m[0]）；labelGroup=标签短语组
+const DETECTORS: { kind: string; re: RegExp; valueGroup?: number; labelGroup?: number }[] = [
   { kind: "openai", re: /\bsk-[A-Za-z0-9_-]{20,}\b/g },
   { kind: "anthropic", re: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/g },
   { kind: "aws-akid", re: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
@@ -243,13 +271,73 @@ const DETECTORS: { kind: string; re: RegExp; valueGroup?: number }[] = [
   { kind: "jwt", re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
   { kind: "private-key", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g },
   { kind: "generic-token", re: /\bsk-[A-Za-z0-9]{10,}\b/g },
-  // 上下文标签：密码/口令/密钥/token/key 后面跟的值——普通密码(如 Tanxun8888)靠这个抓
+  // 上下文标签：密码/口令/密钥/token/key 后面跟的值——普通密码(如 Tanxun8888)靠这个抓。
+  // 捕获组1=完整标签短语(如"各个服务器的密码",转成备注+英文名)，组2=值。
   {
     kind: "labeled",
-    re: /(?:密码|口令|密钥|秘钥|凭证|密令|账号密码|password|passwd|pwd|pass|secret|token|credential|api[\s_-]?key|access[\s_-]?key|secret[\s_-]?key|auth[\s_-]?token)\s*[:：=]\s*['"]?([^\s'"，,；;]{3,64})/gi,
-    valueGroup: 1,
+    re: /([^\s:：=,，;；'"]{0,24}?(?:密码|口令|密钥|秘钥|凭证|密令|password|passwd|pwd|pass|secret|token|credential|api[\s_-]?key|access[\s_-]?key|secret[\s_-]?key|auth[\s_-]?token))\s*[:：=]\s*['"]?([^\s'"，,；;]{3,64})/gi,
+    valueGroup: 2,
+    labelGroup: 1,
   },
 ];
+
+// 中文→英文变量名词典（长词在前，贪婪匹配）
+const ZH_EN: [string, string][] = [
+  ["各个服务器", "server"],
+  ["服务器", "server"],
+  ["数据库", "db"],
+  ["管理员", "admin"],
+  ["私钥", "private_key"],
+  ["证书", "cert"],
+  ["令牌", "token"],
+  ["接口", "api"],
+  ["邮箱", "email"],
+  ["账号", "account"],
+  ["账户", "account"],
+  ["用户", "user"],
+  ["生产", "prod"],
+  ["线上", "prod"],
+  ["预发", "staging"],
+  ["测试", "test"],
+  ["内部", "internal"],
+  ["密钥", "key"],
+  ["秘钥", "key"],
+  ["口令", "password"],
+  ["密码", "password"],
+  ["登录", "login"],
+  ["根", "root"],
+  ["主", "primary"],
+  ["备", "backup"],
+];
+// 从标签短语生成 snake_case 英文变量名（"各个服务器的密码"→server_password）
+function nameFromLabel(label: string): string {
+  let s = (label || "").toLowerCase();
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < s.length) {
+    let hit: [string, string] | null = null;
+    for (const [zh, en] of ZH_EN) {
+      if (s.startsWith(zh, i)) {
+        hit = [zh, en];
+        break;
+      }
+    }
+    if (hit) {
+      tokens.push(hit[1]);
+      i += hit[0].length;
+      continue;
+    }
+    const em = /^[a-z0-9]+/.exec(s.slice(i));
+    if (em) {
+      tokens.push(em[0]);
+      i += em[0].length;
+      continue;
+    }
+    i++; // 的/空格/其它字符跳过
+  }
+  const uniq = tokens.filter((t, idx) => t && t !== tokens[idx - 1]);
+  return uniq.join("_").replace(/^_+|_+$/g, "") || "password";
+}
 
 // 高熵长串（无标签的随机密钥）：≥24 位、同时含大小写+数字，普通英文/句子几乎不会命中
 function entropyCandidates(text: string): string[] {
@@ -278,31 +366,49 @@ export interface Candidate {
   value: string;
   masked: string;
   kind: string;
-  suggestedName: string;
+  suggestedName: string; // 英文变量名（自动命名）
+  note?: string; // 备注（标签原文，如"各个服务器的密码"）
 }
 
 export function detect(text: string): Candidate[] {
   if (!text) return [];
   const { byValue } = plaintextMap();
-  const found = new Map<string, string>(); // value -> kind
-  const consider = (raw: string, kind: string) => {
+  const found = new Map<string, { kind: string; name: string; note?: string }>();
+  const consider = (raw: string, kind: string, label?: string) => {
     const val = cleanValue(raw);
     if (!val || val.length < 4) return;
     if (val.startsWith(PH_OPEN)) return; // 占位符不算
     if (byValue.has(val)) return; // 已入库→交给 redact，不重复提示
-    if (!found.has(val)) found.set(val, kind);
+    if (found.has(val)) return;
+    let name: string;
+    let note: string | undefined;
+    if (kind === "labeled") {
+      const lbl = (label || "").replace(/^[\s'"「」]+|[\s'"「」]+$/g, "");
+      name = nameFromLabel(lbl);
+      note = lbl || undefined; // 标签原文当备注
+    } else if (kind === "high-entropy") {
+      name = "secret";
+    } else {
+      name = `${kind.replace(/-/g, "_")}_key`;
+    }
+    found.set(val, { kind, name, note });
   };
   for (const d of DETECTORS) {
     d.re.lastIndex = 0;
     let m: RegExpExecArray | null;
-    while ((m = d.re.exec(text))) consider(d.valueGroup ? m[d.valueGroup] : m[0], d.kind);
+    while ((m = d.re.exec(text))) {
+      const val = d.valueGroup ? m[d.valueGroup] : m[0];
+      const label = d.labelGroup ? m[d.labelGroup] : undefined;
+      consider(val, d.kind, label);
+    }
   }
   for (const s of entropyCandidates(text)) consider(s, "high-entropy");
-  return [...found.entries()].map(([value, kind]) => ({
+  return [...found.entries()].map(([value, info]) => ({
     value,
     masked: mask(value),
-    kind,
-    suggestedName: kind === "labeled" ? "password" : kind === "high-entropy" ? "secret" : `${kind.replace(/-/g, "_")}_key`,
+    kind: info.kind,
+    suggestedName: info.name,
+    note: info.note,
   }));
 }
 

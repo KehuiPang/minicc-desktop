@@ -3137,3 +3137,25 @@ body {
 .sec-prompt .btns button:not(.allow):hover { border-color: var(--accent); color: var(--accent); }
 .sec-prompt .btns button.allow { font-weight: 600; }
 .sec-prompt .btns button.allow:hover { filter: brightness(1.06); }
+
+/* 密钥:查看明文条 + 候选自动命名 */
+.sec-reveal-bar { margin: 4px 0 8px; }
+.sec-reveal-btn {
+  font-size: 12px; color: var(--text-muted); background: none;
+  border: 1px solid var(--border-strong); border-radius: 8px; padding: 5px 12px; cursor: pointer;
+}
+.sec-reveal-btn:hover { border-color: var(--accent); color: var(--accent); }
+.sec-reveal-btn.on { color: var(--accent); border-color: var(--accent); }
+.sec-unlock { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sec-unlock .sec-in { flex: 1 1 220px; }
+.sec-unlock button {
+  border: 1px solid var(--border-strong); background: var(--bg); color: var(--text);
+  border-radius: 9px; padding: 7px 15px; font-size: 13px; cursor: pointer; white-space: nowrap;
+}
+.sec-unlock button.allow { font-weight: 600; }
+.sec-mask.revealed {
+  color: var(--text); background: var(--accent-soft);
+  padding: 1px 6px; border-radius: 4px; user-select: all;
+}
+.sec-cand-meta { font-size: 12px; color: var(--text-muted); margin-left: 2px; }
+.sec-cand-meta b { color: var(--accent); font-family: var(--mono, ui-monospace, monospace); font-weight: 600; }

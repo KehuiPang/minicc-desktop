@@ -66,8 +66,9 @@ export interface MiniccApi {
   secretsImportEnv(text: string): Promise<{ ok: boolean; count?: number; error?: string }>;
   secretsScan(text: string): Promise<{
     redacted: string;
-    candidates: { value: string; masked: string; kind: string; suggestedName: string }[];
+    candidates: { value: string; masked: string; kind: string; suggestedName: string; note?: string }[];
   }>;
+  secretsReveal(pw: string): Promise<{ ok: boolean; error?: string; items?: { id: string; value: string }[] }>;
   getTools(): Promise<{
     groups: {
       source: string;

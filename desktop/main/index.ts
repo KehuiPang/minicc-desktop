@@ -1719,6 +1719,22 @@ ipcMain.handle("secrets:import-env", (_e, text: string) => {
     return { ok: false, error: e.message };
   }
 });
+// 查看明文:先用本机账号密码校验(macOS dscl -authonly，不需 sudo)，通过才返回真实值
+ipcMain.handle("secrets:reveal", async (_e, pw: string) => {
+  try {
+    const { execFile } = await import("node:child_process");
+    const os = await import("node:os");
+    const user = os.userInfo().username;
+    const ok = await new Promise<boolean>((resolve) => {
+      const p = execFile("/usr/bin/dscl", [".", "-authonly", user, String(pw ?? "")], (err) => resolve(!err));
+      p.on("error", () => resolve(false));
+    });
+    if (!ok) return { ok: false, error: "密码不正确" };
+    return { ok: true, items: secrets.revealAll() };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+});
 // 发送前扫描：脱敏已入库密钥 + 返回尚未入库的疑似新密钥(给确认弹窗)。永不抛错,否则会挡住发送。
 ipcMain.handle("secrets:scan", (_e, text: string) => {
   try {

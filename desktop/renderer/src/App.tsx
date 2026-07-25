@@ -246,7 +246,7 @@ export function App() {
   sidebarWRef.current = sidebarW;
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   // 发送前检测到的疑似新密钥→确认弹窗
-  type SecCand = { value: string; masked: string; kind: string; suggestedName: string };
+  type SecCand = { value: string; masked: string; kind: string; suggestedName: string; note?: string };
   const [secretPrompt, setSecretPrompt] = useState<{
     text: string; // 原始文本(供存入后重新扫描)
     redacted: string; // 已把已入库密钥换成占位符的版本(用于显示/发送)
@@ -890,7 +890,7 @@ export function App() {
       for (let i = 0; i < sp.candidates.length; i++) {
         if (!sp.checked[i]) continue;
         const c = sp.candidates[i];
-        await window.minicc.secretsAdd({ name: c.suggestedName, value: c.value });
+        await window.minicc.secretsAdd({ name: c.suggestedName, value: c.value, note: c.note });
       }
       // 存好后重新扫描:刚入库的这批也会被替换成占位符
       try {
@@ -2206,6 +2206,10 @@ export function App() {
                   />
                   <span className="sec-cand-kind">{c.kind}</span>
                   <span className="sec-cand-val">{c.masked}</span>
+                  <span className="sec-cand-meta">
+                    → <b>{c.suggestedName}</b>
+                    {c.note ? ` · ${c.note}` : ""}
+                  </span>
                 </label>
               ))}
             </div>
@@ -3614,6 +3618,24 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [secImportOpen, setSecImportOpen] = useState(false);
   const [secImportText, setSecImportText] = useState("");
   const [secErr, setSecErr] = useState("");
+  // 查看明文:需输入本机账号密码解锁(退出设置即失效——本状态随弹窗卸载清空)
+  const [revealed, setRevealed] = useState<Record<string, string> | null>(null);
+  const [unlockOpen, setUnlockOpen] = useState(false);
+  const [unlockPw, setUnlockPw] = useState("");
+  const [unlockErr, setUnlockErr] = useState("");
+  async function doUnlock() {
+    setUnlockErr("");
+    const r = await window.minicc.secretsReveal(unlockPw);
+    if (!r.ok) {
+      setUnlockErr(r.error || "验证失败");
+      return;
+    }
+    const map: Record<string, string> = {};
+    for (const it of r.items || []) map[it.id] = it.value;
+    setRevealed(map);
+    setUnlockOpen(false);
+    setUnlockPw("");
+  }
   const reloadSecrets = () =>
     window.minicc.secretsList().then((r) => {
       setSecrets(r.entries);
@@ -5274,6 +5296,46 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                 )}
               </div>
 
+              {secrets.length > 0 && (
+                <div className="sec-reveal-bar">
+                  {revealed ? (
+                    <button type="button" className="sec-reveal-btn on" onClick={() => setRevealed(null)}>
+                      🔒 隐藏明文
+                    </button>
+                  ) : unlockOpen ? (
+                    <div className="sec-unlock">
+                      <input
+                        type="password"
+                        className="sec-in"
+                        autoFocus
+                        placeholder="输入本机账号密码以查看明文"
+                        value={unlockPw}
+                        onChange={(e) => setUnlockPw(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && doUnlock()}
+                      />
+                      <button type="button" className="allow" onClick={doUnlock}>
+                        解锁
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUnlockOpen(false);
+                          setUnlockPw("");
+                          setUnlockErr("");
+                        }}
+                      >
+                        取消
+                      </button>
+                      {unlockErr && <span className="sec-err">{unlockErr}</span>}
+                    </div>
+                  ) : (
+                    <button type="button" className="sec-reveal-btn" onClick={() => setUnlockOpen(true)}>
+                      👁 查看明文（需本机账号密码）
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div className="sec-list">
                 {secrets.length === 0 ? (
                   <div className="mcp-empty">还没有密钥。把常用密钥加进来,聊天/工具里出现就自动脱敏替换。</div>
@@ -5282,7 +5344,9 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                     <div key={s.id} className="sec-row">
                       <div className="sec-row-main">
                         <span className="sec-name">{s.name}</span>
-                        <span className="sec-mask">{s.masked}</span>
+                        <span className={"sec-mask" + (revealed ? " revealed" : "")}>
+                          {revealed && revealed[s.id] != null ? revealed[s.id] : s.masked}
+                        </span>
                         {s.envVar && <span className="sec-env">${s.envVar}</span>}
                       </div>
                       {s.note && <span className="sec-row-note">{s.note}</span>}
