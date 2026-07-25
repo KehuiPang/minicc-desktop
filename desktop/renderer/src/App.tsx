@@ -3418,7 +3418,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   hiddenRef.current = hidden;
   const [dragOverIdx, setDragOverIdx] = useState(-1); // 拖拽悬停到第几行(高亮)
   const dragIdxRef = useRef(-1); // 拖起始行
-  const [tab, setTab] = useState<"model" | "platforms" | "prompt" | "memory" | "mcp">("model"); // 设置分块标签页
+  const [tab, setTab] = useState<"model" | "platforms" | "prompt" | "memory" | "mcp" | "tools">("model"); // 设置分块标签页
   const [memory, setMemory] = useState(""); // 全局长期记忆
   const memoryTouchedRef = useRef(false); // 是否改过记忆(保存时才写)
   const [mcpConfig, setMcpConfig] = useState(""); // MCP 服务器配置(JSON，源真相)
@@ -3451,6 +3451,22 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [mcpLoadingMore, setMcpLoadingMore] = useState(false);
   const [mcpOnlineOpen, setMcpOnlineOpen] = useState<string | null>(null); // 展开详情的在线结果
   const mcpSearchRef = useRef(""); // 当前搜索词(翻页时校验没变)
+  // ── 工具面板：当前生效的全部工具（按来源分组）──
+  type ToolInfo = { name: string; description: string; readOnly: boolean; inputSchema: any };
+  type ToolGroup = { source: string; kind: "builtin" | "browser" | "mcp"; tools: ToolInfo[] };
+  const [toolGroups, setToolGroups] = useState<ToolGroup[]>([]);
+  const [toolTotal, setToolTotal] = useState(0);
+  const [toolView, setToolView] = useState<"list" | "json">("list"); // 列表 / JSON 视图
+  const [toolSel, setToolSel] = useState<ToolInfo | null>(null); // 点开看详情的工具
+  const [toolFilter, setToolFilter] = useState(""); // 工具名/描述过滤
+  // 切到「工具」页时拉一次当前工具集
+  useEffect(() => {
+    if (tab !== "tools") return;
+    window.minicc.getTools().then((r) => {
+      setToolGroups(r.groups);
+      setToolTotal(r.total);
+    });
+  }, [tab]);
   // 内置平台 + 中转站(合并成一份预设列表；下拉与查找都用它)
   const allPresets = [...PRESETS, ...stations.map(stationToPreset)];
   const orderedPresets = arrangePresets(allPresets, order, hidden, true);
@@ -3941,6 +3957,13 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             onClick={() => setTab("mcp")}
           >
             MCP
+          </button>
+          <button
+            type="button"
+            className={"set-tab" + (tab === "tools" ? " on" : "")}
+            onClick={() => setTab("tools")}
+          >
+            工具
           </button>
         </div>
 
@@ -4592,6 +4615,105 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                 </div>
               );
             })()}
+
+          {/* ── 板块六：工具（当前生效的全部工具，列表/JSON 视图 + 详情）── */}
+          {tab === "tools" &&
+            (() => {
+              const q = toolFilter.trim().toLowerCase();
+              const filtered = toolGroups
+                .map((g) => ({
+                  ...g,
+                  tools: q
+                    ? g.tools.filter(
+                        (t) =>
+                          t.name.toLowerCase().includes(q) ||
+                          t.description.toLowerCase().includes(q),
+                      )
+                    : g.tools,
+                }))
+                .filter((g) => g.tools.length > 0);
+              const shownTotal = filtered.reduce((n, g) => n + g.tools.length, 0);
+              const badge = (kind: ToolGroup["kind"]) =>
+                kind === "builtin" ? "内置" : kind === "browser" ? "浏览器" : "MCP";
+              return (
+                <div className="tools-pane">
+                  <div className="tools-bar">
+                    <input
+                      className="mcp-search"
+                      value={toolFilter}
+                      onChange={(e) => setToolFilter(e.target.value)}
+                      placeholder={`搜索工具名 / 描述…（共 ${toolTotal} 个）`}
+                    />
+                    <div className="tools-viewsw">
+                      <button
+                        type="button"
+                        className={"tv-btn" + (toolView === "list" ? " on" : "")}
+                        onClick={() => setToolView("list")}
+                      >
+                        列表
+                      </button>
+                      <button
+                        type="button"
+                        className={"tv-btn" + (toolView === "json" ? " on" : "")}
+                        onClick={() => setToolView("json")}
+                      >
+                        JSON
+                      </button>
+                    </div>
+                  </div>
+
+                  {toolView === "json" ? (
+                    <pre className="tools-json">
+                      {JSON.stringify(
+                        filtered.map((g) => ({
+                          source: g.source,
+                          kind: g.kind,
+                          tools: g.tools.map((t) => ({
+                            name: t.name,
+                            description: t.description,
+                            readOnly: t.readOnly,
+                            inputSchema: t.inputSchema,
+                          })),
+                        })),
+                        null,
+                        2,
+                      )}
+                    </pre>
+                  ) : filtered.length === 0 ? (
+                    <div className="mcp-empty">没有匹配的工具</div>
+                  ) : (
+                    filtered.map((g) => (
+                      <div key={g.source} className="tools-group">
+                        <div className="tools-group-h">
+                          <span className={"tools-badge k-" + g.kind}>{badge(g.kind)}</span>
+                          <span className="tools-group-name">{g.source}</span>
+                          <span className="tools-group-n">{g.tools.length}</span>
+                        </div>
+                        {g.tools.map((t) => (
+                          <button
+                            key={t.name}
+                            type="button"
+                            className="tool-row"
+                            onClick={() => setToolSel(t)}
+                          >
+                            <span className="tool-name">
+                              {t.name}
+                              {t.readOnly && <span className="tool-ro">只读</span>}
+                            </span>
+                            <span className="tool-desc">{t.description}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ))
+                  )}
+                  {toolView === "list" && (
+                    <div className="tools-count">
+                      显示 {shownTotal} / {toolTotal} 个工具
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
         </div>
 
         <div className="btns">
@@ -4632,6 +4754,28 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             <button onClick={() => setShowAddStation(false)}>取消</button>
             <button className="allow" onClick={addStation}>
               添加
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* 工具详情：点某个工具弹出，看完整描述 + 入参 Schema */}
+    {toolSel && (
+      <div className="perm-overlay add-st-overlay" onClick={() => setToolSel(null)}>
+        <div className="add-st-dialog tool-detail" onClick={(e) => e.stopPropagation()}>
+          <h3>
+            {toolSel.name}
+            {toolSel.readOnly && <span className="tool-ro">只读</span>}
+          </h3>
+          <p className="s-note tool-detail-desc">{toolSel.description}</p>
+          <div className="tool-detail-label">入参 Schema</div>
+          <pre className="tools-json tool-detail-schema">
+            {JSON.stringify(toolSel.inputSchema, null, 2)}
+          </pre>
+          <div className="btns">
+            <button className="allow" onClick={() => setToolSel(null)}>
+              关闭
             </button>
           </div>
         </div>

@@ -26,6 +26,14 @@ export interface MiniccApi {
   setMemory(text: string): void;
   getMcp(): Promise<{ config: string; status: { name: string; status: string; error: string; tools: number }[] }>;
   setMcp(text: string): void;
+  getTools(): Promise<{
+    groups: {
+      source: string;
+      kind: "builtin" | "browser" | "mcp";
+      tools: { name: string; description: string; readOnly: boolean; inputSchema: any }[];
+    }[];
+    total: number;
+  }>;
   searchMcp(
     query: string,
     cursor?: string,

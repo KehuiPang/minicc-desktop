@@ -67,6 +67,15 @@ contextBridge.exposeInMainWorld("minicc", {
       status: { name: string; status: string; error: string; tools: number }[];
     }>,
   setMcp: (text: string) => ipcRenderer.send("mcp:set", text),
+  getTools: () =>
+    ipcRenderer.invoke("tools:get") as Promise<{
+      groups: {
+        source: string;
+        kind: "builtin" | "browser" | "mcp";
+        tools: { name: string; description: string; readOnly: boolean; inputSchema: any }[];
+      }[];
+      total: number;
+    }>,
   searchMcp: (query: string, cursor?: string) =>
     ipcRenderer.invoke("mcp:search", query, cursor) as Promise<{
       results: {

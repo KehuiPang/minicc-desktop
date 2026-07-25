@@ -12,7 +12,7 @@ import { Agent } from "../../src/agent/loop.js";
 import { systemPrompt, renderPrompt, DEFAULT_SYSTEM_PROMPT } from "../../src/agent/prompt.js";
 import { ALL_TOOLS, TOOL_MAP, MEMORY_FILE } from "../../src/tools/index.js";
 import type { Tool, ToolResult } from "../../src/types.js";
-import { connectMcp, mcpTools, mcpStatus, loadMcpConfig, searchMcpRegistry, MCP_CONFIG_PATH } from "./mcp.js";
+import { connectMcp, mcpTools, mcpToolsBySource, mcpStatus, loadMcpConfig, searchMcpRegistry, MCP_CONFIG_PATH } from "./mcp.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -1614,6 +1614,27 @@ ipcMain.on("mcp:set", (_e, text: string) => {
   });
 });
 ipcMain.handle("mcp:search", (_e, query: string, cursor?: string) => searchMcpRegistry(query, cursor));
+
+// 「工具」面板：把当前生效的全部工具（内置 + 浏览器 + 各 MCP 服务器）按来源分组返回
+ipcMain.handle("tools:get", () => {
+  const mk = (t: Tool) => ({
+    name: t.name,
+    description: t.description || "",
+    readOnly: !!t.readOnly,
+    inputSchema: t.inputSchema || { type: "object", properties: {} },
+  });
+  const groups: { source: string; kind: "builtin" | "browser" | "mcp"; tools: ReturnType<typeof mk>[] }[] = [
+    { source: "内置工具", kind: "builtin", tools: ALL_TOOLS.map(mk) },
+    { source: "浏览器", kind: "browser", tools: BROWSER_TOOLS.map(mk) },
+    ...mcpToolsBySource().map((g) => ({
+      source: g.server,
+      kind: "mcp" as const,
+      tools: g.tools.map(mk),
+    })),
+  ];
+  const total = groups.reduce((n, g) => n + g.tools.length, 0);
+  return { groups, total };
+});
 
 // —— 浏览器面板：把 WebContentsView 贴到主窗口指定区域(前端量好 bounds 发来) ——
 ipcMain.on("browser:show", (_e, b: { x: number; y: number; width: number; height: number }) => {
