@@ -1811,9 +1811,9 @@ body {
 }
 /* 最大化：占满视口(知识网络大图/全屏查看)。max-width/height 都放开，禁用拖拽把手 */
 .settings.tabbed.maxed {
-  width: 96vw;
-  height: 94vh;
-  max-width: 96vw;
+  width: 99vw;
+  height: 97vh;
+  max-width: 99vw;
   resize: none;
 }
 /* 标题栏：标题 + 右侧最大化/还原按钮 */

@@ -118,6 +118,7 @@ export interface MiniccApi {
   platform: string;
   winMinimize(): void;
   winMaximize(): void;
+  winIsMaximized(): Promise<boolean>;
   winClose(): void;
   checkConn(): Promise<{ status: "green" | "yellow" | "red"; reason: string }>;
   testKey(

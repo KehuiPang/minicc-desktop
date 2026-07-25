@@ -189,6 +189,7 @@ contextBridge.exposeInMainWorld("minicc", {
   platform: process.platform,
   winMinimize: () => ipcRenderer.send("win:minimize"),
   winMaximize: () => ipcRenderer.send("win:maximize"),
+  winIsMaximized: () => ipcRenderer.invoke("win:is-maximized") as Promise<boolean>,
   winClose: () => ipcRenderer.send("win:close"),
   checkConn: () =>
     ipcRenderer.invoke("conn:check") as Promise<{ status: "green" | "yellow" | "red"; reason: string }>,

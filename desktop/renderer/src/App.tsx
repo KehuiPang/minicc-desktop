@@ -4431,8 +4431,13 @@ function SettingsModal({
               <button
                 type="button"
                 className="set-win-btn"
-                title={maxed ? "还原窗口大小" : "最大化窗口"}
-                onClick={() => setMaxed((v) => !v)}
+                title={maxed ? "还原窗口大小" : "最大化（同时把整个 minicc 窗口最大化铺满屏幕）"}
+                onClick={async () => {
+                  const next = !maxed;
+                  setMaxed(next);
+                  // 进入最大化时,把整个应用窗口也最大化——否则 96vw 弹窗只铺满小窗口、铺不满屏幕
+                  if (next && !(await window.minicc.winIsMaximized?.())) window.minicc.winMaximize();
+                }}
               >
                 {maxed ? (
                   <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
