@@ -140,7 +140,8 @@ function isAuthErrorText(text: string): boolean {
 
 // minicc 主标·橙色 sparkle 星星（沿用初版 app 图标的四角星几何，缩放到 24 视口；
 // 主星 currentColor 随主题走，右上小星用一点朱 --spark 呼应品牌）
-function MiniccMark({ size = 18 }: { size?: number }) {
+// 无为品牌标：月白「○带缺口」+ 缺口处一点朱赭「一念」火种（一念之门）
+function WuweiMark({ size = 18 }: { size?: number }) {
   return (
     <svg
       width={size}
@@ -150,14 +151,61 @@ function MiniccMark({ size = 18 }: { size?: number }) {
       aria-hidden="true"
       style={{ flex: "0 0 auto" }}
     >
+      {/* 月白圆环，右上留缺口 */}
       <path
-        d="M12 6.14 Q13.29 10.71 13.29 10.71 Q13.29 10.71 17.86 12 Q13.29 13.29 13.29 13.29 Q13.29 13.29 12 17.86 Q10.71 13.29 10.71 13.29 Q10.71 13.29 6.14 12 Q10.71 10.71 10.71 10.71 Q10.71 10.71 12 6.14 Z"
-        fill="currentColor"
+        d="M17.5 5.6 A9 9 0 1 0 19.6 9.2"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        fill="none"
       />
+      {/* 缺口处一点朱赭火种 */}
+      <circle cx="18.6" cy="5.2" r="1.9" fill="var(--spark)" />
+    </svg>
+  );
+}
+
+// —— 简约 SVG 图标（禁用 emoji，统一线性风、跟随 currentColor）——
+function CoinIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ flex: "0 0 auto" }}>
+      <circle cx="12" cy="12" r="8.4" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="12" cy="12" r="3.3" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+function BrowserIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ flex: "0 0 auto" }}>
+      <rect x="3.2" y="4.6" width="17.6" height="14.8" rx="2.6" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M3.2 8.7h17.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="6" cy="6.6" r="0.7" fill="currentColor" />
+    </svg>
+  );
+}
+function GearIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ flex: "0 0 auto" }}>
+      <circle cx="12" cy="12" r="3.1" stroke="currentColor" strokeWidth="1.5" />
       <path
-        d="M18.5 4.2 Q19 6 19 6 Q19 6 20.8 6.5 Q19 7 19 7 Q19 7 18.5 8.8 Q18 7 18 7 Q18 7 16.2 6.5 Q18 6 18 6 Q18 6 18.5 4.2 Z"
-        fill="var(--spark)"
+        d="M12 3.6v2.3M12 18.1v2.3M3.6 12h2.3M18.1 12h2.3M6.1 6.1l1.6 1.6M16.3 16.3l1.6 1.6M17.9 6.1l-1.6 1.6M7.7 16.3l-1.6 1.6"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
       />
+    </svg>
+  );
+}
+function LogoutIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ flex: "0 0 auto" }}>
+      <path
+        d="M14.5 5H6.8A1.8 1.8 0 0 0 5 6.8v10.4A1.8 1.8 0 0 0 6.8 19h7.7"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <path d="M18.5 12H10m8.5 0-3-3m3 3-3 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -1559,7 +1607,12 @@ export function App() {
                   ) : wuwei ? (
                     <>
                       {wuwei.user.name || wuwei.user.email || "无为用户"}
-                      <span style={{ color: "#6F9FAD", marginLeft: 6 }}>⚡{wuwei.coin.balance}</span>
+                      <span
+                        style={{ color: "#6F9FAD", marginLeft: 6, display: "inline-flex", alignItems: "center", gap: 3 }}
+                      >
+                        <CoinIcon size={13} />
+                        {wuwei.coin.balance}
+                      </span>
                     </>
                   ) : (
                     "游客"
@@ -1574,25 +1627,61 @@ export function App() {
                     {/* 无为账号（与模型商账号合并进同一入口）。未登录只给登录入口，设置等登录后才显示 */}
                     {wuwei ? (
                       <>
-                        <div className="acct-menu-head">无为账号 · 无为币 {wuwei.coin.balance}</div>
+                        {/* premium 账号头部：头像 + 昵称 + 无为币（主题中性配色） */}
+                        <div style={{ padding: "11px 13px 10px", display: "flex", alignItems: "center", gap: 10 }}>
+                          <div
+                            style={{
+                              width: 34,
+                              height: 34,
+                              borderRadius: "50%",
+                              overflow: "hidden",
+                              flex: "0 0 auto",
+                              background: "#274A63",
+                              color: "#F4F6F8",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: 14,
+                            }}
+                          >
+                            {wuwei.user.avatar ? (
+                              <img src={wuwei.user.avatar} alt="" style={{ width: "100%", height: "100%" }} />
+                            ) : (
+                              (wuwei.user.name || wuwei.user.email || "无").slice(0, 1).toUpperCase()
+                            )}
+                          </div>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div
+                              style={{
+                                fontSize: 13,
+                                fontWeight: 600,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {wuwei.user.name || wuwei.user.email || "无为用户"}
+                            </div>
+                            <div
+                              style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 3, color: "#C05F3C", fontSize: 12 }}
+                            >
+                              <CoinIcon size={13} />
+                              <span style={{ fontWeight: 600 }}>{wuwei.coin.balance}</span>
+                              <span style={{ color: "#6F9FAD", fontWeight: 400 }}>无为币</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div style={{ height: 1, background: "rgba(128,128,128,.18)", margin: "2px 0" }} />
                         <button
                           className="acct-menu-item"
-                          onClick={() => {
-                            setShowAcctMenu(false);
-                            void doWuweiLogout();
-                          }}
-                        >
-                          退出无为账号
-                        </button>
-                        <div className="acct-menu-head">模型 · {account.label || name}</div>
-                        <button
-                          className="acct-menu-item"
+                          style={{ display: "flex", alignItems: "center", gap: 8 }}
                           onClick={() => {
                             setShowAcctMenu(false);
                             setSettingsTab("general");
                             setShowSettings(true);
                           }}
                         >
+                          <GearIcon size={15} />
                           设置
                         </button>
                         {(account.providerId === "deepseek" ||
@@ -1631,6 +1720,18 @@ export function App() {
                             退出登录（ChatGPT）
                           </button>
                         )}
+                        {/* 退出放最后一项 */}
+                        <button
+                          className="acct-menu-item"
+                          style={{ display: "flex", alignItems: "center", gap: 8 }}
+                          onClick={() => {
+                            setShowAcctMenu(false);
+                            void doWuweiLogout();
+                          }}
+                        >
+                          <LogoutIcon size={15} />
+                          退出
+                        </button>
                       </>
                     ) : (
                       <button
@@ -1662,10 +1763,10 @@ export function App() {
           }
         >
           <span className="tb-title">
-            <MiniccMark />
+            <WuweiMark />
             {(() => {
               const t = sessions.find((s) => s.id === currentId)?.title;
-              return t && t !== "新对话" ? t : "minicc";
+              return t && t !== "新对话" ? t : "无为";
             })()}
           </span>
           <span className="tb-spacer" />
@@ -1676,7 +1777,8 @@ export function App() {
                 title="浏览器（独立窗口）"
                 onClick={() => setShowBrowserMenu((v) => !v)}
               >
-                🖥<span className="tb-caret">▾</span>
+                <BrowserIcon size={15} />
+                <span className="tb-caret">▾</span>
               </button>
               {showBrowserMenu && (
                 <>
@@ -2210,7 +2312,8 @@ export function App() {
               title="内置浏览器（看/控 AI 打开的网页）"
               onClick={() => setShowBrowser((v) => !v)}
             >
-              🖥<span className="fb-txt"> 浏览器</span>
+              <BrowserIcon size={14} />
+              <span className="fb-txt" style={{ marginLeft: 5 }}>浏览器</span>
             </button>
 
             <span className="foot-spacer" />

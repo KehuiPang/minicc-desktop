@@ -1,6 +1,6 @@
 // Electron 主进程：创建窗口，复用 minicc 核心(agent/tools/config)，
 // 通过 IPC 把 Agent 流式 hooks 推给渲染进程，权限确认走 IPC 往返。
-import { app, BrowserWindow, WebContentsView, ipcMain, protocol, net, shell, session, clipboard, Menu, safeStorage } from "electron";
+import { app, BrowserWindow, WebContentsView, ipcMain, protocol, net, shell, session, clipboard, Menu, safeStorage, Tray, nativeImage } from "electron";
 const safeStorageOk = () => {
   try {
     return safeStorage.isEncryptionAvailable();
@@ -85,6 +85,7 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let win: BrowserWindow | null = null;
+let tray: Tray | null = null;
 
 // provider/系统提示全局共享；每个会话一个 Agent（各自 messages）
 let provider: ReturnType<typeof makeProvider> | null = null;
@@ -1183,8 +1184,8 @@ function createWindow() {
     ...(existsSync(iconPath) ? { icon: iconPath } : {}),
     minWidth: 640,
     minHeight: 480,
-    title: "minicc",
-    backgroundColor: "#16191e", // minicc玄墨黑，避免加载时白闪
+    title: "无为",
+    backgroundColor: "#16191e", // 无为·玄墨黑，避免加载时白闪
     // 无边框自绘：mac 保留悬浮红绿灯(hiddenInset)，Windows/Linux 全去原生边框+菜单，标题栏自绘
     ...(process.platform === "darwin"
       ? { titleBarStyle: "hiddenInset" as const }
@@ -1249,6 +1250,43 @@ if (!gotLock) {
       win.focus();
     }
   });
+  // 系统托盘 + 右键菜单（任务栏图标右键：打开无为 / 退出）
+  function createTray() {
+    try {
+      const iconFile = join(__dirname, "../../build/icon.png");
+      const img = nativeImage.createFromPath(iconFile);
+      tray = new Tray(img.isEmpty() ? img : img.resize({ width: 18, height: 18 }));
+      tray.setToolTip("无为");
+      tray.setContextMenu(
+        Menu.buildFromTemplate([
+          {
+            label: "打开无为",
+            click: () => {
+              win?.show();
+              win?.focus();
+            },
+          },
+          { type: "separator" },
+          {
+            label: "退出",
+            click: () => {
+              app.quit();
+            },
+          },
+        ]),
+      );
+      tray.on("click", () => {
+        if (win?.isVisible()) win.focus();
+        else {
+          win?.show();
+          win?.focus();
+        }
+      });
+    } catch (e) {
+      log("boot", "托盘创建失败", String(e));
+    }
+  }
+
   app.whenReady().then(() => {
     // app://bundle/xxx → out/renderer/xxx（打包后 renderer 与 main 同级 out 下）
     protocol.handle("app", async (request) => {
@@ -1271,6 +1309,14 @@ if (!gotLock) {
       // 凭证等问题：窗口起来后提示
     }
     createWindow();
+    // 任务栏图标/分组用无为标识
+    try {
+      app.setName("无为");
+      if (process.platform === "win32") app.setAppUserModelId("io.wuweiai.app");
+    } catch {
+      /* ignore */
+    }
+    createTray();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
