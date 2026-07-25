@@ -259,7 +259,7 @@ export function App() {
     email: null,
   });
   const [showAcctMenu, setShowAcctMenu] = useState(false);
-  const [showWuweiMenu, setShowWuweiMenu] = useState(false);
+  const [showLoginGate, setShowLoginGate] = useState(false); // 硬门槛：未登录点发送时弹登录注册
   const [webLoginBusy, setWebLoginBusy] = useState(false);
   const [authBusy, setAuthBusy] = useState(false); // 失败处一键授权 Claude 进行中
   const [codexBusy, setCodexBusy] = useState(false); // Codex 一键授权进行中
@@ -289,6 +289,26 @@ export function App() {
   async function doWuweiLogout() {
     await window.minicc.wuweiLogout();
     setWuwei(null);
+  }
+  // 门槛弹框里登录：成功后关框并自动续发刚才拦下的内容
+  async function loginAndResume() {
+    setWuweiBusy(true);
+    try {
+      const me = await window.minicc.wuweiLogin();
+      if (me) {
+        setWuwei(me);
+        setShowLoginGate(false);
+        const t = input.trim();
+        if (t || pendingImages.length) {
+          doSend(t, pendingImages);
+          clearComposer();
+        }
+      } else {
+        push({ type: "notice", text: "登录未完成，发送已取消。" });
+      }
+    } finally {
+      setWuweiBusy(false);
+    }
   }
   async function doCodexLogin() {
     setCodexBusy(true);
@@ -853,6 +873,11 @@ export function App() {
       setInput("");
       return;
     }
+    // 硬门槛：未登录无为账号不能发送 → 弹登录注册（保留输入内容，登录后自动续发）
+    if (!wuwei) {
+      setShowLoginGate(true);
+      return;
+    }
     setSuggestion(""); // 发送后清掉旧的下一步建议(回复完会重新生成)
     const imgs = pendingImages;
     if (busy) {
@@ -1351,47 +1376,6 @@ export function App() {
             account.nickname || account.email || account.label || (account.loggedIn ? "已登录" : "未登录");
           return (
             <div className="sidebar-foot">
-              {/* 无为账号身份区（复用 acct-btn 组件样式，与下方账号入口统一）。无为账号≠模型商账号。 */}
-              {wuwei ? (
-                <>
-                  <button className="acct-btn" onClick={() => setShowWuweiMenu((v) => !v)}>
-                    <div className="acct-av">
-                      {wuwei.user.avatar ? (
-                        <img src={wuwei.user.avatar} alt="" />
-                      ) : (
-                        (wuwei.user.name || wuwei.user.email || "无").slice(0, 1).toUpperCase()
-                      )}
-                    </div>
-                    <div className="acct-name" title={wuwei.user.name || wuwei.user.email || "无为用户"}>
-                      {wuwei.user.name || wuwei.user.email || "无为用户"}
-                      <span style={{ color: "#6F9FAD", marginLeft: 6 }}>⚡{wuwei.coin.balance}</span>
-                    </div>
-                    <span className="acct-caret">⋯</span>
-                  </button>
-                  {showWuweiMenu && (
-                    <>
-                      <div className="mq-overlay" onClick={() => setShowWuweiMenu(false)} />
-                      <div className="acct-menu">
-                        <div className="acct-menu-head">无为账号 · 无为币 {wuwei.coin.balance}</div>
-                        <button
-                          className="acct-menu-item"
-                          onClick={() => {
-                            setShowWuweiMenu(false);
-                            void doWuweiLogout();
-                          }}
-                        >
-                          退出无为账号
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </>
-              ) : (
-                <button className="acct-btn" onClick={doWuweiLogin} disabled={wuweiBusy}>
-                  <div className="acct-av off">无</div>
-                  <div className="acct-name">{wuweiBusy ? "登录中…（浏览器完成）" : "登录无为账号"}</div>
-                </button>
-              )}
               {/* 订阅版入口（C2 占位）：默认隐藏，仅当后端 flags 含 "subscription" 才出现。
                   后台可按用户名/机器指纹对指定客户端单独放开——判定全在后端，客户端只渲染。 */}
               {showSubscription && (
@@ -1416,15 +1400,27 @@ export function App() {
                 </button>
               )}
               <button className="acct-btn" onClick={() => setShowAcctMenu((v) => !v)}>
-                <div className={"acct-av" + (account.loggedIn ? "" : " off")}>
-                  {account.avatar ? (
-                    <img src={account.avatar} alt="" />
+                <div className={"acct-av" + (wuwei ? "" : " off")}>
+                  {wuwei?.user.avatar ? (
+                    <img src={wuwei.user.avatar} alt="" />
                   ) : (
-                    name.slice(0, 1).toUpperCase()
+                    (wuwei?.user.name || wuwei?.user.email || "匿").slice(0, 1).toUpperCase()
                   )}
                 </div>
-                <div className="acct-name" title={name}>
-                  {webLoginBusy ? "登录中…" : name}
+                <div
+                  className="acct-name"
+                  title={wuwei ? wuwei.user.name || wuwei.user.email || "无为用户" : "匿名用户（未登录）"}
+                >
+                  {wuweiBusy ? (
+                    "登录中…"
+                  ) : wuwei ? (
+                    <>
+                      {wuwei.user.name || wuwei.user.email || "无为用户"}
+                      <span style={{ color: "#6F9FAD", marginLeft: 6 }}>⚡{wuwei.coin.balance}</span>
+                    </>
+                  ) : (
+                    "匿名用户"
+                  )}
                 </div>
                 <span className="acct-caret">⋯</span>
               </button>
@@ -1432,7 +1428,32 @@ export function App() {
                 <>
                   <div className="mq-overlay" onClick={() => setShowAcctMenu(false)} />
                   <div className="acct-menu">
-                    <div className="acct-menu-head">{account.label || "账号"}</div>
+                    {/* 无为账号（与模型商账号合并进同一入口） */}
+                    {wuwei ? (
+                      <>
+                        <div className="acct-menu-head">无为账号 · 无为币 {wuwei.coin.balance}</div>
+                        <button
+                          className="acct-menu-item"
+                          onClick={() => {
+                            setShowAcctMenu(false);
+                            void doWuweiLogout();
+                          }}
+                        >
+                          退出无为账号
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        className="acct-menu-item"
+                        onClick={() => {
+                          setShowAcctMenu(false);
+                          void doWuweiLogin();
+                        }}
+                      >
+                        登录 / 注册无为账号（注册领 100 无为币）
+                      </button>
+                    )}
+                    <div className="acct-menu-head">模型 · {account.label || name}</div>
                     <button
                       className="acct-menu-item"
                       onClick={() => {
@@ -2215,6 +2236,76 @@ export function App() {
         />
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {/* 硬门槛登录框：未登录点发送时弹出（转化节点·注册领币） */}
+      {showLoginGate && (
+        <>
+          <div className="mq-overlay" onClick={() => setShowLoginGate(false)} />
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+            }}
+          >
+            <div
+              style={{
+                width: 360,
+                maxWidth: "90vw",
+                background: "#16191E",
+                color: "#F4F6F8",
+                border: "1px solid #274A63",
+                borderRadius: 14,
+                padding: "26px 24px",
+                boxShadow: "0 12px 40px rgba(0,0,0,.5)",
+                textAlign: "center",
+              }}
+            >
+              <div style={{ fontSize: 30, marginBottom: 8, color: "#C05F3C" }}>◕</div>
+              <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 14 }}>登录无为账号后开始使用</div>
+              <div style={{ fontSize: 13, lineHeight: 1.8, color: "#B9C2CC", marginBottom: 22 }}>
+                注册新用户立得 <b style={{ color: "#6F9FAD" }}>100 无为币</b>（约 100 次对话）
+                <br />
+                每日签到再领 <b style={{ color: "#6F9FAD" }}>10 无为币</b>，连签 7 天额外 +30
+              </div>
+              <button
+                onClick={loginAndResume}
+                disabled={wuweiBusy}
+                style={{
+                  width: "100%",
+                  padding: "11px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: "#C05F3C",
+                  color: "#F4F6F8",
+                  fontSize: 14,
+                  cursor: wuweiBusy ? "default" : "pointer",
+                  marginBottom: 10,
+                }}
+              >
+                {wuweiBusy ? "登录中…（在浏览器完成）" : "登录 / 注册"}
+              </button>
+              <button
+                onClick={() => setShowLoginGate(false)}
+                style={{
+                  width: "100%",
+                  padding: "8px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: "none",
+                  color: "#6F9FAD",
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </>
+      )}
       {showAppSettings && (
         <AppSettingsModal
           onClose={() => setShowAppSettings(false)}
