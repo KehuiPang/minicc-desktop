@@ -286,6 +286,7 @@ export function App() {
   const [settingsTab, setSettingsTab] = useState("model"); // 统一设置页的初始/当前左侧菜单项
   const [curProviderId, setCurProviderId] = useState("");
   const [liveModels, setLiveModels] = useState<Record<string, string[]>>({}); // 各平台实时拉到的模型
+  const [showAllModels, setShowAllModels] = useState(false); // 切换模型下拉：false=常用(预设旗舰) true=全部(含实时拉取)
   const [stations, setStations] = useState<Station[]>([]); // 自定义中转站
   const [providerOrder, setProviderOrder] = useState<string[]>([]); // 平台自定义顺序
   const [hiddenProviders, setHiddenProviders] = useState<string[]>([]); // 隐藏的平台
@@ -564,6 +565,12 @@ export function App() {
   const quickModels = [
     ...new Set([...(curPreset?.models ?? []), ...(liveModels[curProviderId] || [])]),
   ];
+  // 切换模型下拉展示：常用=预设旗舰(+当前选中项)，全部=预设+实时拉取全量
+  const commonModels = curPreset?.models ?? [];
+  const shownModels = showAllModels
+    ? quickModels
+    : [...new Set([...commonModels, ...(meta.model && !commonModels.includes(meta.model) ? [meta.model] : [])])];
+  const hasMoreModels = quickModels.length > commonModels.length;
   async function quickModel(m: string) {
     const r = await window.minicc.getSettings();
     const cur = r?.settings;
@@ -2260,9 +2267,44 @@ export function App() {
                 <>
                   <div className="mq-overlay" onClick={() => setShowModelMenu(false)} />
                   <div className="mq-menu">
-                    <div className="mq-head">切换模型 · {curPreset?.label ?? meta.backend}</div>
-                    {quickModels.length === 0 && <div className="mq-empty">无预设模型，去设置里填</div>}
-                    {quickModels.map((m) => (
+                    <div
+                      className="mq-head"
+                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}
+                    >
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        切换模型 · {curPreset?.label ?? meta.backend}
+                      </span>
+                      {hasMoreModels && (
+                        <span style={{ display: "inline-flex", gap: 2, flex: "0 0 auto" }}>
+                          {[
+                            { k: false, t: "常用" },
+                            { k: true, t: "全部" },
+                          ].map((o) => (
+                            <button
+                              key={o.t}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setShowAllModels(o.k);
+                              }}
+                              style={{
+                                padding: "1px 8px",
+                                borderRadius: 5,
+                                border: "none",
+                                cursor: "pointer",
+                                fontSize: 11,
+                                background: showAllModels === o.k ? "#274A63" : "transparent",
+                                color: showAllModels === o.k ? "#F4F6F8" : "inherit",
+                                opacity: showAllModels === o.k ? 1 : 0.55,
+                              }}
+                            >
+                              {o.t}
+                            </button>
+                          ))}
+                        </span>
+                      )}
+                    </div>
+                    {shownModels.length === 0 && <div className="mq-empty">无预设模型，去设置里填</div>}
+                    {shownModels.map((m) => (
                       <button
                         key={m}
                         className={"mq-item" + (m === meta.model ? " on" : "")}
@@ -3484,9 +3526,11 @@ const PRESETS: Preset[] = [
     models: [
       "claude-opus-4-8",
       "claude-opus-4-7",
+      "claude-opus-4-6",
       "claude-sonnet-5",
       "claude-sonnet-4-6",
       "claude-haiku-4-5",
+      "claude-fable-5",
     ],
     note: "",
     fixedBaseUrl: true,
@@ -5086,16 +5130,6 @@ function SettingsModal({
                 </label>
               )}
 
-              {preset.kind !== "codex" && (
-                <label className="field">
-                  <span>账号昵称（可选）</span>
-                  <input
-                    value={nickname}
-                    onChange={(e) => setNickname(e.target.value)}
-                    placeholder="显示在左下角，如：如人饮水"
-                  />
-                </label>
-              )}
             </>
           )}
 
