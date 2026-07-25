@@ -1439,16 +1439,6 @@ export function App() {
                       className="acct-menu-item"
                       onClick={() => {
                         setShowAcctMenu(false);
-                        setSettingsTab("model");
-                        setShowSettings(true);
-                      }}
-                    >
-                      模型设置
-                    </button>
-                    <button
-                      className="acct-menu-item"
-                      onClick={() => {
-                        setShowAcctMenu(false);
                         setSettingsTab("general");
                         setShowSettings(true);
                       }}
