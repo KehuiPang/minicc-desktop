@@ -28,16 +28,21 @@ export default defineConfig({
     // externalizeDepsPlugin: 把 node_modules 依赖 external（运行时 require），不 bundle；
     // external:["electron"]: electron 在 devDeps 不被上面处理，必须显式 external，
     // 否则 npm electron 包的 stub(spawnSync install.js)被打进主进程→启动即 fork bomb。
-    plugins: [externalizeDepsPlugin(), jsToTs],
+    // exclude: 把 transformers + onnxruntime-web 一起 bundle 进主进程（不 external），
+    // 这样下面的 alias 才能把 onnxruntime-node 换成 onnxruntime-web。
+    // 原因：onnxruntime-node 原生模块与 Electron 的 Node ABI 不兼容(加载即 SIGTRAP)，
+    // 改用 onnxruntime-web(wasm)在 Electron 里稳定运行。系统 node(CLI/测试)不受影响。
+    plugins: [externalizeDepsPlugin({ exclude: ["@xenova/transformers", "onnxruntime-web"] }), jsToTs],
     build: {
       outDir: "out/main",
       rollupOptions: {
         input: resolve(root, "desktop/main/index.ts"),
-        // @xenova/transformers 必须 external：它经动态 import() 加载，若被 bundle 会内联
-        // onnxruntime-web(wasm 后端)并丢失 onnxruntime-node 原生后端。保持 external 后
-        // 运行时从 node_modules 加载，走 onnx 原生后端（更快更稳）。
-        external: ["electron", "@xenova/transformers", "onnxruntime-node"],
+        external: ["electron"],
       },
+    },
+    resolve: {
+      // transformers 静态 import 'onnxruntime-node'，在 Electron 会崩；alias 成 wasm 版
+      alias: { "onnxruntime-node": "onnxruntime-web" },
     },
   },
   preload: {
