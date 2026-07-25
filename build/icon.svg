@@ -7,8 +7,8 @@
   </defs>
   <!-- squircle 玄墨黑背景：中间 824×824，四周约 100px 透明（与其他 app 一致大小） -->
   <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#bg)"/>
-  <!-- 月白圆环，右上留缺口（一念之门） -->
-  <path d="M807.4 459.9 A300 300 0 1 1 614.6 230.1" fill="none" stroke="#F4F6F8" stroke-width="54" stroke-linecap="round"/>
+  <!-- 月白圆环，右上留缺口（一念之门）。半径缩小，留足到边距 -->
+  <path d="M728.7 473.8 A220 220 0 1 1 587.2 305.3" fill="none" stroke="#F4F6F8" stroke-width="44" stroke-linecap="round"/>
   <!-- 缺口处一点朱赭火种 -->
-  <circle cx="741.8" cy="319.2" r="62" fill="#C05F3C"/>
+  <circle cx="680.5" cy="370.5" r="45" fill="#C05F3C"/>
 </svg>
