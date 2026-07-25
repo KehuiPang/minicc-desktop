@@ -2184,7 +2184,7 @@ export function App() {
           }}
         />
       )}
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} liveModels={liveModels} />}
       {secretPrompt && (
         <div className="perm-overlay" onClick={() => setSecretPrompt(null)}>
           <div className="add-st-dialog sec-prompt" onClick={(e) => e.stopPropagation()}>
@@ -3497,7 +3497,7 @@ function textToAttrs(text: string): Record<string, string> {
   return out;
 }
 
-function SettingsModal({ onClose }: { onClose: () => void }) {
+function SettingsModal({ onClose, liveModels }: { onClose: () => void; liveModels: Record<string, string[]> }) {
   const [pid, setPid] = useState("codex");
   const [model, setModel] = useState(PRESETS[0].models[0]);
   const [apiKey, setApiKey] = useState("");
@@ -3676,6 +3676,8 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const allPresets = [...PRESETS, ...stations.map(stationToPreset)];
   const orderedPresets = arrangePresets(allPresets, order, hidden, true);
   const preset = allPresets.find((p) => p.id === pid) ?? PRESETS[0];
+  // 模型下拉：预设在前(旗舰置顶)+ 平台实时拉到的新模型(liveModels，与底栏同源)，去重
+  const modelOptions = [...new Set([...(preset.models ?? []), ...(liveModels[pid] || [])])];
 
   // 把某平台槽里的凭证取出来填进字段(没存过就空/回退默认 baseUrl)
   function slotFields(c: Record<string, CredSlot>, id: string, p: Preset) {
@@ -4233,7 +4235,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
 
               <label className="field">
                 <span>模型</span>
-                {preset.models.length > 0 && !customModel ? (
+                {modelOptions.length > 0 && !customModel ? (
                   <select
                     value={model}
                     onChange={(e) => {
@@ -4245,7 +4247,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                       }
                     }}
                   >
-                    {preset.models.map((m) => (
+                    {modelOptions.map((m) => (
                       <option key={m} value={m}>
                         {m}
                       </option>
@@ -5311,7 +5313,11 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                 <div className="sec-reveal-bar">
                   {revealed ? (
                     <button type="button" className="sec-reveal-btn on" onClick={() => setRevealed(null)}>
-                      🔒 隐藏明文
+                      <svg className="sec-ic" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                      </svg>
+                      隐藏明文
                     </button>
                   ) : unlockOpen ? (
                     <div className="sec-unlock">
@@ -5341,7 +5347,11 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                     </div>
                   ) : (
                     <button type="button" className="sec-reveal-btn" onClick={() => setUnlockOpen(true)}>
-                      👁 查看明文（需本机账号密码）
+                      <svg className="sec-ic" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                      查看明文（需本机账号密码）
                     </button>
                   )}
                 </div>
