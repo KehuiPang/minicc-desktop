@@ -1703,15 +1703,43 @@ export function App() {
                         </button>
                       </>
                     ) : (
-                      <button
-                        className="acct-menu-item"
-                        onClick={() => {
-                          setShowAcctMenu(false);
-                          void doWuweiLogin();
-                        }}
-                      >
-                        登录 / 注册无为账号（注册领 100 无为币）
-                      </button>
+                      <div style={{ padding: "16px 16px 14px", textAlign: "center" }}>
+                        <div
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 5,
+                            fontSize: 13,
+                            color: "#6F9FAD",
+                            marginBottom: 12,
+                          }}
+                        >
+                          注册即得
+                          <CoinIcon size={15} />
+                          <b style={{ color: "#C05F3C", fontSize: 15 }}>100</b>
+                          无为币
+                        </div>
+                        <button
+                          onClick={() => {
+                            setShowAcctMenu(false);
+                            void doWuweiLogin();
+                          }}
+                          style={{
+                            width: "100%",
+                            padding: "10px",
+                            borderRadius: 9,
+                            border: "none",
+                            background: "#C05F3C",
+                            color: "#F4F6F8",
+                            fontSize: 14,
+                            fontWeight: 600,
+                            letterSpacing: 2,
+                            cursor: "pointer",
+                          }}
+                        >
+                          登录 / 注册
+                        </button>
+                      </div>
                     )}
                   </div>
                 </>
