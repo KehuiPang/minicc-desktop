@@ -4124,18 +4124,34 @@ function SettingsModal({ onClose, liveModels }: { onClose: () => void; liveModel
 
   return (
     <>
-    <div className="perm-overlay" onClick={onClose}>
+    <div className="perm-overlay">
       <div className={"settings tabbed" + (maxed ? " maxed" : "")} onClick={(e) => e.stopPropagation()}>
         <div className="settings-titlebar">
           <h3>模型设置</h3>
-          <button
-            type="button"
-            className="set-max-btn"
-            title={maxed ? "还原窗口大小" : "最大化窗口（知识网络等大结构放大看）"}
-            onClick={() => setMaxed((v) => !v)}
-          >
-            {maxed ? "🗗 还原" : "🗖 最大化"}
-          </button>
+          <div className="settings-winbtns">
+            <button
+              type="button"
+              className="set-win-btn"
+              title={maxed ? "还原窗口大小" : "最大化窗口（知识网络等大结构放大看）"}
+              onClick={() => setMaxed((v) => !v)}
+            >
+              {maxed ? (
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <rect x="3" y="5" width="8" height="8" rx="1.3" stroke="currentColor" strokeWidth="1.4" />
+                  <path d="M5.5 5V3.5A1.2 1.2 0 016.7 2.3H12.5A1.2 1.2 0 0113.7 3.5V9.3A1.2 1.2 0 0112.5 10.5H11" stroke="currentColor" strokeWidth="1.4" />
+                </svg>
+              ) : (
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <rect x="2.8" y="2.8" width="10.4" height="10.4" rx="1.4" stroke="currentColor" strokeWidth="1.4" />
+                </svg>
+              )}
+            </button>
+            <button type="button" className="set-win-btn" title="关闭" onClick={onClose}>
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* 分块：一个板块只干一件事 */}

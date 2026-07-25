@@ -1827,19 +1827,28 @@ body {
 .settings-titlebar h3 {
   margin: 0;
 }
-.set-max-btn {
-  -webkit-app-region: no-drag;
-  border: 1px solid var(--border-strong);
-  background: var(--bg);
-  color: var(--text-dim);
-  border-radius: 8px;
-  padding: 3px 10px;
-  font-size: 12px;
-  cursor: pointer;
+/* 标题栏右侧窗口按钮：最大化/还原 + 关闭，简约图标 */
+.settings-winbtns {
+  display: flex;
+  gap: 4px;
 }
-.set-max-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+.set-win-btn {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.set-win-btn:hover {
+  background: var(--border);
+  color: var(--text);
 }
 .settings h3 {
   margin: 0 0 14px;
