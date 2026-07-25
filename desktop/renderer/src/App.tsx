@@ -2389,14 +2389,14 @@ export function App() {
             </div>
 
             {/* 余额登录过期：给个可点的刷新入口，去网站授权后自动刷新（余额可用时不显示） */}
-            {account.expired &&
-              (account.providerId === "deepseek" ||
-                account.providerId === "zhipu" ||
-                account.providerId === "kimi-sub") && (
+            {(account.providerId === "deepseek" ||
+              account.providerId === "zhipu" ||
+              account.providerId === "kimi-sub") &&
+              !account.balance?.total && (
                 <div
                   className="u-row"
                   style={{ color: "#C05F3C", cursor: webLoginBusy ? "default" : "pointer", alignItems: "center" }}
-                  title="登录已过期，点击去网站重新授权，回来自动刷新余额"
+                  title="登录对应网站授权后自动刷新余额/额度"
                   onClick={async () => {
                     if (webLoginBusy) return;
                     setWebLoginBusy(true);
@@ -2404,9 +2404,17 @@ export function App() {
                     setWebLoginBusy(false);
                   }}
                 >
-                  <span>{account.providerId === "kimi-sub" ? "额度登录已过期" : "余额登录已过期"}</span>
+                  <span>
+                    {account.providerId === "kimi-sub"
+                      ? account.expired
+                        ? "额度登录已过期"
+                        : "额度未登录"
+                      : account.expired
+                        ? "余额登录已过期"
+                        : "余额未登录"}
+                  </span>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                    {webLoginBusy ? "登录中…" : "点此授权刷新"}
+                    {webLoginBusy ? "登录中…" : "点此登录"}
                     <RefreshIcon size={13} />
                   </span>
                 </div>
