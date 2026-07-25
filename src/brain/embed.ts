@@ -86,11 +86,25 @@ let worker: any = null;
 let seq = 0;
 const pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
 
+// 解析 embed-worker.cjs 的真实位置。打包后 embed.ts 会被 rollup 拆进 out/main/chunks/，
+// 而 worker 作为独立入口输出在 out/main/embed-worker.cjs(上一级)，直接 join(__dirname,...) 会 404。
+// 逐个候选路径探测存在即用,兼容 dev(未拆分)/打包(chunks 子目录)两种布局。
+function resolveWorkerPath(): string {
+  const rp = (process as unknown as { resourcesPath?: string }).resourcesPath;
+  const candidates = [
+    join(__dirname, "embed-worker.cjs"), // dev / 未拆分:与本文件同目录
+    join(__dirname, "..", "embed-worker.cjs"), // 打包:本文件在 chunks/,worker 在上一级 out/main/
+    ...(rp ? [join(rp, "app.asar", "out", "main", "embed-worker.cjs")] : []), // 兜底:直指 asar 内固定位置
+  ];
+  for (const p of candidates) if (existsSync(p)) return p;
+  return candidates[0]; // 都不存在也返回首选,让 Worker 抛出明确的 not found 便于排查
+}
+
 function getWorker(): any {
   if (worker) return worker;
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { Worker } = require("node:worker_threads");
-  const workerPath = join(__dirname, "embed-worker.cjs"); // 与主进程 bundle 同目录
+  const workerPath = resolveWorkerPath();
   worker = new Worker(workerPath, { workerData: { wasmDir: wasmDir() } });
   worker.on("message", (m: any) => {
     const p = pending.get(m.id);

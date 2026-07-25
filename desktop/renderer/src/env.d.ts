@@ -45,6 +45,8 @@ export interface MiniccApi {
   setSettings(s: any): void;
   getMemory(): Promise<string>;
   setMemory(text: string): void;
+  draftGet(): Promise<{ text: string; images: string[] }>;
+  draftSet(draft: { text: string; images: string[] }): void;
   // 本地知识网络 Brain
   brainGraph(): Promise<{ nodes: BrainNodeLite[]; edges: BrainEdgeLite[] }>;
   brainStats(): Promise<{ nodes: number; edges: number; embedded: number }>;

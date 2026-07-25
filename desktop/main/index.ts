@@ -1638,6 +1638,28 @@ ipcMain.on("memory:set", (_e, text: string) => {
   for (const a of agents.values()) a.setSystem(buildSysPrompt(cwd, modelLabel, loadSettings()?.providerId));
 });
 
+// —— 输入框草稿：实时落盘 ~/.minicc/draft.json，重开/更新后自动恢复(含粘贴的截图 base64) ——
+const DRAFT_FILE = join(homedir(), ".minicc", "draft.json");
+ipcMain.handle("draft:get", () => {
+  try {
+    return JSON.parse(readFileSync(DRAFT_FILE, "utf8"));
+  } catch {
+    return { text: "", images: [] };
+  }
+});
+ipcMain.on("draft:set", (_e, draft: { text?: string; images?: string[] }) => {
+  try {
+    mkdirSync(dirname(DRAFT_FILE), { recursive: true });
+    writeFileSync(
+      DRAFT_FILE,
+      JSON.stringify({ text: draft?.text || "", images: draft?.images || [] }),
+      "utf8",
+    );
+  } catch {
+    /* 落盘失败不影响发送 */
+  }
+});
+
 // —— 本地知识网络 Brain（设置里的"知识网络"面板 + 模型预热）——
 function refreshSysAfterBrain() {
   for (const a of agents.values()) a.setSystem(buildSysPrompt(cwd, modelLabel, loadSettings()?.providerId));

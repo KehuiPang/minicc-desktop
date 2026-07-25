@@ -245,6 +245,28 @@ export function App() {
   const sidebarWRef = useRef(sidebarW);
   sidebarWRef.current = sidebarW;
   const [pendingImages, setPendingImages] = useState<string[]>([]);
+  // 输入框草稿持久化：文字+粘贴的截图实时落盘(~/.minicc/draft.json)，重开/更新后自动恢复。
+  // draftLoadedRef 保证「先加载完再回写」，避免初始空草稿把已存内容冲掉。
+  const draftLoadedRef = useRef(false);
+  useEffect(() => {
+    window.minicc
+      .draftGet()
+      .then((d) => {
+        if (d?.text) setInput(d.text);
+        if (d?.images?.length) setPendingImages(d.images);
+      })
+      .catch(() => {})
+      .finally(() => {
+        draftLoadedRef.current = true;
+      });
+  }, []);
+  useEffect(() => {
+    if (!draftLoadedRef.current) return;
+    const t = setTimeout(() => {
+      window.minicc.draftSet({ text: input, images: pendingImages });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [input, pendingImages]);
   // 发送前检测到的疑似新密钥→确认弹窗
   type SecCand = {
     value: string;
@@ -845,6 +867,7 @@ export function App() {
     setInput("");
     setPendingImages([]);
     if (taRef.current) taRef.current.style.height = "auto";
+    window.minicc.draftSet({ text: "", images: [] }); // 发送后立即清空落盘草稿
   }
 
   // 真正把消息投递出去(注入 or 新发)——已入库密钥由主进程兜底脱敏

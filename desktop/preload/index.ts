@@ -62,6 +62,9 @@ contextBridge.exposeInMainWorld("minicc", {
   setSettings: (s: unknown) => ipcRenderer.send("settings:set", s),
   getMemory: () => ipcRenderer.invoke("memory:get") as Promise<string>,
   setMemory: (text: string) => ipcRenderer.send("memory:set", text),
+  // 输入框草稿(文字+粘贴的图)实时存本地，重开自动恢复
+  draftGet: () => ipcRenderer.invoke("draft:get") as Promise<{ text: string; images: string[] }>,
+  draftSet: (draft: { text: string; images: string[] }) => ipcRenderer.send("draft:set", draft),
   // 本地知识网络 Brain
   brainGraph: () =>
     ipcRenderer.invoke("brain:graph") as Promise<{
