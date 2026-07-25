@@ -2245,7 +2245,7 @@ ipcMain.handle(
     clearTimeout(timer);
     return { ok: true, reason: "验证通过" };
   } catch (e: any) {
-    return { ok: false, reason: (e?.message ? String(e.message) : String(e)).slice(0, 200) };
+    return { ok: false, reason: (e?.message ? String(e.message) : String(e)).slice(0, 600) };
   }
 });
 
@@ -2283,7 +2283,7 @@ ipcMain.handle("conn:check", async () => {
     return { status: "green", reason: `已连通 · ${backendLabel} / ${modelLabel}，可随时使用。` };
   } catch (e: any) {
     const msg = e?.message ? String(e.message) : String(e);
-    return { status: "yellow", reason: "已配置但请求报错：" + msg.slice(0, 200) };
+    return { status: "yellow", reason: "已配置但请求报错：" + msg.slice(0, 600) };
   }
 });
 

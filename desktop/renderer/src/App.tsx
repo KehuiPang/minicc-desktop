@@ -174,12 +174,16 @@ function CoinIcon({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
-function BrowserIcon({ size = 15 }: { size?: number }) {
+function GlobeIcon({ size = 15 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ flex: "0 0 auto" }}>
-      <rect x="3.2" y="4.6" width="17.6" height="14.8" rx="2.6" stroke="currentColor" strokeWidth="1.6" />
-      <path d="M3.2 8.7h17.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      <circle cx="6" cy="6.6" r="0.7" fill="currentColor" />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ flex: "0 0 auto", display: "block" }}>
+      <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.6" />
+      <path
+        d="M3.5 12h17M12 3.5c2.4 2.3 3.6 5.3 3.6 8.5S14.4 18.2 12 20.5c-2.4-2.3-3.6-5.3-3.6-8.5S9.6 5.8 12 3.5Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        fill="none"
+      />
     </svg>
   );
 }
@@ -1752,7 +1756,7 @@ export function App() {
                 title="浏览器（独立窗口）"
                 onClick={() => setShowBrowserMenu((v) => !v)}
               >
-                <BrowserIcon size={15} />
+                <GlobeIcon size={15} />
                 <span className="tb-caret">▾</span>
               </button>
               {showBrowserMenu && (
@@ -2334,9 +2338,10 @@ export function App() {
               className={"foot-browser" + (showBrowser ? " on" : "")}
               title="内置浏览器（看/控 AI 打开的网页）"
               onClick={() => setShowBrowser((v) => !v)}
+              style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
             >
-              <BrowserIcon size={14} />
-              <span className="fb-txt" style={{ marginLeft: 5 }}>浏览器</span>
+              <GlobeIcon size={14} />
+              <span className="fb-txt">浏览器</span>
             </button>
 
             <span className="foot-spacer" />
