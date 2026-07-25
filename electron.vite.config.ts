@@ -38,6 +38,13 @@ export default defineConfig({
       rollupOptions: {
         input: resolve(root, "desktop/main/index.ts"),
         external: ["electron"],
+        // 主进程输出 CommonJS：bundle 进来的 onnxruntime-web 用了 __filename(CJS 全局)，
+        // 若输出 ESM(package type:module)会 ReferenceError 崩。CJS 下 __filename 原生可用。
+        output: {
+          format: "cjs",
+          entryFileNames: "index.cjs",
+          chunkFileNames: "chunks/[name]-[hash].cjs",
+        },
       },
     },
     resolve: {
