@@ -37,7 +37,9 @@ export default defineConfig({
       outDir: "out/main",
       rollupOptions: {
         input: resolve(root, "desktop/main/index.ts"),
-        external: ["electron"],
+        // sharp 是 transformers 的原生依赖(图像处理)，文本 embedding 用不到；external 让它
+        // 运行时从 unpacked 的 node_modules 加载，避免 bundle 后 sharp 的 .node 路径失效。
+        external: ["electron"], // sharp 走 alias stub，不再 external
         // 主进程输出 CommonJS：bundle 进来的 onnxruntime-web 用了 __filename(CJS 全局)，
         // 若输出 ESM(package type:module)会 ReferenceError 崩。CJS 下 __filename 原生可用。
         output: {
@@ -49,7 +51,11 @@ export default defineConfig({
     },
     resolve: {
       // transformers 静态 import 'onnxruntime-node'，在 Electron 会崩；alias 成 wasm 版
-      alias: { "onnxruntime-node": "onnxruntime-web" },
+      alias: {
+      "onnxruntime-node": "onnxruntime-web",
+      // 文本 embedding 不需要 sharp(图像)；stub 掉，避免其原生/依赖在打包环境加载失败
+      sharp: resolve(root, "src/brain/sharp-stub.mjs"),
+    },
     },
   },
   preload: {

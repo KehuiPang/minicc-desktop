@@ -3,19 +3,33 @@
 // 关键容错：模型加载/推理失败一律不抛，返回 null → 上层 recall 自动退化为关键词匹配。
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync, mkdirSync } from "node:fs";
 
 const MODEL = "Xenova/multilingual-e5-small";
 export const EMBED_DIM = 384;
 export const MODELS_DIR = join(homedir(), ".minicc", "brain", "models");
+const ERR_FILE = join(homedir(), ".minicc", "brain", "embed-error.txt");
 
 let extractorPromise: Promise<any> | null = null;
 let failed = false; // 加载失败过就别反复重试拖慢每次调用
+
+// 把失败原因落到文件（主进程 console 未必进日志），便于诊断
+function dumpErr(where: string, e: any) {
+  try {
+    mkdirSync(join(homedir(), ".minicc", "brain"), { recursive: true });
+    const wd = wasmDir();
+    const msg = `[${new Date().toISOString()}] ${where}\nwasmDir=${wd}\nelectron=${!!(process as any).versions?.electron}\nmsg=${e?.message || e}\nstack=${e?.stack || ""}\n`;
+    writeFileSync(ERR_FILE, msg);
+  } catch {
+    /* ignore */
+  }
+}
 
 // 打包 Electron 里 transformers 的 onnxruntime-node 被 alias 成 onnxruntime-web(wasm)，
 // 其 .wasm 文件随 @xenova/transformers/dist 一起解压到 app.asar.unpacked，需把 wasmPaths 指过去。
 // 系统 node(CLI/测试)用 onnxruntime-node 原生后端，process.resourcesPath 为空，返回 undefined 不影响。
 function wasmDir(): string | undefined {
+  if (process.env.MINICC_WASM_DIR) return process.env.MINICC_WASM_DIR;
   const rp = (process as unknown as { resourcesPath?: string }).resourcesPath;
   if (!rp) return undefined;
   const p = join(rp, "app.asar.unpacked", "node_modules", "@xenova", "transformers", "dist");
@@ -40,6 +54,7 @@ async function getExtractor(): Promise<any | null> {
       return pipeline("feature-extraction", MODEL);
     })().catch((e) => {
       failed = true;
+      dumpErr("getExtractor", e);
       console.error("[brain] embedding 模型加载失败，退化为关键词匹配:", e?.message || e);
       return null;
     });
@@ -75,6 +90,7 @@ export async function embed(
     const out = await ex(withPrefix(texts, kind), { pooling: "mean", normalize: true });
     return out.tolist() as number[][];
   } catch (e: any) {
+    dumpErr("embed", e);
     console.error("[brain] embedding 推理失败:", e?.message || e);
     return null;
   }
