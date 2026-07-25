@@ -1689,17 +1689,6 @@ export function App() {
                           <GearIcon size={15} />
                           设置
                         </button>
-                        {account.providerId === "codex" && account.loggedIn && (
-                          <button
-                            className="acct-menu-item"
-                            onClick={() => {
-                              setShowAcctMenu(false);
-                              window.minicc.logout();
-                            }}
-                          >
-                            退出登录（ChatGPT）
-                          </button>
-                        )}
                         {/* 退出放最后一项 */}
                         <button
                           className="acct-menu-item"
