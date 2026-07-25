@@ -246,14 +246,22 @@ export function App() {
   sidebarWRef.current = sidebarW;
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   // 发送前检测到的疑似新密钥→确认弹窗
-  type SecCand = { value: string; masked: string; kind: string; suggestedName: string; note?: string };
+  type SecCand = {
+    value: string;
+    masked: string;
+    kind: string;
+    suggestedName: string;
+    note?: string;
+    existing?: { id: string; name: string; note?: string }; // 该值已在保险箱(备注不同)→三选一
+  };
   const [secretPrompt, setSecretPrompt] = useState<{
     text: string; // 原始文本(供存入后重新扫描)
     redacted: string; // 已把已入库密钥换成占位符的版本(用于显示/发送)
     imgs: string[];
     inject: boolean;
     candidates: SecCand[];
-    checked: boolean[];
+    checked: boolean[]; // 新密钥:是否存入
+    dupChoice: ("new" | "overwrite" | "ignore")[]; // 重复项:新增/覆盖备注/忽略
   } | null>(null);
   const [account, setAccount] = useState<{
     loggedIn: boolean;
@@ -871,6 +879,7 @@ export function App() {
             inject,
             candidates: r.candidates,
             checked: r.candidates.map(() => true),
+            dupChoice: r.candidates.map(() => "ignore" as const),
           });
         } else {
           // 用脱敏后的文本显示+发送:已入库密钥在气泡里也是占位符,不明文示人
@@ -881,16 +890,26 @@ export function App() {
       .catch(() => go()); // 扫描出错→照常发
   }
 
-  // 密钥确认弹窗：存入选中的,再发送(存入后重新扫描,让新密钥在气泡里也变占位符)
+  // 密钥确认弹窗：新密钥按勾选存入;重复项按三选一(新增/覆盖备注/忽略);再发送
   async function confirmSecretPrompt(store: boolean) {
     const sp = secretPrompt;
     if (!sp) return;
     let outText = sp.redacted; // 默认:已入库的已脱敏,新密钥保持原样(用户选了不存)
     if (store) {
       for (let i = 0; i < sp.candidates.length; i++) {
-        if (!sp.checked[i]) continue;
         const c = sp.candidates[i];
-        await window.minicc.secretsAdd({ name: c.suggestedName, value: c.value, note: c.note });
+        if (c.existing) {
+          // 重复项:值已在保险箱,只处理备注/新增
+          const choice = sp.dupChoice[i];
+          if (choice === "new") {
+            await window.minicc.secretsAdd({ name: c.suggestedName, value: c.value, note: c.note, force: true });
+          } else if (choice === "overwrite") {
+            await window.minicc.secretsUpdate(c.existing.id, { note: c.note });
+          } // ignore: 不动
+        } else {
+          if (!sp.checked[i]) continue;
+          await window.minicc.secretsAdd({ name: c.suggestedName, value: c.value, note: c.note });
+        }
       }
       // 存好后重新扫描:刚入库的这批也会被替换成占位符
       try {
@@ -2193,25 +2212,54 @@ export function App() {
               发现下面的敏感信息。勾选要存入本地密钥管理器的项——存入后会加密保存,并在发给 AI 前用占位符替换,之后每次自动识别。
             </p>
             <div className="sec-cand-list">
-              {secretPrompt.candidates.map((c, i) => (
-                <label key={i} className="sec-cand">
-                  <input
-                    type="checkbox"
-                    checked={secretPrompt.checked[i]}
-                    onChange={(e) => {
-                      const checked = [...secretPrompt.checked];
-                      checked[i] = e.target.checked;
-                      setSecretPrompt({ ...secretPrompt, checked });
-                    }}
-                  />
-                  <span className="sec-cand-kind">{c.kind}</span>
-                  <span className="sec-cand-val">{c.masked}</span>
-                  <span className="sec-cand-meta">
-                    → <b>{c.suggestedName}</b>
-                    {c.note ? ` · ${c.note}` : ""}
-                  </span>
-                </label>
-              ))}
+              {secretPrompt.candidates.map((c, i) =>
+                c.existing ? (
+                  // 值已在保险箱、但这次描述不同→让用户三选一
+                  <div key={i} className="sec-cand sec-cand-dup">
+                    <div className="sec-cand-dup-top">
+                      <span className="sec-cand-kind dup">已存在</span>
+                      <span className="sec-cand-val">{c.masked}</span>
+                      <span className="sec-cand-meta">
+                        旧备注：{c.existing.note || "（无）"} → 新：<b>{c.note}</b>
+                      </span>
+                    </div>
+                    <div className="sec-seg">
+                      {(["new", "overwrite", "ignore"] as const).map((opt) => (
+                        <button
+                          key={opt}
+                          type="button"
+                          className={"sec-seg-btn" + (secretPrompt.dupChoice[i] === opt ? " on" : "")}
+                          onClick={() => {
+                            const dupChoice = [...secretPrompt.dupChoice];
+                            dupChoice[i] = opt;
+                            setSecretPrompt({ ...secretPrompt, dupChoice });
+                          }}
+                        >
+                          {opt === "new" ? "存为新的一条" : opt === "overwrite" ? "覆盖备注" : "不存"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <label key={i} className="sec-cand">
+                    <input
+                      type="checkbox"
+                      checked={secretPrompt.checked[i]}
+                      onChange={(e) => {
+                        const checked = [...secretPrompt.checked];
+                        checked[i] = e.target.checked;
+                        setSecretPrompt({ ...secretPrompt, checked });
+                      }}
+                    />
+                    <span className="sec-cand-kind">{c.kind}</span>
+                    <span className="sec-cand-val">{c.masked}</span>
+                    <span className="sec-cand-meta">
+                      → <b>{c.suggestedName}</b>
+                      {c.note ? ` · ${c.note}` : ""}
+                    </span>
+                  </label>
+                ),
+              )}
             </div>
             <div className="btns">
               <button onClick={() => setSecretPrompt(null)}>取消发送</button>
@@ -3521,6 +3569,11 @@ function SettingsModal({ onClose, liveModels }: { onClose: () => void; liveModel
   const [sCode, setSCode] = useState(""); // 设置里授权码输入
   const [creds, setCreds] = useState<Record<string, CredSlot>>({}); // 各平台凭证分槽
   const credsRef = useRef(creds); // 镜像最新 creds，避免切换时读到过时闭包(会误显示空 key→保存覆盖)
+  // ── 文档冷存储（知识宫殿等）──
+  const [docStat, setDocStat] = useState<{ chunks: number; files: number; dir: string; builtAt: number }>({ chunks: 0, files: 0, dir: "", builtAt: 0 });
+  const [docDir, setDocDir] = useState("~/Documents/tanxun/知识宫殿");
+  const [docBuilding, setDocBuilding] = useState(false);
+  const [docProg, setDocProg] = useState("");
   credsRef.current = creds;
   const loadedRef = useRef<any>({}); // 保存加载时的完整 settings，保存时 spread 保留 theme/app 等本页不管的字段
   const [stations, setStations] = useState<Station[]>([]); // 自定义中转站
@@ -3605,10 +3658,22 @@ function SettingsModal({ onClose, liveModels }: { onClose: () => void; liveModel
       setToolTotal(r.total);
     });
   }, [tab]);
-  // 切到「知识网络」页时拉一次图谱
+  // 切到「知识网络」页时拉一次图谱 + 文档库统计，并监听建索引进度
   useEffect(() => {
     if (tab !== "brain") return;
     reloadBrain();
+    window.minicc.brainDocStats().then((s) => {
+      setDocStat(s);
+      if (s.dir) setDocDir(s.dir);
+    });
+    const off = window.minicc.onEvent((ch, p) => {
+      if (ch !== "evt:brain-docs") return;
+      const d = p as { phase: string; files?: number; total?: number; done?: number };
+      if (d.phase === "scan") setDocProg(`扫描到 ${d.files} 个文档，开始向量化…`);
+      else if (d.phase === "embed") setDocProg(`向量化 ${d.done}/${d.total} 块…`);
+      else if (d.phase === "done") setDocProg(`✓ 完成，共 ${d.total} 块`);
+    });
+    return off;
   }, [tab]);
   // ── 密钥管理器 ──
   type SecretRow = { id: string; name: string; envVar: string; masked: string; note?: string; createdAt: number };

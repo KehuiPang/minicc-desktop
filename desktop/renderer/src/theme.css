@@ -3227,3 +3227,16 @@ body {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .sec-cand-meta b { color: var(--accent); font-family: var(--mono, ui-monospace, monospace); font-weight: 600; }
+
+/* 密钥确认弹窗:重复项(值已存在)三选一 */
+.sec-cand-dup { flex-direction: column; align-items: stretch; gap: 8px; cursor: default; }
+.sec-cand-dup-top { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; }
+.sec-cand-kind.dup { color: #a4794a; border-color: #a4794a; }
+.sec-seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; align-self: flex-start; }
+.sec-seg-btn {
+  border: none; background: transparent; color: var(--text-muted);
+  padding: 5px 12px; font-size: 12px; cursor: pointer;
+}
+.sec-seg-btn + .sec-seg-btn { border-left: 1px solid var(--border-strong); }
+.sec-seg-btn:hover { color: var(--text); }
+.sec-seg-btn.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }

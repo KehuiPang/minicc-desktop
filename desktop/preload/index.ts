@@ -24,6 +24,7 @@ const EVENTS = [
   "evt:suggest",
   "evt:groups",
   "evt:assistant-replace",
+  "evt:brain-docs",
 ] as const;
 
 contextBridge.exposeInMainWorld("minicc", {
@@ -88,6 +89,11 @@ contextBridge.exposeInMainWorld("minicc", {
   brainAddEdge: (from: string, relation: string, to: string) =>
     ipcRenderer.invoke("brain:add-edge", from, relation, to) as Promise<void>,
   brainDeleteEdge: (id: string) => ipcRenderer.invoke("brain:delete-edge", id) as Promise<void>,
+  brainDocStats: () =>
+    ipcRenderer.invoke("brain:doc-stats") as Promise<{ chunks: number; files: number; dir: string; builtAt: number }>,
+  brainBuildDocs: (dir: string) =>
+    ipcRenderer.invoke("brain:build-docs", dir) as Promise<{ chunks: number; files: number; dir: string; builtAt: number }>,
+  brainReadDoc: (ref: string) => ipcRenderer.invoke("brain:read-doc", ref) as Promise<string>,
   getMcp: () =>
     ipcRenderer.invoke("mcp:get") as Promise<{
       config: string;
@@ -100,7 +106,7 @@ contextBridge.exposeInMainWorld("minicc", {
       entries: { id: string; name: string; envVar: string; masked: string; note?: string; createdAt: number }[];
       available: boolean;
     }>,
-  secretsAdd: (input: { name?: string; envVar?: string; value: string; note?: string }) =>
+  secretsAdd: (input: { name?: string; envVar?: string; value: string; note?: string; force?: boolean }) =>
     ipcRenderer.invoke("secrets:add", input) as Promise<{ ok: boolean; error?: string; entry?: any }>,
   secretsUpdate: (id: string, patch: { name?: string; envVar?: string; note?: string; value?: string }) =>
     ipcRenderer.invoke("secrets:update", id, patch) as Promise<{ ok: boolean; error?: string }>,
@@ -110,7 +116,14 @@ contextBridge.exposeInMainWorld("minicc", {
   secretsScan: (text: string) =>
     ipcRenderer.invoke("secrets:scan", text) as Promise<{
       redacted: string;
-      candidates: { value: string; masked: string; kind: string; suggestedName: string; note?: string }[];
+      candidates: {
+        value: string;
+        masked: string;
+        kind: string;
+        suggestedName: string;
+        note?: string;
+        existing?: { id: string; name: string; note?: string };
+      }[];
     }>,
   secretsReveal: (pw: string) =>
     ipcRenderer.invoke("secrets:reveal", pw) as Promise<{

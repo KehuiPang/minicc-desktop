@@ -802,7 +802,7 @@ function buildSysPrompt(cwd: string, model: string, providerId?: string): string
   if (mem) base += `\n\n已记住（需主动遵守/参考）：\n${mem}`;
   // 本地知识网络（Brain）：概念化的项目/部署知识，按需 recall，不再全量注入
   base +=
-    `\n\n## 本地知识网络（Brain）\n你有一个本地概念知识网络，沉淀着项目/服务器/脚本/部署/注意事项等结构化知识。\n- 涉及具体项目或部署/环境的任务，**开工前先用 brain_recall 检索**，按返回的结构化子图行动，别每次全量翻文档、省 token。\n- 发现值得长期固化的高价值知识（项目背景、git路径、测试/线上环境、部署脚本位置、踩坑注意事项）时，用 brain_learn 记住、brain_link 串联关系；旧信息有误就用同名 brain_learn 覆盖纠正。`;
+    `\n\n## 本地知识网络（Brain）\n你有一个本地概念知识网络，沉淀着项目/服务器/脚本/部署/注意事项等结构化知识。\n- 涉及具体项目或部署/环境的任务，**开工前先用 brain_recall 检索**，按返回的结构化子图行动，别每次全量翻文档、省 token。\n- 发现值得长期固化的高价值知识（项目背景、git路径、测试/线上环境、部署脚本位置、踩坑注意事项）时，用 brain_learn 记住、brain_link 串联关系；旧信息有误就用同名 brain_learn 覆盖纠正。\n- brain_recall 还会命中知识宫殿等文档库的原文片段（『相关文档』），只给摘要+路径；需要完整内容时用 brain_read_doc 按该路径读全文，不必全量翻。`;
   try {
     const idx = brain.conceptIndex(40);
     if (idx.length) base += `\n已沉淀的概念（可 brain_recall 展开）：${idx.join("、")}`;
@@ -1659,6 +1659,13 @@ ipcMain.handle("brain:add-edge", async (_e, from: string, relation: string, to: 
   refreshSysAfterBrain();
 });
 ipcMain.handle("brain:delete-edge", (_e, id: string) => brain.deleteEdgeFromUI(String(id)));
+// 文档冷存储（知识宫殿等）：建索引(带进度事件)/统计/读原文
+ipcMain.handle("brain:doc-stats", () => brain.docStats());
+ipcMain.handle("brain:build-docs", async (_e, dir: string) => {
+  await brain.buildDocs(String(dir), (p) => send("evt:brain-docs", p));
+  return brain.docStats();
+});
+ipcMain.handle("brain:read-doc", (_e, ref: string) => brain.readDoc(String(ref)));
 
 // —— MCP 服务器(设置里配置) ——
 ipcMain.handle("mcp:get", () => {
@@ -1738,8 +1745,8 @@ ipcMain.handle("secrets:reveal", async (_e, pw: string) => {
 // 发送前扫描：脱敏已入库密钥 + 返回尚未入库的疑似新密钥(给确认弹窗)。永不抛错,否则会挡住发送。
 ipcMain.handle("secrets:scan", (_e, text: string) => {
   try {
-    const redacted = secrets.redact(text).text;
-    return { redacted, candidates: secrets.detect(redacted) };
+    // detect 用原文(才能发现"值已存在但描述不同"的重复)；redact 单独产出发给模型的脱敏版
+    return { redacted: secrets.redact(text).text, candidates: secrets.detect(text) };
   } catch {
     return { redacted: text, candidates: [] };
   }

@@ -100,19 +100,21 @@ export function listSecrets(): SecretView[] {
   });
 }
 
-// ---- 增：value 为明文，立即加密；名字/环境变量名唯一化 ----
-export function addSecret(input: { name?: string; envVar?: string; value: string; note?: string }): SecretView {
+// ---- 增：value 为明文，立即加密；名字/环境变量名唯一化。force=true 时允许同值再存一条 ----
+export function addSecret(input: { name?: string; envVar?: string; value: string; note?: string; force?: boolean }): SecretView {
   const v = load();
   const value = String(input.value ?? "");
   if (!value) throw new Error("密钥值为空");
-  // 值去重:已存在同一明文→直接返回既有条目,不重复添加(走内存缓存)
-  const dup = plaintextMap().byValue.get(value);
-  if (dup) {
-    if (!dup.note && input.note?.trim()) {
-      dup.note = input.note.trim();
-      persist();
+  // 值去重:已存在同一明文→直接返回既有条目(除非 force 强制新增一条)
+  if (!input.force) {
+    const dup = plaintextMap().byValue.get(value);
+    if (dup) {
+      if (!dup.note && input.note?.trim()) {
+        dup.note = input.note.trim();
+        persist();
+      }
+      return { id: dup.id, name: dup.name, envVar: dup.envVar, masked: mask(value), note: dup.note, createdAt: dup.createdAt };
     }
-    return { id: dup.id, name: dup.name, envVar: dup.envVar, masked: mask(value), note: dup.note, createdAt: dup.createdAt };
   }
   let name = normName(input.name || "secret");
   // 名字撞车则加后缀，保证占位符唯一
@@ -356,24 +358,34 @@ export interface Candidate {
   kind: string;
   suggestedName: string; // 英文变量名（自动命名）
   note?: string; // 备注（标签原文，如"各个服务器的密码"）
+  existing?: { id: string; name: string; note?: string }; // 该值已在保险箱里(备注不同)→让用户选新增/覆盖/忽略
 }
 
+// 注意:传入的应是「原始文本」(未脱敏)，这样才能发现"值已存在但描述不同"的重复。
 export function detect(text: string): Candidate[] {
   if (!text) return [];
   const { byValue } = plaintextMap();
-  const found = new Map<string, { kind: string; name: string; note?: string }>();
+  const found = new Map<string, { kind: string; name: string; note?: string; existing?: SecretEntry }>();
   const consider = (raw: string, kind: string, label?: string) => {
     const val = cleanValue(raw);
     if (!val || val.length < 4) return;
     if (val.startsWith(PH_OPEN)) return; // 占位符不算
-    if (byValue.has(val)) return; // 已入库→交给 redact，不重复提示
     if (found.has(val)) return;
+    const lbl = kind === "labeled" ? (label || "").replace(/^[\s'"「」]+|[\s'"「」]+$/g, "") : "";
+    const existing = byValue.get(val);
+    if (existing) {
+      // 已入库:仅当带了「不同的描述」时才提示(让用户选新增/覆盖/忽略)，否则静默由 redact 处理，不打扰
+      const newNote = lbl.trim();
+      if (kind === "labeled" && newNote && newNote !== (existing.note || "").trim()) {
+        found.set(val, { kind, name: nameFromLabel(newNote), note: newNote, existing });
+      }
+      return;
+    }
     let name: string;
     let note: string | undefined;
     if (kind === "labeled") {
-      const lbl = (label || "").replace(/^[\s'"「」]+|[\s'"「」]+$/g, "");
       name = nameFromLabel(lbl);
-      note = lbl || undefined; // 标签原文当备注
+      note = lbl || undefined;
     } else if (kind === "high-entropy") {
       name = "secret";
     } else {
@@ -397,6 +409,7 @@ export function detect(text: string): Candidate[] {
     kind: info.kind,
     suggestedName: info.name,
     note: info.note,
+    existing: info.existing ? { id: info.existing.id, name: info.existing.name, note: info.existing.note } : undefined,
   }));
 }
 
