@@ -2277,6 +2277,7 @@ export function App() {
                       className="mq-item mq-more"
                       onClick={() => {
                         setShowModelMenu(false);
+                        setSettingsTab("model");
                         setShowSettings(true);
                       }}
                     >
