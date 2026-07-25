@@ -56,6 +56,7 @@ function persist() {
   if (!cache) return;
   mkdirSync(dirname(VAULT_PATH), { recursive: true });
   writeFileSync(VAULT_PATH, JSON.stringify(cache, null, 2), "utf8");
+  plainCache = null; // 密钥变动→解密缓存失效
 }
 
 function encrypt(plain: string): string {
@@ -81,17 +82,20 @@ function normName(raw: string): string {
   return n || "secret";
 }
 
-// ---- 对外：视图列表（掩码） ----
+// ---- 对外：视图列表（掩码，走内存缓存） ----
 export function listSecrets(): SecretView[] {
+  const byId = new Map<string, string>();
+  for (const { e, plain } of plaintextMap().entries) byId.set(e.id, plain);
   return load().entries.map((e) => {
-    let masked = "••••";
-    try {
-      masked = mask(decrypt(e.enc));
-    } catch {
-      /* 解密失败(换机/钥匙串变动) */
-      masked = "⚠ 无法解密";
-    }
-    return { id: e.id, name: e.name, envVar: e.envVar, masked, note: e.note, createdAt: e.createdAt };
+    const plain = byId.get(e.id);
+    return {
+      id: e.id,
+      name: e.name,
+      envVar: e.envVar,
+      masked: plain != null ? mask(plain) : "⚠ 无法解密",
+      note: e.note,
+      createdAt: e.createdAt,
+    };
   });
 }
 
@@ -100,20 +104,14 @@ export function addSecret(input: { name?: string; envVar?: string; value: string
   const v = load();
   const value = String(input.value ?? "");
   if (!value) throw new Error("密钥值为空");
-  // 值去重:已存在同一明文→直接返回既有条目,不重复添加
-  for (const e of v.entries) {
-    try {
-      if (decrypt(e.enc) === value) {
-        // 顺带补上备注(如果原来没有、这次带了)
-        if (!e.note && input.note?.trim()) {
-          e.note = input.note.trim();
-          persist();
-        }
-        return { id: e.id, name: e.name, envVar: e.envVar, masked: mask(value), note: e.note, createdAt: e.createdAt };
-      }
-    } catch {
-      /* 解不开的跳过 */
+  // 值去重:已存在同一明文→直接返回既有条目,不重复添加(走内存缓存)
+  const dup = plaintextMap().byValue.get(value);
+  if (dup) {
+    if (!dup.note && input.note?.trim()) {
+      dup.note = input.note.trim();
+      persist();
     }
+    return { id: dup.id, name: dup.name, envVar: dup.envVar, masked: mask(value), note: dup.note, createdAt: dup.createdAt };
   }
   let name = normName(input.name || "secret");
   // 名字撞车则加后缀，保证占位符唯一
@@ -179,15 +177,20 @@ export function importEnv(text: string): number {
   return n;
 }
 
-// 明文值缓存（仅内存，用于脱敏/回填/env 注入）
-function plaintextMap(): { byValue: Map<string, SecretEntry>; entries: { e: SecretEntry; plain: string }[] } {
+// 明文值缓存（仅内存）：一次启动只解密一次，避免每条消息 redact/detect 都摸钥匙串→反复弹授权框。
+// 密钥增删改(persist)时置空重建。
+let plainCache: { byValue: Map<string, SecretEntry>; byName: Map<string, string>; entries: { e: SecretEntry; plain: string }[] } | null = null;
+function plaintextMap() {
+  if (plainCache) return plainCache;
   const byValue = new Map<string, SecretEntry>();
+  const byName = new Map<string, string>();
   const entries: { e: SecretEntry; plain: string }[] = [];
   for (const e of load().entries) {
     try {
       const plain = decrypt(e.enc);
       if (plain) {
         byValue.set(plain, e);
+        byName.set(e.name, plain);
         entries.push({ e, plain });
       }
     } catch {
@@ -196,7 +199,8 @@ function plaintextMap(): { byValue: Map<string, SecretEntry>; entries: { e: Secr
   }
   // 长值优先替换，避免短值是长值子串导致的错替
   entries.sort((a, b) => b.plain.length - a.plain.length);
-  return { byValue, entries };
+  plainCache = { byValue, byName, entries };
+  return plainCache;
 }
 
 // ---- 脱敏：把已入库的明文密钥替换成占位符（精确匹配，静默） ----
@@ -219,42 +223,25 @@ export function redact(text: string): { text: string; hit: boolean } {
 export function rehydrate(text: string): string {
   if (!text || !text.includes(PH_OPEN)) return text;
   let out = text;
-  for (const e of load().entries) {
-    const ph = placeholderOf(e.name);
-    if (out.includes(ph)) {
-      try {
-        out = out.split(ph).join(decrypt(e.enc));
-      } catch {
-        /* 解不开就留占位符 */
-      }
-    }
+  for (const [name, plain] of plaintextMap().byName) {
+    const ph = placeholderOf(name);
+    if (out.includes(ph)) out = out.split(ph).join(plain);
   }
   return out;
 }
 
-// ---- 查看明文：返回每条的真实值（调用方须先通过本机账号密码校验） ----
+// ---- 查看明文：返回每条的真实值（调用方须先通过本机账号密码校验；走内存缓存） ----
 export function revealAll(): { id: string; value: string }[] {
-  const out: { id: string; value: string }[] = [];
-  for (const e of load().entries) {
-    try {
-      out.push({ id: e.id, value: decrypt(e.enc) });
-    } catch {
-      out.push({ id: e.id, value: "⚠ 无法解密" });
-    }
-  }
-  return out;
+  const byId = new Map<string, string>();
+  for (const { e, plain } of plaintextMap().entries) byId.set(e.id, plain);
+  return load().entries.map((e) => ({ id: e.id, value: byId.get(e.id) ?? "⚠ 无法解密" }));
 }
 
-// ---- 环境变量注入表：给本机 bash 子进程用 ----
+// ---- 环境变量注入表：给本机 bash 子进程用（走内存缓存，不反复摸钥匙串） ----
 export function envForTools(): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const e of load().entries) {
-    if (!e.envVar) continue;
-    try {
-      env[e.envVar] = decrypt(e.enc);
-    } catch {
-      /* skip */
-    }
+  for (const { e, plain } of plaintextMap().entries) {
+    if (e.envVar) env[e.envVar] = plain;
   }
   return env;
 }
