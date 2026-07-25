@@ -18,6 +18,7 @@ import { makeProvider } from "../../src/agent/provider.js";
 import { Agent } from "../../src/agent/loop.js";
 import { systemPrompt, renderPrompt, DEFAULT_SYSTEM_PROMPT } from "../../src/agent/prompt.js";
 import { ALL_TOOLS, TOOL_MAP, MEMORY_FILE } from "../../src/tools/index.js";
+import * as brain from "../../src/brain/index.js";
 import type { Tool, ToolResult } from "../../src/types.js";
 import { connectMcp, mcpTools, mcpToolsBySource, mcpStatus, loadMcpConfig, searchMcpRegistry, MCP_CONFIG_PATH } from "./mcp.js";
 import * as secrets from "./secrets.js";
@@ -799,6 +800,15 @@ function buildSysPrompt(cwd: string, model: string, providerId?: string): string
   base +=
     `\n\n## 长期记忆\n用户说“记住…/以后…/我喜欢…”或出现值得长期保留的信息(偏好、称呼、事实、项目背景)时，调用 remember 工具写入；它会在之后每次对话自动加载。`;
   if (mem) base += `\n\n已记住（需主动遵守/参考）：\n${mem}`;
+  // 本地知识网络（Brain）：概念化的项目/部署知识，按需 recall，不再全量注入
+  base +=
+    `\n\n## 本地知识网络（Brain）\n你有一个本地概念知识网络，沉淀着项目/服务器/脚本/部署/注意事项等结构化知识。\n- 涉及具体项目或部署/环境的任务，**开工前先用 brain_recall 检索**，按返回的结构化子图行动，别每次全量翻文档、省 token。\n- 发现值得长期固化的高价值知识（项目背景、git路径、测试/线上环境、部署脚本位置、踩坑注意事项）时，用 brain_learn 记住、brain_link 串联关系；旧信息有误就用同名 brain_learn 覆盖纠正。`;
+  try {
+    const idx = brain.conceptIndex(40);
+    if (idx.length) base += `\n已沉淀的概念（可 brain_recall 展开）：${idx.join("、")}`;
+  } catch {
+    /* brain 不可用不影响主流程 */
+  }
   base += secrets.SECRETS_SYSTEM_NOTE; // 告知模型：密钥走本地保险箱/环境变量，无需明文
   return base;
 }
@@ -1627,6 +1637,28 @@ ipcMain.on("memory:set", (_e, text: string) => {
   // 立即刷新当前会话系统提示词,手动改的记忆下一条消息就生效
   for (const a of agents.values()) a.setSystem(buildSysPrompt(cwd, modelLabel, loadSettings()?.providerId));
 });
+
+// —— 本地知识网络 Brain（设置里的"知识网络"面板 + 模型预热）——
+function refreshSysAfterBrain() {
+  for (const a of agents.values()) a.setSystem(buildSysPrompt(cwd, modelLabel, loadSettings()?.providerId));
+}
+ipcMain.handle("brain:graph", () => brain.getGraphLite());
+ipcMain.handle("brain:stats", () => brain.stats());
+ipcMain.handle("brain:recall", async (_e, query: string) => (await brain.recall(String(query || ""))).text);
+ipcMain.handle("brain:warmup", async () => brain.warmupEmbedder());
+ipcMain.handle("brain:save-node", async (_e, node) => {
+  await brain.saveNodeFromUI(node);
+  refreshSysAfterBrain();
+});
+ipcMain.handle("brain:delete-node", (_e, id: string) => {
+  brain.deleteNodeFromUI(String(id));
+  refreshSysAfterBrain();
+});
+ipcMain.handle("brain:add-edge", async (_e, from: string, relation: string, to: string) => {
+  await brain.addEdgeFromUI(String(from), String(relation), String(to));
+  refreshSysAfterBrain();
+});
+ipcMain.handle("brain:delete-edge", (_e, id: string) => brain.deleteEdgeFromUI(String(id)));
 
 // —— MCP 服务器(设置里配置) ——
 ipcMain.handle("mcp:get", () => {

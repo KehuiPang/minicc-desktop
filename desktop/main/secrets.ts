@@ -232,7 +232,8 @@ export function envForTools(): Record<string, string> {
 }
 
 // ---- 检测：找出「尚未入库」的疑似新密钥（给发送前确认弹窗用） ----
-const DETECTORS: { kind: string; re: RegExp }[] = [
+// valueGroup 指定用哪个捕获组作为真正的密钥值（默认整段 m[0]）
+const DETECTORS: { kind: string; re: RegExp; valueGroup?: number }[] = [
   { kind: "openai", re: /\bsk-[A-Za-z0-9_-]{20,}\b/g },
   { kind: "anthropic", re: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/g },
   { kind: "aws-akid", re: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
@@ -242,7 +243,36 @@ const DETECTORS: { kind: string; re: RegExp }[] = [
   { kind: "jwt", re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
   { kind: "private-key", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g },
   { kind: "generic-token", re: /\bsk-[A-Za-z0-9]{10,}\b/g },
+  // 上下文标签：密码/口令/密钥/token/key 后面跟的值——普通密码(如 Tanxun8888)靠这个抓
+  {
+    kind: "labeled",
+    re: /(?:密码|口令|密钥|秘钥|凭证|密令|账号密码|password|passwd|pwd|pass|secret|token|credential|api[\s_-]?key|access[\s_-]?key|secret[\s_-]?key|auth[\s_-]?token)\s*[:：=]\s*['"]?([^\s'"，,；;]{3,64})/gi,
+    valueGroup: 1,
+  },
 ];
+
+// 高熵长串（无标签的随机密钥）：≥24 位、同时含大小写+数字，普通英文/句子几乎不会命中
+function entropyCandidates(text: string): string[] {
+  const out: string[] = [];
+  const re = /[A-Za-z0-9_\-./+=]{24,80}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const s = m[0];
+    if (!/[a-z]/.test(s) || !/[A-Z]/.test(s) || !/[0-9]/.test(s)) continue; // 需三类字符齐全
+    if (/^https?:\/\//i.test(s)) continue; // 跳过 URL
+    if (s.includes("⟦")) continue; // 跳过占位符
+    out.push(s);
+  }
+  return out;
+}
+
+// 值清洗：去掉尾部标点、外层引号
+function cleanValue(v: string): string {
+  let s = v.trim();
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) s = s.slice(1, -1);
+  s = s.replace(/[。．.,，、；;：:!！?？)）\]】>」]+$/g, "");
+  return s;
+}
 
 export interface Candidate {
   value: string;
@@ -255,20 +285,24 @@ export function detect(text: string): Candidate[] {
   if (!text) return [];
   const { byValue } = plaintextMap();
   const found = new Map<string, string>(); // value -> kind
+  const consider = (raw: string, kind: string) => {
+    const val = cleanValue(raw);
+    if (!val || val.length < 4) return;
+    if (val.startsWith(PH_OPEN)) return; // 占位符不算
+    if (byValue.has(val)) return; // 已入库→交给 redact，不重复提示
+    if (!found.has(val)) found.set(val, kind);
+  };
   for (const d of DETECTORS) {
     d.re.lastIndex = 0;
     let m: RegExpExecArray | null;
-    while ((m = d.re.exec(text))) {
-      const val = m[0];
-      if (byValue.has(val)) continue; // 已入库的交给 redact，不再提示
-      if (!found.has(val)) found.set(val, d.kind);
-    }
+    while ((m = d.re.exec(text))) consider(d.valueGroup ? m[d.valueGroup] : m[0], d.kind);
   }
-  return [...found.entries].map(([value, kind]) => ({
+  for (const s of entropyCandidates(text)) consider(s, "high-entropy");
+  return [...found.entries()].map(([value, kind]) => ({
     value,
     masked: mask(value),
     kind,
-    suggestedName: `${kind.replace(/-/g, "_")}_key`,
+    suggestedName: kind === "labeled" ? "password" : kind === "high-entropy" ? "secret" : `${kind.replace(/-/g, "_")}_key`,
   }));
 }
 

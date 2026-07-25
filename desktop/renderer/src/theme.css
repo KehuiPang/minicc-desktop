@@ -3112,3 +3112,10 @@ body {
   border-radius: 4px; padding: 0 6px;
 }
 .sec-cand-val { font-size: 13px; color: var(--text); font-family: var(--mono, ui-monospace, monospace); }
+
+.sec-more-toggle {
+  display: block; margin: 0 0 10px; padding: 2px 0;
+  background: none; border: none; cursor: pointer;
+  font-size: 12px; color: var(--text-muted); text-align: left;
+}
+.sec-more-toggle:hover { color: var(--accent); }

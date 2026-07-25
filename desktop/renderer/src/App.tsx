@@ -3552,6 +3552,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [secrets, setSecrets] = useState<SecretRow[]>([]);
   const [secretsAvail, setSecretsAvail] = useState(true);
   const [secNew, setSecNew] = useState({ name: "", envVar: "", value: "", note: "" });
+  const [secMore, setSecMore] = useState(false); // 展开环境变量名/备注(默认收起)
   const [secImportOpen, setSecImportOpen] = useState(false);
   const [secImportText, setSecImportText] = useState("");
   const [secErr, setSecErr] = useState("");
@@ -4863,26 +4864,31 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                   />
                   <input
                     className="sec-in"
-                    placeholder="环境变量名 (如 OPENAI_API_KEY,可留空)"
-                    value={secNew.envVar}
-                    onChange={(e) => setSecNew({ ...secNew, envVar: e.target.value })}
-                  />
-                </div>
-                <div className="sec-add-row">
-                  <input
-                    className="sec-in"
                     type="password"
                     placeholder="密钥值 (加密存储,不回显)"
                     value={secNew.value}
                     onChange={(e) => setSecNew({ ...secNew, value: e.target.value })}
                   />
-                  <input
-                    className="sec-in"
-                    placeholder="备注 (可选)"
-                    value={secNew.note}
-                    onChange={(e) => setSecNew({ ...secNew, note: e.target.value })}
-                  />
                 </div>
+                <button type="button" className="sec-more-toggle" onClick={() => setSecMore((v) => !v)}>
+                  {secMore ? "▾ 收起" : "▸ 展开更多（环境变量名 / 备注）"}
+                </button>
+                {secMore && (
+                  <div className="sec-add-row">
+                    <input
+                      className="sec-in"
+                      placeholder="环境变量名 (如 OPENAI_API_KEY,默认同名称)"
+                      value={secNew.envVar}
+                      onChange={(e) => setSecNew({ ...secNew, envVar: e.target.value })}
+                    />
+                    <input
+                      className="sec-in"
+                      placeholder="备注 (可选)"
+                      value={secNew.note}
+                      onChange={(e) => setSecNew({ ...secNew, note: e.target.value })}
+                    />
+                  </div>
+                )}
                 <div className="sec-add-actions">
                   <button type="button" className="allow" onClick={addSecret} disabled={!secretsAvail}>
                     + 添加密钥
