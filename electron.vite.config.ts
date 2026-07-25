@@ -36,7 +36,10 @@ export default defineConfig({
     build: {
       outDir: "out/main",
       rollupOptions: {
-        input: resolve(root, "desktop/main/index.ts"),
+        input: {
+          index: resolve(root, "desktop/main/index.ts"),
+          "embed-worker": resolve(root, "src/brain/embed-worker.ts"),
+        },
         // sharp 是 transformers 的原生依赖(图像处理)，文本 embedding 用不到；external 让它
         // 运行时从 unpacked 的 node_modules 加载，避免 bundle 后 sharp 的 .node 路径失效。
         external: ["electron"], // sharp 走 alias stub，不再 external
@@ -44,7 +47,7 @@ export default defineConfig({
         // 若输出 ESM(package type:module)会 ReferenceError 崩。CJS 下 __filename 原生可用。
         output: {
           format: "cjs",
-          entryFileNames: "index.cjs",
+          entryFileNames: "[name].cjs",
           chunkFileNames: "chunks/[name]-[hash].cjs",
         },
       },
