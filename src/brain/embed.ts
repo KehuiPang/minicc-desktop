@@ -11,8 +11,18 @@ export const MODELS_DIR = join(homedir(), ".minicc", "brain", "models");
 let extractorPromise: Promise<any> | null = null;
 let failed = false; // 加载失败过就别反复重试拖慢每次调用
 
+// 是否强制允许在 Electron 里加载原生 onnxruntime-node（默认关；待 wasm 后端就绪后可开）
+const ALLOW_ELECTRON_NATIVE = process.env.MINICC_BRAIN_NATIVE === "1";
+
 async function getExtractor(): Promise<any | null> {
   if (failed) return null;
+  // Electron 打包环境加载 onnxruntime-node 原生模块会直接 SIGTRAP 崩溃（与 Electron 的 Node ABI 不兼容）；
+  // 系统 node（CLI/测试）不受影响。打包版暂时禁用本地向量，检索自动降级为关键词，待换 wasm 后端后恢复。
+  if (process.versions?.electron && !ALLOW_ELECTRON_NATIVE) {
+    failed = true;
+    console.warn("[brain] Electron 环境暂禁用本地向量(onnxruntime-node 不兼容)，检索降级为关键词");
+    return null;
+  }
   if (!extractorPromise) {
     extractorPromise = (async () => {
       const { pipeline, env } = await import("@xenova/transformers");
