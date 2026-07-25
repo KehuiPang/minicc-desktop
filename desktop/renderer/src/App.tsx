@@ -2148,6 +2148,7 @@ export function App() {
                           className="allow"
                           onClick={() => {
                             setShowConn(false);
+                            setSettingsTab("model");
                             setShowSettings(true);
                           }}
                         >
