@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { WuweiMe } from "../../main/wuwei-auth.js";
 import { getLang, setLang as persistLang, makeT, type Lang, type T } from "./i18n.js";
+import { BRAND_LOGOS } from "./brandLogos.js";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -2029,16 +2030,44 @@ export function App() {
                             display: "flex",
                             justifyContent: "center",
                             alignItems: "center",
-                            gap: 14,
+                            gap: 12,
                             marginBottom: 13,
-                            fontSize: 12.5,
+                            fontSize: 12,
                             fontWeight: 500,
                             color: "var(--text-dim)",
                             whiteSpace: "nowrap",
                           }}
                         >
-                          {["Kimi", "Claude", "GPT"].map((n) => (
-                            <span key={n}>{n}</span>
+                          {[
+                            { k: "kimi", n: "Kimi" },
+                            { k: "claude", n: "Claude" },
+                            { k: "gpt", n: "GPT" },
+                            { k: "deepseek", n: "DeepSeek" },
+                          ].map((m) => (
+                            <span key={m.k} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                              <span
+                                style={{
+                                  width: 18,
+                                  height: 18,
+                                  borderRadius: 5,
+                                  background: "#fff",
+                                  boxShadow: "0 0 0 1px rgba(0,0,0,.06)",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  flex: "0 0 auto",
+                                }}
+                              >
+                                <img
+                                  src={BRAND_LOGOS[m.k]}
+                                  alt=""
+                                  width={13}
+                                  height={13}
+                                  style={{ display: "block", objectFit: "contain" }}
+                                />
+                              </span>
+                              {m.n}
+                            </span>
                           ))}
                         </div>
                         {/* 次要：无为币激励，小徽章 */}
