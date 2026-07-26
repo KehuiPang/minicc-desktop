@@ -809,6 +809,7 @@ export function App() {
     user: { id: string; email: string | null; name: string | null; avatar: string | null };
     coin: { balance: number };
     flags?: string[];
+    providers?: { hidden?: string[] };
   } | null>(null);
   // 灰度开关（C2）：订阅版是否显示，完全由后端 flags 决定，默认隐藏。客户端只渲染不判定。
   const showSubscription = !!wuwei?.flags?.includes("subscription");
@@ -961,9 +962,12 @@ export function App() {
     document.documentElement.setAttribute("data-platform", window.minicc.platform);
   }, [showSettings]);
   // 内置平台 + 用户自定义中转站，按用户自定义顺序、隐藏项不进切换菜单
+  const backendHidden = wuwei?.providers?.hidden ?? []; // 后台下发的隐藏供应商(全局+按用户)
   const providerList = arrangePresets(
-    // 托管平台：登录无为账号即可见（用托管须登录+有无为币，网关另有余额/日封顶兜底）
-    [...PRESETS, ...stations.map(stationToPreset)].filter((p) => !p.hosted || !!wuwei),
+    // 托管平台需登录可见；后台隐藏的一律不显示(供应商上下架由后台控制)
+    [...PRESETS, ...stations.map(stationToPreset)].filter(
+      (p) => (!p.hosted || !!wuwei) && !backendHidden.includes(p.id),
+    ),
     providerOrder,
     hiddenProviders,
     false,
