@@ -2030,9 +2030,20 @@ export function App() {
                         >
                           <GiftIcon size={22} color="#F4F6F8" />
                         </div>
-                        {/* 重点：免费顶级模型 */}
-                        <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 5, lineHeight: 1.35 }}>
-                          {t("login.freeModels")}
+                        {/* 重点：免费顶级模型（核心卖点「免费」用朱赭点出，做出层次） */}
+                        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 7, lineHeight: 1.3, letterSpacing: 0.2, color: "var(--text)" }}>
+                          {lang === "zh" ? (
+                            <>
+                              <span style={{ color: "#C05F3C" }}>免费</span>使用最新顶级模型
+                            </>
+                          ) : (
+                            <>
+                              Top-tier models, <span style={{ color: "#C05F3C" }}>free</span>
+                            </>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginBottom: 12, lineHeight: 1.4 }}>
+                          {lang === "zh" ? "无需自备 API Key，登录即用" : "No API key needed — just sign in"}
                         </div>
                         {/* 具体模型名，让「顶级」落地 */}
                         <div
