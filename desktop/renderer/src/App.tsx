@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { WuweiMe } from "../../main/wuwei-auth.js";
+import { getLang, setLang as persistLang, makeT, type Lang, type T } from "./i18n.js";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -230,14 +231,19 @@ function RefreshIcon({ size = 13 }: { size?: number }) {
 //   POST /api/auth/verify-code {target,code}             → {...tokens}|{error}  (无账号自动注册)
 function WuweiLoginModal({
   incentive,
+  lang,
+  t,
   onClose,
   onSuccess,
 }: {
   incentive?: boolean;
+  lang: Lang;
+  t: T;
   onClose: () => void;
   onSuccess: (me: WuweiMe) => void;
 }) {
   type Mode = "email-login" | "email-register" | "phone";
+  const zh = lang === "zh";
   const [mode, setMode] = useState<Mode>("email-login");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -326,22 +332,24 @@ function WuweiLoginModal({
           }}
         >
           <div style={{ textAlign: "center", fontSize: 15, fontWeight: 600, marginBottom: incentive ? 6 : 14 }}>
-            登录 / 注册无为账号
+            {t("login.title")}
           </div>
           {incentive && (
             <div style={{ textAlign: "center", fontSize: 12, color: "#6F9FAD", marginBottom: 14 }}>
-              注册即得 <b style={{ color: "#C05F3C" }}>100</b> 无为币 · 每日签到再领 10
+              {t("login.incentive")}
             </div>
           )}
-          {/* 邮箱/手机 切换 */}
-          <div style={{ display: "flex", marginBottom: 14 }}>
-            <button style={tabStyle(mode !== "phone")} onClick={() => { setMode("email-login"); setErr(""); }}>
-              邮箱
-            </button>
-            <button style={tabStyle(mode === "phone")} onClick={() => { setMode("phone"); setErr(""); }}>
-              手机号
-            </button>
-          </div>
+          {/* 邮箱/手机 切换：仅中文版有手机号 */}
+          {zh && (
+            <div style={{ display: "flex", marginBottom: 14 }}>
+              <button style={tabStyle(mode !== "phone")} onClick={() => { setMode("email-login"); setErr(""); }}>
+                {t("login.tab.email")}
+              </button>
+              <button style={tabStyle(mode === "phone")} onClick={() => { setMode("phone"); setErr(""); }}>
+                {t("login.tab.phone")}
+              </button>
+            </div>
+          )}
 
           {mode === "phone" ? (
             <>
@@ -360,26 +368,26 @@ function WuweiLoginModal({
             </>
           ) : (
             <>
-              <input style={inputStyle} placeholder="邮箱" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <input style={inputStyle} placeholder={t("login.email")} value={email} onChange={(e) => setEmail(e.target.value)} />
               {mode === "email-register" && (
                 <div style={{ display: "flex", gap: 8 }}>
-                  <input style={{ ...inputStyle, flex: 1 }} placeholder="邮箱验证码" value={code} onChange={(e) => setCode(e.target.value)} />
+                  <input style={{ ...inputStyle, flex: 1 }} placeholder={t("login.emailCode")} value={code} onChange={(e) => setCode(e.target.value)} />
                   <button
                     onClick={sendCode}
                     disabled={busy || cooldown > 0}
                     style={{ flex: "0 0 auto", padding: "0 12px", height: 36, borderRadius: 8, border: "1px solid #274A63", background: "none", color: "#6F9FAD", fontSize: 12, cursor: cooldown > 0 ? "default" : "pointer", marginBottom: 9 }}
                   >
-                    {cooldown > 0 ? `${cooldown}s` : "获取验证码"}
+                    {cooldown > 0 ? `${cooldown}s` : t("login.getCode")}
                   </button>
                 </div>
               )}
-              <input style={inputStyle} type="password" placeholder={mode === "email-register" ? "设置密码" : "密码"} value={password} onChange={(e) => setPassword(e.target.value)} />
+              <input style={inputStyle} type="password" placeholder={mode === "email-register" ? t("login.setPassword") : t("login.password")} value={password} onChange={(e) => setPassword(e.target.value)} />
               <div style={{ fontSize: 11, marginBottom: 12 }}>
                 <span
                   style={{ color: "#6F9FAD", cursor: "pointer" }}
                   onClick={() => { setMode(mode === "email-register" ? "email-login" : "email-register"); setErr(""); }}
                 >
-                  {mode === "email-register" ? "已有账号，去登录" : "没有账号？邮箱注册"}
+                  {mode === "email-register" ? t("login.toLogin") : t("login.toRegister")}
                 </span>
               </div>
             </>
@@ -392,28 +400,30 @@ function WuweiLoginModal({
             disabled={busy}
             style={{ width: "100%", padding: "10px", borderRadius: 9, border: "none", background: "#C05F3C", color: "#F4F6F8", fontSize: 14, fontWeight: 600, cursor: busy ? "default" : "pointer", marginBottom: 12 }}
           >
-            {busy ? "处理中…" : mode === "email-register" ? "注册" : "登录 / 注册"}
+            {busy ? t("login.busy") : mode === "email-register" ? t("login.register") : t("login.submit")}
           </button>
 
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#3A424C", fontSize: 11, margin: "2px 0 12px" }}>
             <div style={{ flex: 1, height: 1, background: "#2A3038" }} />
-            或
+            {t("login.or")}
             <div style={{ flex: 1, height: 1, background: "#2A3038" }} />
           </div>
           <button
             onClick={googleLogin}
             disabled={busy}
-            style={{ width: "100%", padding: "9px", borderRadius: 9, border: "1px solid #2A3038", background: "none", color: "#F4F6F8", fontSize: 13, cursor: "pointer", marginBottom: 8 }}
+            style={{ width: "100%", padding: "9px", borderRadius: 9, border: "1px solid #2A3038", background: "none", color: "#F4F6F8", fontSize: 13, cursor: "pointer", marginBottom: zh ? 8 : 0 }}
           >
-            用 Google 登录（浏览器）
+            {t("login.google")}
           </button>
-          <button
-            disabled
-            title="即将支持"
-            style={{ width: "100%", padding: "9px", borderRadius: 9, border: "1px solid #2A3038", background: "none", color: "#4A525C", fontSize: 13, cursor: "not-allowed" }}
-          >
-            微信登录（即将支持）
-          </button>
+          {zh && (
+            <button
+              disabled
+              title={t("login.wechat")}
+              style={{ width: "100%", padding: "9px", borderRadius: 9, border: "1px solid #2A3038", background: "none", color: "#4A525C", fontSize: 13, cursor: "not-allowed" }}
+            >
+              {t("login.wechat")}
+            </button>
+          )}
         </div>
       </div>
     </>
@@ -585,6 +595,12 @@ export function App() {
   const [showAcctMenu, setShowAcctMenu] = useState(false);
   const [showLoginForm, setShowLoginForm] = useState(false); // 应用内登录框
   const [loginResume, setLoginResume] = useState(false); // 登录成功后是否续发刚才拦下的消息
+  const [lang, setLangState] = useState<Lang>(getLang()); // 界面语言
+  const t = makeT(lang);
+  function changeLang(l: Lang) {
+    persistLang(l);
+    setLangState(l);
+  }
   const [webLoginBusy, setWebLoginBusy] = useState(false);
   const [authBusy, setAuthBusy] = useState(false); // 失败处一键授权 Claude 进行中
   const [codexBusy, setCodexBusy] = useState(false); // Codex 一键授权进行中
@@ -1895,10 +1911,10 @@ export function App() {
                             marginBottom: 12,
                           }}
                         >
-                          注册即得
+                          {lang === "zh" ? "注册即得" : "Get"}
                           <CoinIcon size={15} />
                           <b style={{ color: "#C05F3C", fontSize: 15 }}>100</b>
-                          无为币
+                          {lang === "zh" ? "无为币" : "credits"}
                         </div>
                         <button
                           onClick={() => {
@@ -1919,8 +1935,27 @@ export function App() {
                             cursor: "pointer",
                           }}
                         >
-                          登录 / 注册
+                          {t("login.submit")}
                         </button>
+                        {/* 未登录也能切语言 */}
+                        <div style={{ marginTop: 12, display: "flex", justifyContent: "center", gap: 10, fontSize: 12 }}>
+                          {(["zh", "en"] as Lang[]).map((l) => (
+                            <button
+                              key={l}
+                              onClick={() => changeLang(l)}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                cursor: "pointer",
+                                padding: 0,
+                                color: lang === l ? "#C05F3C" : "#9aa4ae",
+                                fontWeight: lang === l ? 600 : 400,
+                              }}
+                            >
+                              {l === "zh" ? "中文" : "English"}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -2783,6 +2818,8 @@ export function App() {
       {showLoginForm && (
         <WuweiLoginModal
           incentive={loginResume}
+          lang={lang}
+          t={t}
           onClose={() => {
             setShowLoginForm(false);
             setLoginResume(false);
