@@ -1391,6 +1391,36 @@ app.on("window-all-closed", () => {
 
 // —— IPC：渲染 → 主 ——
 // 多任务：sid 指定跑哪个会话(前端传 currentId)，各会话各自异步、互不阻塞。事件都带 sid，前端只把当前可见会话的更新画出来。
+// 无为托管平台(走网关、按 token 扣无为币)：providerId 以 "wuwei-" 开头。
+function isHostedProvider(pid?: string): boolean {
+  return !!pid && pid.startsWith("wuwei-");
+}
+// 托管平台每轮开跑前：把新鲜的无为 access_token 注入为网关的 apiKey(快过期先续期)，重建 provider。
+async function ensureHostedProviderReady(): Promise<void> {
+  const st = loadSettings();
+  if (!st || !isHostedProvider(st.providerId)) return;
+  let sess = loadWuweiSession();
+  if (!sess) return; // 未登录：发送门槛已拦，这里兜底不注入
+  if (sess.expiresAt && sess.expiresAt - Date.now() < 2 * 60 * 1000) {
+    const fresh = await wuweiRefresh(sess.refreshToken);
+    if (fresh) {
+      saveWuweiSession(fresh);
+      sess = fresh;
+    }
+  }
+  applyEnvFromSettings(st); // 平台 baseUrl(网关)等按设置
+  process.env.MINICC_API_KEY = sess.accessToken; // 网关的"key"=用户无为 token(只 env、不落 config)
+  provider = makeProvider(loadConfig());
+  for (const a of agents.values()) a.setProvider(provider);
+}
+// 托管平台每轮结束后：拉最新余额推给渲染层(账号菜单余额随扣币刷新)。
+async function refreshWuweiMe(): Promise<void> {
+  const sess = loadWuweiSession();
+  if (!sess) return;
+  const me = await wuweiFetchMe(sess.accessToken);
+  if (me && me !== "unauthorized") send("evt:wuwei-me", me);
+}
+
 async function startTurn(useId: string, text: string, images?: string[], sysOverride?: string) {
   text = secrets.redact(text).text; // 兜底：已入库密钥出现在消息里→占位符替换，永不出网到模型
   const agent = getAgent(useId);
@@ -1400,6 +1430,7 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
   }
   if (runs.has(useId)) return; // 该会话已在跑，忽略重复提交
   await ensureFreshClaudeOAuth(); // Claude 订阅 OAuth 快过期则先静默续期，避免本轮请求 401
+  await ensureHostedProviderReady(); // 无为托管平台：注入新鲜无为 token 为网关 key
   // 每轮开跑前刷新系统提示词，让上一轮 remember 写入的记忆立即生效(日报等场景用 sysOverride 注入聚合内容)
   agent.setSystem(sysOverride ?? buildSysPrompt(cwd, modelLabel, loadSettings()?.providerId));
   const ac = new AbortController();
@@ -1444,6 +1475,7 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
     );
     persist(useId); // 用户消息已同步入队,立即落盘让(新)会话进侧栏、带上运行点
     await runP;
+    if (isHostedProvider(loadSettings()?.providerId)) void refreshWuweiMe(); // 托管平台：扣币后刷新顶栏/菜单余额
     if (runs.get(useId) === ac)
       send(ac.signal.aborted ? "evt:stopped" : "evt:done", { sid: useId }); // 中断后 loop 干净返回也算停止
   } catch (e: any) {

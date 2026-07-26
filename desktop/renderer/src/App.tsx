@@ -954,7 +954,8 @@ export function App() {
   }, [showSettings]);
   // 内置平台 + 用户自定义中转站，按用户自定义顺序、隐藏项不进切换菜单
   const providerList = arrangePresets(
-    [...PRESETS, ...stations.map(stationToPreset)],
+    // 托管平台仅对灰度放开(flags 含 subscription)的用户可见
+    [...PRESETS, ...stations.map(stationToPreset)].filter((p) => !p.hosted || showSubscription),
     providerOrder,
     hiddenProviders,
     false,
@@ -1151,6 +1152,9 @@ export function App() {
           break;
         case "evt:account":
           setAccount(payload);
+          break;
+        case "evt:wuwei-me":
+          setWuwei(payload); // 托管平台扣币后主进程推来的最新账号+余额
           break;
         case "evt:tasks":
           setRunningSet(new Set<string>(payload.running || []));
@@ -3935,6 +3939,7 @@ interface Preset {
   note?: string;
   fixedBaseUrl: boolean;
   custom?: boolean; // 用户自定义中转站(可删除)
+  hosted?: boolean; // 无为托管平台(走网关、按 token 扣无为币)；仅灰度放开的用户可见
 }
 
 // 用户自定义中转站
@@ -3957,6 +3962,19 @@ function stationToPreset(s: Station): Preset {
 
 // 私有版：保留 Codex/Claude 两种订阅后端，其余为各平台 API Key 预设（模型 id 均取自官网 2026-07）
 const PRESETS: Preset[] = [
+  {
+    // 无为托管：走网关、用无为币按 token 扣费，无需自己的 Key。仅灰度放开的用户可见。
+    id: "wuwei-deepseek",
+    label: "无为托管 · DeepSeek",
+    kind: "openai",
+    baseUrl: "https://wuweiai.io/api/gateway/v1",
+    keyUrl: "",
+    keyHint: "",
+    models: ["deepseek-chat"],
+    note: "无为托管额度：无需自己的 Key，按实际 token 消耗扣无为币（余额在账号菜单查看）。",
+    fixedBaseUrl: true,
+    hosted: true,
+  },
   {
     id: "codex",
     label: "Codex 订阅（ChatGPT 登录）",

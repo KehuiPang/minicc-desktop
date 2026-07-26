@@ -17,6 +17,7 @@ const EVENTS = [
   "evt:sessions",
   "evt:session-loaded",
   "evt:account",
+  "evt:wuwei-me",
   "evt:tasks",
   "evt:mcp",
   "evt:browser",
