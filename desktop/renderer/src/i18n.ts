@@ -156,6 +156,32 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "set.save": { zh: "保存并切换", en: "Save & switch" },
   "set.saveOnly": { zh: "保存", en: "Save" },
   "set.cancel": { zh: "取消", en: "Cancel" },
+  // 平台管理 tab
+  "set.p.hint": {
+    zh: "拖动 ⋮⋮ 排序，点眼睛隐藏/显示。改动即时保存；隐藏仅影响底部「切换平台」菜单，此处仍可恢复。",
+    en: "Drag ⋮⋮ to reorder, click the eye to hide/show. Saved instantly; hiding only affects the bottom “Switch provider” menu and can be restored here.",
+  },
+  "set.p.dragSort": { zh: "拖动排序", en: "Drag to reorder" },
+  "set.p.lockOn": { zh: "当前使用中的平台不可隐藏", en: "Current provider can't be hidden" },
+  "set.p.hiddenClickShow": { zh: "已隐藏，点击显示", en: "Hidden — click to show" },
+  "set.p.clickHide": { zh: "点击隐藏", en: "Click to hide" },
+  // 系统提示词 tab
+  "set.pr.globalPrompt": { zh: "全局默认提示词（所有平台通用）", en: "Global default prompt (all providers)" },
+  "set.pr.customized": { zh: "（已自定义）", en: " (customized)" },
+  "set.pr.default": { zh: "（默认）", en: " (default)" },
+  "set.pr.emptyHint": { zh: "（留空 = 不发系统提示词）", en: "(blank = no system prompt)" },
+  "set.pr.restore": { zh: "恢复默认", en: "Restore default" },
+  "set.pr.overrideLabelSuffix": { zh: "专属提示词", en: " prompt" },
+  "set.pr.overridePlaceholder": {
+    zh: "（本平台专属；留空 = 本平台不发系统提示词）",
+    en: "(this provider only; blank = no system prompt for it)",
+  },
+  // 记忆 tab
+  "set.mem.global": { zh: "全局长期记忆（所有会话共享）", en: "Global long-term memory (shared by all chats)" },
+  "set.mem.placeholder": {
+    zh: "每行一条，例如：\n- 始终用中文回复\n- 我叫 Logic，做后端\n- 部署脚本在 delopy_batch/",
+    en: "One per line, e.g.:\n- Always reply in English\n- I'm Logic, a backend dev\n- Deploy scripts are in deploy_batch/",
+  },
 };
 
 export function makeT(lang: Lang) {

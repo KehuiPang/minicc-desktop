@@ -5361,9 +5361,7 @@ function SettingsModal({
           {/* ── 板块二：平台管理（拖拽排序 + 显隐，即时保存）── */}
           {tab === "platforms" && (
             <>
-              <p className="prov-manage-hint">
-                拖动 ⋮⋮ 排序，点眼睛隐藏/显示。改动即时保存；隐藏仅影响底部「切换平台」菜单，此处仍可恢复。
-              </p>
+              <p className="prov-manage-hint">{t("set.p.hint")}</p>
               <div className="prov-list">
                 {orderedPresets.map((p, i) => {
                   const isHidden = hidden.includes(p.id);
@@ -5396,7 +5394,7 @@ function SettingsModal({
                         dragIdxRef.current = -1;
                       }}
                     >
-                      <span className="prov-grip" title="拖动排序">
+                      <span className="prov-grip" title={t("set.p.dragSort")}>
                         ⋮⋮
                       </span>
                       <span className="prov-name">{p.label}</span>
@@ -5404,13 +5402,7 @@ function SettingsModal({
                         type="button"
                         className="prov-eye"
                         disabled={lockOn}
-                        title={
-                          lockOn
-                            ? "当前使用中的平台不可隐藏"
-                            : isHidden
-                              ? "已隐藏，点击显示"
-                              : "点击隐藏"
-                        }
+                        title={lockOn ? t("set.p.lockOn") : isHidden ? t("set.p.hiddenClickShow") : t("set.p.clickHide")}
                         onClick={() => toggleHidden(p.id)}
                       >
                         <EyeIcon off={isHidden} />
@@ -5427,8 +5419,8 @@ function SettingsModal({
             <div className="prompt-pane">
               <label className="field pp-grow">
                 <span>
-                  全局默认提示词（所有平台通用）
-                  {sysPromptTouched ? "（已自定义）" : "（默认）"}
+                  {t("set.pr.globalPrompt")}
+                  {sysPromptTouched ? t("set.pr.customized") : t("set.pr.default")}
                 </span>
                 <textarea
                   className="sysprompt-area pp-fill"
@@ -5437,11 +5429,15 @@ function SettingsModal({
                     setSysPrompt(e.target.value);
                     setSysPromptTouched(true);
                   }}
-                  placeholder="（留空 = 不发系统提示词）"
+                  placeholder={t("set.pr.emptyHint")}
                 />
               </label>
               <p className="s-note pp-fixed">
-                发给模型的第一段指令。<code>{"{model}"}</code> = 当前型号，<code>{"{cwd}"}</code> = 工作目录，会自动替换。
+                {lang === "zh" ? "发给模型的第一段指令。" : "The first instruction sent to the model. "}
+                <code>{"{model}"}</code>
+                {lang === "zh" ? " = 当前型号，" : " = current model, "}
+                <code>{"{cwd}"}</code>
+                {lang === "zh" ? " = 工作目录，会自动替换。" : " = working dir; replaced automatically. "}
                 {sysPromptTouched && (
                   <button
                     type="button"
@@ -5451,7 +5447,7 @@ function SettingsModal({
                       setSysPromptTouched(false);
                     }}
                   >
-                    恢复默认
+                    {t("set.pr.restore")}
                   </button>
                 )}
               </p>
@@ -5469,17 +5465,19 @@ function SettingsModal({
                   }}
                 />
                 <span>
-                  为当前平台「{preset.label}」单独设置（覆盖全局）
+                  {lang === "zh"
+                    ? `为当前平台「${preset.label}」单独设置（覆盖全局）`
+                    : `Override for “${preset.label}” (this provider only)`}
                 </span>
               </label>
               {platPromptOn && (
                 <label className="field pp-grow">
-                  <span>「{preset.label}」专属提示词</span>
+                  <span>「{preset.label}」{t("set.pr.overrideLabelSuffix")}</span>
                   <textarea
                     className="sysprompt-area pp-fill"
                     value={platPrompt}
                     onChange={(e) => setPlatPrompt(e.target.value)}
-                    placeholder="（本平台专属；留空 = 本平台不发系统提示词）"
+                    placeholder={t("set.pr.overridePlaceholder")}
                   />
                 </label>
               )}
@@ -5490,7 +5488,7 @@ function SettingsModal({
           {tab === "memory" && (
             <div className="prompt-pane">
               <label className="field pp-grow">
-                <span>全局长期记忆（所有会话共享）</span>
+                <span>{t("set.mem.global")}</span>
                 <textarea
                   className="sysprompt-area pp-fill"
                   value={memory}
@@ -5498,11 +5496,13 @@ function SettingsModal({
                     setMemory(e.target.value);
                     memoryTouchedRef.current = true;
                   }}
-                  placeholder={"每行一条，例如：\n- 始终用中文回复\n- 我叫 Logic，做后端\n- 部署脚本在 delopy_batch/"}
+                  placeholder={t("set.mem.placeholder")}
                 />
               </label>
               <p className="s-note pp-fixed">
-                你对模型说「记住…」时它会自动往这里追加；也可在此手动增删。保存后下一条消息即生效。存于{" "}
+                {lang === "zh"
+                  ? "你对模型说「记住…」时它会自动往这里追加；也可在此手动增删。保存后下一条消息即生效。存于 "
+                  : "When you tell the model “remember…”, it appends here; you can also edit manually. Takes effect on the next message. Stored at "}
                 <code>~/.minicc/memory.md</code>。
               </p>
             </div>
