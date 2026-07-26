@@ -54,6 +54,21 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "acct.logout": { zh: "退出", en: "Sign out" },
   "acct.language": { zh: "语言", en: "Language" },
   "acct.guestIncentive": { zh: "无为币", en: "credits" },
+  "composer.placeholder": {
+    zh: "描述你的需求…（可直接粘贴图片；/reset 清空对话）",
+    en: "Describe what you need… (paste images; /reset to clear)",
+  },
+  "session.new": { zh: "＋ 新对话", en: "＋ New chat" },
+  "foot.browser": { zh: "浏览器", en: "Browser" },
+  "foot.ready": { zh: "就绪", en: "Ready" },
+  "foot.context": { zh: "上下文", en: "Context" },
+  "mode.auto": { zh: "自动", en: "Auto" },
+  "mode.manual": { zh: "手动", en: "Manual" },
+  "mode.autoTip": { zh: "工具自动放行", en: "Tools auto-approved" },
+  "mode.manualTip": { zh: "每步需确认", en: "Confirm each step" },
+  "foot.running": { zh: "运行中", en: "Running" },
+  "foot.bgRunning": { zh: "后台运行中", en: "Running in background" },
+  "foot.tasksSuffix": { zh: "个任务运行中", en: "tasks running" },
 };
 
 export function makeT(lang: Lang) {

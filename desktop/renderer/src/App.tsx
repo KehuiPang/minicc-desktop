@@ -1465,7 +1465,7 @@ export function App() {
           </button>
         </div>
         <button className="new-session" onClick={() => window.minicc.newSession()}>
-          ＋ 新对话
+          {t("session.new")}
         </button>
         <div className="session-list">
           {sessions.length === 0 && <div className="empty">暂无历史对话</div>}
@@ -2319,7 +2319,7 @@ export function App() {
             <textarea
               ref={taRef}
               rows={1}
-              placeholder="描述你的需求…（可直接粘贴图片；/reset 清空对话）"
+              placeholder={t("composer.placeholder")}
               value={input}
               onChange={(e) => {
                 setInput(e.target.value);
@@ -2406,12 +2406,12 @@ export function App() {
                 </>
               )}
             </div>
-            <div className="mode-mini" title={autoMode ? "工具自动放行" : "每步需确认"}>
+            <div className="mode-mini" title={autoMode ? t("mode.autoTip") : t("mode.manualTip")}>
               <button className={autoMode ? "on" : ""} onClick={() => setAutoMode(true)}>
-                自动
+                {t("mode.auto")}
               </button>
               <button className={!autoMode ? "on" : ""} onClick={() => setAutoMode(false)}>
-                手动
+                {t("mode.manual")}
               </button>
             </div>
 
@@ -2576,7 +2576,7 @@ export function App() {
               style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
             >
               <GlobeIcon size={14} />
-              <span className="fb-txt">浏览器</span>
+              <span className="fb-txt">{t("foot.browser")}</span>
             </button>
 
             <span className="foot-spacer" />
@@ -2597,16 +2597,18 @@ export function App() {
                 }}
               >
                 {runningSet.size > 1
-                  ? `● ${runningSet.size} 个任务运行中`
+                  ? `● ${runningSet.size} ${t("foot.tasksSuffix")}`
                   : busy
-                    ? "● 运行中"
+                    ? `● ${t("foot.running")}`
                     : runningSet.size === 1
-                      ? "● 后台运行中"
-                      : "○ 就绪"}
+                      ? `● ${t("foot.bgRunning")}`
+                      : `○ ${t("foot.ready")}`}
               </span>
               <span className="fs-extra">
                 <span className="fs-dot">·</span>
-                <span>上下文 {(usage.lastInput / 1000).toFixed(1)}k</span>
+                <span>
+                  {t("foot.context")} {(usage.lastInput / 1000).toFixed(1)}k
+                </span>
                 {meta.sub && rate && typeof rate.primaryUsedPercent === "number" && (
                   <>
                     <span className="fs-dot">·</span>
