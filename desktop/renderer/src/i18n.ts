@@ -5,17 +5,20 @@ const KEY = "wuwei_lang";
 export function getLang(): Lang {
   try {
     const v = localStorage.getItem(KEY);
-    if (v === "zh" || v === "en") return v;
+    if (v === "zh" || v === "en") return v; // 用户在设置里手动选过 → 尊重
   } catch {
     /* ignore */
   }
-  // 默认跟随系统：非中文环境默认英文
+  // 未手动设置：按地区自动。中国(时区/语言)→中文，其它→英文。
+  // 用时区做地区代理(离线、无需外部 IP 服务、不涉隐私)，配合系统语言兜底。
   try {
-    if (!navigator.language.toLowerCase().startsWith("zh")) return "en";
+    const tz = (Intl.DateTimeFormat().resolvedOptions().timeZone || "").toLowerCase();
+    if (/shanghai|chongqing|harbin|urumqi|kashgar|hong_kong|macau|taipei/.test(tz)) return "zh";
+    if (navigator.language.toLowerCase().startsWith("zh")) return "zh";
+    return "en";
   } catch {
-    /* ignore */
+    return "en";
   }
-  return "zh";
 }
 export function setLang(l: Lang) {
   try {
@@ -83,6 +86,43 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "set.tab.mcp": { zh: "MCP", en: "MCP" },
   "set.tab.tools": { zh: "工具", en: "Tools" },
   "set.tab.secrets": { zh: "密钥", en: "Secrets" },
+  // 通用 tab
+  "set.g.grouping": { zh: "会话分组", en: "Session grouping" },
+  "set.g.manual": { zh: "手动分组", en: "Manual" },
+  "set.g.byDate": { zh: "按日期", en: "By date" },
+  "set.g.byProject": { zh: "按项目", en: "By project" },
+  "set.g.groupingHint": {
+    zh: "手动：右键会话移动/新建分组、可拖拽排序；按日期/按项目：自动分组（项目名由 AI 按会话内容归纳）。",
+    en: "Manual: right-click to move/create groups & drag to reorder. By date/project: auto-grouped (project name summarized by AI).",
+  },
+  "set.g.compaction": { zh: "上下文压缩", en: "Context compaction" },
+  "set.g.keepRecent": { zh: "保留最近条数", en: "Keep recent messages" },
+  "set.g.items": { zh: "条", en: "" },
+  "set.g.compactionHint": {
+    zh: "上下文超限时，会把更早的消息总结成要点摘要、保留最近这么多条原文。数字越大越不易“失忆”，但更费上下文。",
+    en: "When context is exceeded, older messages are summarized and this many recent ones kept verbatim. Higher = less “forgetting” but uses more context.",
+  },
+  "set.g.claudeSub": { zh: "Claude 订阅", en: "Claude subscription" },
+  "set.g.autoRead": { zh: "账号信息自动读取", en: "Account auto-detected" },
+  "set.g.autoReadHint": {
+    zh: "用户名 / 邮箱 / 套餐直接从本机 Claude Code 配置（~/.claude.json）读取，随 Claude Code 自动保持最新，无需登录或填 token。额度（5小时/周）发消息后从响应头刷新。",
+    en: "Username / email / plan are read from your local Claude Code config (~/.claude.json), always current, no login or token needed. Quota (5h/week) refreshes from response headers after messages.",
+  },
+  // 外观 tab
+  "set.d.output": { zh: "输出方式", en: "Output style" },
+  "set.d.stream": { zh: "流式（一下出）", en: "Stream (batch)" },
+  "set.d.typewriter": { zh: "打字机（匀速）", en: "Typewriter" },
+  "set.d.instant": { zh: "回完一次性", en: "On complete" },
+  "set.d.outputHint": {
+    zh: "流式=收到即刻整批显示；打字机=匀速逐字，最丝滑；回完一次性=回复期间不显示、完成后整段出。",
+    en: "Stream: show as received; Typewriter: even-paced, smoothest; On complete: hidden while replying, shown all at once.",
+  },
+  "set.d.typeSpeed": { zh: "打字机速度", en: "Typewriter speed" },
+  "set.d.cps": { zh: "字/秒", en: "cps" },
+  "set.d.theme": { zh: "界面主题", en: "Theme" },
+  "set.d.dark": { zh: "暗色", en: "Dark" },
+  "set.d.light": { zh: "白色", en: "Light" },
+  "set.d.gold": { zh: "淡金", en: "Gold" },
 };
 
 export function makeT(lang: Lang) {

@@ -1981,26 +1981,6 @@ export function App() {
                         >
                           {t("login.signin")}
                         </button>
-                        <div style={{ height: 1, background: "rgba(128,128,128,.14)", margin: "14px 0 10px" }} />
-                        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 6 }}>
-                          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{t("acct.language")}</span>
-                          <select
-                            value={lang}
-                            onChange={(e) => changeLang(e.target.value as Lang)}
-                            style={{
-                              fontSize: 12,
-                              padding: "3px 8px",
-                              borderRadius: 6,
-                              border: "1px solid var(--border)",
-                              background: "var(--bg-input)",
-                              color: "var(--text)",
-                              cursor: "pointer",
-                            }}
-                          >
-                            <option value="zh">中文</option>
-                            <option value="en">English</option>
-                          </select>
-                        </div>
                       </div>
                     )}
                   </div>
@@ -5013,9 +4993,9 @@ function SettingsModal({
               <div className="app-set-group">会话分组</div>
               <div className="theme-pick" style={{ marginBottom: "6px" }}>
                 {[
-                  { id: "manual", label: "手动分组" },
-                  { id: "date", label: "按日期" },
-                  { id: "project", label: "按项目" },
+                  { id: "manual", label: t("set.g.manual") },
+                  { id: "date", label: t("set.g.byDate") },
+                  { id: "project", label: t("set.g.byProject") },
                 ].map((m) => (
                   <button
                     key={m.id}
@@ -5028,12 +5008,12 @@ function SettingsModal({
                 ))}
               </div>
               <div className="app-set-hint" style={{ marginBottom: "16px" }}>
-                手动：右键会话移动/新建分组、可拖拽排序；按日期/按项目：自动分组（项目名由 AI 按会话内容归纳）。
+                {t("set.g.groupingHint")}
               </div>
-              <div className="app-set-group">上下文压缩</div>
+              <div className="app-set-group">{t("set.g.compaction")}</div>
               <div className="app-set-row" style={{ cursor: "default", gap: "10px" }}>
                 <div className="app-set-label" style={{ whiteSpace: "nowrap" }}>
-                  保留最近条数
+                  {t("set.g.keepRecent")}
                 </div>
                 <input
                   type="range"
@@ -5045,20 +5025,17 @@ function SettingsModal({
                   style={{ flex: 1 }}
                 />
                 <div className="app-set-hint" style={{ minWidth: 40, textAlign: "right" }}>
-                  {keepRecent} 条
+                  {keepRecent} {t("set.g.items")}
                 </div>
               </div>
               <div className="app-set-hint" style={{ marginBottom: "16px" }}>
-                上下文超限时，会把更早的消息总结成要点摘要、保留最近这么多条原文。数字越大越不易“失忆”，但更费上下文。
+                {t("set.g.compactionHint")}
               </div>
-              <div className="app-set-group">Claude 订阅</div>
+              <div className="app-set-group">{t("set.g.claudeSub")}</div>
               <div className="app-set-row" style={{ cursor: "default" }}>
                 <div className="app-set-text">
-                  <div className="app-set-label">账号信息自动读取</div>
-                  <div className="app-set-hint">
-                    用户名 / 邮箱 / 套餐直接从本机 Claude Code 配置（~/.claude.json）读取，随 Claude Code
-                    自动保持最新，无需登录或填 token。额度（5小时/周）发消息后从响应头刷新。
-                  </div>
+                  <div className="app-set-label">{t("set.g.autoRead")}</div>
+                  <div className="app-set-hint">{t("set.g.autoReadHint")}</div>
                 </div>
               </div>
             </>
@@ -5067,12 +5044,12 @@ function SettingsModal({
           {/* ── 外观：输出方式 + 界面主题 ── */}
           {tab === "display" && (
             <>
-              <div className="app-set-group">输出方式</div>
+              <div className="app-set-group">{t("set.d.output")}</div>
               <div className="theme-pick" style={{ marginBottom: "6px" }}>
                 {[
-                  { id: "stream", label: "流式（一下出）" },
-                  { id: "typewriter", label: "打字机（匀速）" },
-                  { id: "instant", label: "回完一次性" },
+                  { id: "stream", label: t("set.d.stream") },
+                  { id: "typewriter", label: t("set.d.typewriter") },
+                  { id: "instant", label: t("set.d.instant") },
                 ].map((m) => (
                   <button
                     key={m.id}
@@ -5087,7 +5064,7 @@ function SettingsModal({
               {streamMode === "typewriter" && (
                 <div className="app-set-row" style={{ cursor: "default", gap: "10px" }}>
                   <div className="app-set-label" style={{ whiteSpace: "nowrap" }}>
-                    打字机速度
+                    {t("set.d.typeSpeed")}
                   </div>
                   <input
                     type="range"
@@ -5099,28 +5076,28 @@ function SettingsModal({
                     style={{ flex: 1 }}
                   />
                   <div className="app-set-hint" style={{ minWidth: 66, textAlign: "right" }}>
-                    {streamSpeed} 字/秒
+                    {streamSpeed} {t("set.d.cps")}
                   </div>
                 </div>
               )}
               <div className="app-set-hint" style={{ marginBottom: "16px" }}>
-                流式=收到即刻整批显示；打字机=匀速逐字，最丝滑；回完一次性=回复期间不显示、完成后整段出。
+                {t("set.d.outputHint")}
               </div>
-              <div className="app-set-group">界面主题</div>
+              <div className="app-set-group">{t("set.d.theme")}</div>
               <div className="theme-pick" style={{ marginBottom: "14px" }}>
                 {[
-                  { id: "dark", label: "暗色" },
-                  { id: "light", label: "白色" },
-                  { id: "gold", label: "淡金" },
-                ].map((t) => (
+                  { id: "dark", label: t("set.d.dark") },
+                  { id: "light", label: t("set.d.light") },
+                  { id: "gold", label: t("set.d.gold") },
+                ].map((th) => (
                   <button
-                    key={t.id}
+                    key={th.id}
                     type="button"
-                    className={"theme-opt theme-" + t.id + (uiTheme === t.id ? " on" : "")}
-                    onClick={() => pickTheme(t.id)}
+                    className={"theme-opt theme-" + th.id + (uiTheme === th.id ? " on" : "")}
+                    onClick={() => pickTheme(th.id)}
                   >
                     <span className="theme-sw" />
-                    {t.label}
+                    {th.label}
                   </button>
                 ))}
               </div>
