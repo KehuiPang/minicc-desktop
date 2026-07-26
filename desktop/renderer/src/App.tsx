@@ -2816,6 +2816,7 @@ export function App() {
           onKeepRecent={changeKeepRecent}
           lang={lang}
           onLang={changeLang}
+          t={t}
         />
       )}
       {/* 应用内登录框：邮箱/手机号/Google。未登录点发送(loginResume)或点账号登录时弹出 */}
@@ -4175,6 +4176,7 @@ function SettingsModal({
   onKeepRecent,
   lang,
   onLang,
+  t,
 }: {
   onClose: () => void;
   liveModels: Record<string, string[]>;
@@ -4188,6 +4190,7 @@ function SettingsModal({
   onKeepRecent: (n: number) => void;
   lang: Lang;
   onLang: (l: Lang) => void;
+  t: T;
 }) {
   // 界面主题（并入设置页「外观」）
   const [uiTheme, setUiTheme] = useState("dark");
@@ -4876,77 +4879,37 @@ function SettingsModal({
       <div className={"settings tabbed sidenav" + (maxed ? " maxed" : "")} onClick={(e) => e.stopPropagation()}>
         {/* 左侧竖排菜单 */}
         <aside className="set-side">
-          <div className="set-side-title">设置</div>
+          <div className="set-side-title">{t("set.title")}</div>
           <nav className="set-tabs">
-          <button
-            type="button"
-            className={"set-tab" + (tab === "general" ? " on" : "")}
-            onClick={() => setTab("general")}
-          >
-            通用
+          <button type="button" className={"set-tab" + (tab === "general" ? " on" : "")} onClick={() => setTab("general")}>
+            {t("set.tab.general")}
           </button>
-          <button
-            type="button"
-            className={"set-tab" + (tab === "display" ? " on" : "")}
-            onClick={() => setTab("display")}
-          >
-            外观
+          <button type="button" className={"set-tab" + (tab === "display" ? " on" : "")} onClick={() => setTab("display")}>
+            {t("set.tab.display")}
           </button>
-          <button
-            type="button"
-            className={"set-tab" + (tab === "model" ? " on" : "")}
-            onClick={() => setTab("model")}
-          >
-            模型
+          <button type="button" className={"set-tab" + (tab === "model" ? " on" : "")} onClick={() => setTab("model")}>
+            {t("set.tab.model")}
           </button>
-          <button
-            type="button"
-            className={"set-tab" + (tab === "platforms" ? " on" : "")}
-            onClick={() => setTab("platforms")}
-          >
-            平台管理
+          <button type="button" className={"set-tab" + (tab === "platforms" ? " on" : "")} onClick={() => setTab("platforms")}>
+            {t("set.tab.platforms")}
           </button>
-          <button
-            type="button"
-            className={"set-tab" + (tab === "prompt" ? " on" : "")}
-            onClick={() => setTab("prompt")}
-          >
-            系统提示词
+          <button type="button" className={"set-tab" + (tab === "prompt" ? " on" : "")} onClick={() => setTab("prompt")}>
+            {t("set.tab.prompt")}
           </button>
-          <button
-            type="button"
-            className={"set-tab" + (tab === "memory" ? " on" : "")}
-            onClick={() => setTab("memory")}
-          >
-            记忆
+          <button type="button" className={"set-tab" + (tab === "memory" ? " on" : "")} onClick={() => setTab("memory")}>
+            {t("set.tab.memory")}
           </button>
-          <button
-            type="button"
-            className={"set-tab" + (tab === "brain" ? " on" : "")}
-            onClick={() => setTab("brain")}
-          >
-            知识网络
+          <button type="button" className={"set-tab" + (tab === "brain" ? " on" : "")} onClick={() => setTab("brain")}>
+            {t("set.tab.brain")}
           </button>
-          <button
-            type="button"
-            className={"set-tab" + (tab === "mcp" ? " on" : "")}
-            onClick={() => setTab("mcp")}
-          >
-            MCP
+          <button type="button" className={"set-tab" + (tab === "mcp" ? " on" : "")} onClick={() => setTab("mcp")}>
+            {t("set.tab.mcp")}
           </button>
-          <button
-            type="button"
-            className={"set-tab" + (tab === "tools" ? " on" : "")}
-            onClick={() => setTab("tools")}
-          >
-            工具
+          <button type="button" className={"set-tab" + (tab === "tools" ? " on" : "")} onClick={() => setTab("tools")}>
+            {t("set.tab.tools")}
           </button>
-          <button
-            type="button"
-            className={"set-tab" + (tab === "secrets" ? " on" : "")}
-            onClick={() => setTab("secrets")}
-          >
-            密钥
+          <button type="button" className={"set-tab" + (tab === "secrets" ? " on" : "")} onClick={() => setTab("secrets")}>
+            {t("set.tab.secrets")}
           </button>
           </nav>
         </aside>
