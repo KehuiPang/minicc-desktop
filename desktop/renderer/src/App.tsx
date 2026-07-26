@@ -223,6 +223,17 @@ function RefreshIcon({ size = 13 }: { size?: number }) {
   );
 }
 
+function GiftIcon({ size = 22, color = "currentColor" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ display: "block" }}>
+      <rect x="3.5" y="9" width="17" height="11.5" rx="1.6" stroke={color} strokeWidth="1.6" />
+      <path d="M2.5 9h19v3.2h-19z" stroke={color} strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M12 9v11.5" stroke={color} strokeWidth="1.6" />
+      <path d="M12 9S10.8 5 8 5a1.8 1.8 0 000 3.6c2 0 4 .4 4 .4Zm0 0s1.2-4 4-4a1.8 1.8 0 010 3.6c-2 0-4 .4-4 .4Z" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 // 应用内登录框（邮箱密码登录 / 邮箱验证码注册 / 手机验证码直登注册 / Google浏览器兜底）
 // 后端契约（需 wuwei-site 实现）：
 //   POST /api/auth/password    {identifier,password}     → {access_token,refresh_token,expires_at}|{error}
@@ -295,9 +306,9 @@ function WuweiLoginModal({
     width: "100%",
     padding: "9px 11px",
     borderRadius: 8,
-    border: "1px solid #2A3038",
-    background: "#14171C",
-    color: "#F4F6F8",
+    border: "1px solid var(--border)",
+    background: "var(--bg-input)",
+    color: "var(--text)",
     fontSize: 13,
     marginBottom: 9,
     outline: "none",
@@ -310,9 +321,9 @@ function WuweiLoginModal({
     cursor: "pointer",
     background: "none",
     border: "none",
-    color: on ? "#F4F6F8" : "#6F9FAD",
+    color: on ? "var(--text)" : "var(--text-muted)",
     fontWeight: on ? 600 : 400,
-    borderBottom: on ? "2px solid #C05F3C" : "2px solid transparent",
+    borderBottom: on ? "2px solid var(--spark)" : "2px solid transparent",
   });
 
   return (
@@ -323,19 +334,27 @@ function WuweiLoginModal({
           style={{
             width: 340,
             maxWidth: "90vw",
-            background: "#16191E",
-            color: "#F4F6F8",
-            border: "1px solid #274A63",
+            background: "var(--bg-raised)",
+            color: "var(--text)",
+            border: "1px solid var(--border)",
             borderRadius: 14,
             padding: "22px 22px 18px",
-            boxShadow: "0 12px 40px rgba(0,0,0,.5)",
+            boxShadow: "0 16px 44px rgba(0,0,0,.28)",
+            position: "relative",
           }}
         >
+          <button
+            onClick={onClose}
+            title="关闭"
+            style={{ position: "absolute", top: 8, right: 10, width: 26, height: 26, background: "none", border: "none", color: "var(--text-muted)", fontSize: 20, lineHeight: 1, cursor: "pointer" }}
+          >
+            ×
+          </button>
           <div style={{ textAlign: "center", fontSize: 15, fontWeight: 600, marginBottom: incentive ? 6 : 14 }}>
-            {t("login.title")}
+            {t("login.signin")}
           </div>
           {incentive && (
-            <div style={{ textAlign: "center", fontSize: 12, color: "#6F9FAD", marginBottom: 14 }}>
+            <div style={{ textAlign: "center", fontSize: 12, color: "var(--text-muted)", marginBottom: 14 }}>
               {t("login.incentive")}
             </div>
           )}
@@ -353,18 +372,18 @@ function WuweiLoginModal({
 
           {mode === "phone" ? (
             <>
-              <input style={inputStyle} placeholder="手机号" value={phone} onChange={(e) => setPhone(e.target.value)} />
+              <input style={inputStyle} placeholder={t("login.phone")} value={phone} onChange={(e) => setPhone(e.target.value)} />
               <div style={{ display: "flex", gap: 8 }}>
-                <input style={{ ...inputStyle, flex: 1 }} placeholder="验证码" value={code} onChange={(e) => setCode(e.target.value)} />
+                <input style={{ ...inputStyle, flex: 1 }} placeholder={t("login.code")} value={code} onChange={(e) => setCode(e.target.value)} />
                 <button
                   onClick={sendCode}
                   disabled={busy || cooldown > 0}
-                  style={{ flex: "0 0 auto", padding: "0 12px", height: 36, borderRadius: 8, border: "1px solid #274A63", background: "none", color: "#6F9FAD", fontSize: 12, cursor: cooldown > 0 ? "default" : "pointer", marginBottom: 9 }}
+                  style={{ flex: "0 0 auto", padding: "0 12px", height: 36, borderRadius: 8, border: "1px solid var(--border)", background: "none", color: "var(--text-muted)", fontSize: 12, cursor: cooldown > 0 ? "default" : "pointer", marginBottom: 9 }}
                 >
-                  {cooldown > 0 ? `${cooldown}s` : "获取验证码"}
+                  {cooldown > 0 ? `${cooldown}s` : t("login.getCode")}
                 </button>
               </div>
-              <div style={{ fontSize: 11, color: "#6F9FAD", marginBottom: 12 }}>没有账号将自动注册</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 12 }}>{t("login.autoRegister")}</div>
             </>
           ) : (
             <>
@@ -382,36 +401,40 @@ function WuweiLoginModal({
                 </div>
               )}
               <input style={inputStyle} type="password" placeholder={mode === "email-register" ? t("login.setPassword") : t("login.password")} value={password} onChange={(e) => setPassword(e.target.value)} />
-              <div style={{ fontSize: 11, marginBottom: 12 }}>
-                <span
-                  style={{ color: "#6F9FAD", cursor: "pointer" }}
-                  onClick={() => { setMode(mode === "email-register" ? "email-login" : "email-register"); setErr(""); }}
-                >
-                  {mode === "email-register" ? t("login.toLogin") : t("login.toRegister")}
-                </span>
-              </div>
             </>
           )}
 
-          {err && <div style={{ color: "#E0876B", fontSize: 12, marginBottom: 10, textAlign: "center" }}>{err}</div>}
+          {err && <div style={{ color: "var(--spark)", fontSize: 12, marginBottom: 10, textAlign: "center" }}>{err}</div>}
 
           <button
             onClick={submit}
             disabled={busy}
-            style={{ width: "100%", padding: "10px", borderRadius: 9, border: "none", background: "#C05F3C", color: "#F4F6F8", fontSize: 14, fontWeight: 600, cursor: busy ? "default" : "pointer", marginBottom: 12 }}
+            style={{ width: "100%", padding: "10px", borderRadius: 9, border: "none", background: "var(--spark)", color: "#F4F6F8", fontSize: 14, fontWeight: 600, cursor: busy ? "default" : "pointer", marginBottom: 10 }}
           >
-            {busy ? t("login.busy") : mode === "email-register" ? t("login.register") : t("login.submit")}
+            {busy ? t("login.busy") : mode === "email-register" ? t("login.register") : t("login.signin")}
           </button>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#3A424C", fontSize: 11, margin: "2px 0 12px" }}>
-            <div style={{ flex: 1, height: 1, background: "#2A3038" }} />
+          {/* 注册/登录 小提示（手机号自动注册，不显示） */}
+          {mode !== "phone" && (
+            <div style={{ textAlign: "center", fontSize: 12, marginBottom: 12 }}>
+              <span
+                style={{ color: "var(--text-muted)", cursor: "pointer" }}
+                onClick={() => { setMode(mode === "email-register" ? "email-login" : "email-register"); setErr(""); }}
+              >
+                {mode === "email-register" ? t("login.haveAccount") : t("login.noAccount")}
+              </span>
+            </div>
+          )}
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--text-faint)", fontSize: 11, margin: "2px 0 12px" }}>
+            <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
             {t("login.or")}
-            <div style={{ flex: 1, height: 1, background: "#2A3038" }} />
+            <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
           </div>
           <button
             onClick={googleLogin}
             disabled={busy}
-            style={{ width: "100%", padding: "9px", borderRadius: 9, border: "1px solid #2A3038", background: "none", color: "#F4F6F8", fontSize: 13, cursor: "pointer", marginBottom: zh ? 8 : 0 }}
+            style={{ width: "100%", padding: "9px", borderRadius: 9, border: "1px solid var(--border)", background: "none", color: "var(--text)", fontSize: 13, cursor: "pointer", marginBottom: zh ? 8 : 0 }}
           >
             {t("login.google")}
           </button>
@@ -419,7 +442,7 @@ function WuweiLoginModal({
             <button
               disabled
               title={t("login.wechat")}
-              style={{ width: "100%", padding: "9px", borderRadius: 9, border: "1px solid #2A3038", background: "none", color: "#4A525C", fontSize: 13, cursor: "not-allowed" }}
+              style={{ width: "100%", padding: "9px", borderRadius: 9, border: "1px solid var(--border)", background: "none", color: "var(--text-faint)", fontSize: 13, cursor: "not-allowed" }}
             >
               {t("login.wechat")}
             </button>
@@ -1900,21 +1923,41 @@ export function App() {
                         </button>
                       </>
                     ) : (
-                      <div style={{ padding: "16px 16px 14px", textAlign: "center" }}>
+                      <div style={{ padding: "20px 18px 12px", textAlign: "center" }}>
+                        <div
+                          style={{
+                            width: 46,
+                            height: 46,
+                            borderRadius: "50%",
+                            margin: "0 auto 12px",
+                            background: "linear-gradient(135deg,#C87551,#A34E30)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            boxShadow: "0 5px 16px rgba(192,95,60,.35)",
+                          }}
+                        >
+                          <GiftIcon size={22} color="#F4F6F8" />
+                        </div>
+                        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>
+                          {lang === "zh" ? "登录无为账号" : "Sign in to Wuwei"}
+                        </div>
                         <div
                           style={{
                             display: "inline-flex",
                             alignItems: "center",
                             gap: 5,
-                            fontSize: 13,
-                            color: "#6F9FAD",
-                            marginBottom: 12,
+                            fontSize: 12,
+                            fontWeight: 500,
+                            color: "#C05F3C",
+                            background: "rgba(192,95,60,.1)",
+                            padding: "4px 12px",
+                            borderRadius: 20,
+                            marginBottom: 16,
                           }}
                         >
-                          {lang === "zh" ? "注册即得" : "Get"}
-                          <CoinIcon size={15} />
-                          <b style={{ color: "#C05F3C", fontSize: 15 }}>100</b>
-                          {lang === "zh" ? "无为币" : "credits"}
+                          <CoinIcon size={13} />
+                          {lang === "zh" ? "注册即得 100 无为币" : "Get 100 credits on sign-up"}
                         </div>
                         <button
                           onClick={() => {
@@ -1925,7 +1968,7 @@ export function App() {
                           style={{
                             width: "100%",
                             padding: "10px",
-                            borderRadius: 9,
+                            borderRadius: 10,
                             border: "none",
                             background: "#C05F3C",
                             color: "#F4F6F8",
@@ -1933,28 +1976,30 @@ export function App() {
                             fontWeight: 600,
                             letterSpacing: 2,
                             cursor: "pointer",
+                            boxShadow: "0 3px 12px rgba(192,95,60,.3)",
                           }}
                         >
-                          {t("login.submit")}
+                          {t("login.signin")}
                         </button>
-                        {/* 未登录也能切语言 */}
-                        <div style={{ marginTop: 12, display: "flex", justifyContent: "center", gap: 10, fontSize: 12 }}>
-                          {(["zh", "en"] as Lang[]).map((l) => (
-                            <button
-                              key={l}
-                              onClick={() => changeLang(l)}
-                              style={{
-                                background: "none",
-                                border: "none",
-                                cursor: "pointer",
-                                padding: 0,
-                                color: lang === l ? "#C05F3C" : "#9aa4ae",
-                                fontWeight: lang === l ? 600 : 400,
-                              }}
-                            >
-                              {l === "zh" ? "中文" : "English"}
-                            </button>
-                          ))}
+                        <div style={{ height: 1, background: "rgba(128,128,128,.14)", margin: "14px 0 10px" }} />
+                        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{t("acct.language")}</span>
+                          <select
+                            value={lang}
+                            onChange={(e) => changeLang(e.target.value as Lang)}
+                            style={{
+                              fontSize: 12,
+                              padding: "3px 8px",
+                              borderRadius: 6,
+                              border: "1px solid var(--border)",
+                              background: "var(--bg-input)",
+                              color: "var(--text)",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <option value="zh">中文</option>
+                            <option value="en">English</option>
+                          </select>
                         </div>
                       </div>
                     )}
