@@ -169,6 +169,10 @@ function WuweiMark({ size = 18 }: { size?: number }) {
 }
 
 // —— 简约 SVG 图标（禁用 emoji，统一线性风、跟随 currentColor）——
+// 深色主题已下线：存量 "dark"/空值一律回退为白色，仅保留 light / gold。
+function resolveTheme(t?: string): string {
+  return t === "light" || t === "gold" ? t : "light";
+}
 function CoinIcon({ size = 14 }: { size?: number }) {
   // 币：填充淡底 + 描边 + ¥ 记号，比双环更像“货币”
   return (
@@ -179,17 +183,25 @@ function CoinIcon({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
-// 无为禅意圆（ensō）：品牌标，一笔未闭合的圆，契合「无为」道家意象
-function EnsoMark({ size = 26 }: { size?: number }) {
+// 无为标准 logo（还原 build/icon.svg）：玄墨黑 squircle + 月白圆环(右上缺口「一念之门」) + 朱赭火种
+function WuweiLogo({ size = 46 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true" style={{ flex: "0 0 auto", display: "block" }}>
+    <svg width={size} height={size} viewBox="0 0 1024 1024" aria-hidden="true" style={{ flex: "0 0 auto", display: "block" }}>
+      <defs>
+        <linearGradient id="wuweiLogoBg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#1E232B" />
+          <stop offset="1" stopColor="#14171C" />
+        </linearGradient>
+      </defs>
+      <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#wuweiLogoBg)" />
       <path
-        d="M31 11.5A17 17 0 1 0 39 26.5"
-        stroke="currentColor"
-        strokeWidth="3.4"
-        strokeLinecap="round"
+        d="M728.7 473.8 A220 220 0 1 1 587.2 305.3"
         fill="none"
+        stroke="#F4F6F8"
+        strokeWidth="44"
+        strokeLinecap="round"
       />
+      <circle cx="680.5" cy="370.5" r="45" fill="#C05F3C" />
     </svg>
   );
 }
@@ -407,22 +419,8 @@ function WuweiLoginModal({
           >
             ×
           </button>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7, marginBottom: incentive ? 8 : 16 }}>
-            <div
-              style={{
-                width: 46,
-                height: 46,
-                borderRadius: "50%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: "var(--bg-soft)",
-                border: "1px solid var(--border)",
-                color: "var(--spark)",
-              }}
-            >
-              <EnsoMark size={26} />
-            </div>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginBottom: incentive ? 8 : 16 }}>
+            <WuweiLogo size={46} />
             <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: 0.5 }}>
               {mode === "email-register" ? t("login.register") : t("login.signin")}
             </div>
@@ -839,8 +837,8 @@ export function App() {
       setStreamMode((r?.settings as any)?.streamMode || "stream");
       setStreamSpeed((r?.settings as any)?.streamSpeed || 400);
       setKeepRecent((r?.settings as any)?.keepRecent || 12);
-      // 应用主题(默认暗色·minicc客户端默认深色)
-      const theme = (r?.settings as any)?.theme || "dark";
+      // 应用主题(深色已下线，默认白色；存量 dark 回退白色)
+      const theme = resolveTheme((r?.settings as any)?.theme);
       document.documentElement.setAttribute("data-theme", theme);
     });
     document.documentElement.setAttribute("data-platform", window.minicc.platform);
@@ -2027,10 +2025,11 @@ export function App() {
                         {/* 具体模型名，让「顶级」落地 */}
                         <div
                           style={{
-                            display: "flex",
+                            display: "grid",
+                            gridTemplateColumns: "repeat(2, auto)",
                             justifyContent: "center",
-                            alignItems: "center",
-                            gap: 12,
+                            columnGap: 16,
+                            rowGap: 7,
                             marginBottom: 13,
                             fontSize: 12,
                             fontWeight: 500,
@@ -4347,9 +4346,9 @@ function SettingsModal({
   t: T;
 }) {
   // 界面主题（并入设置页「外观」）
-  const [uiTheme, setUiTheme] = useState("dark");
+  const [uiTheme, setUiTheme] = useState("light");
   useEffect(() => {
-    window.minicc.getSettings().then((r: any) => setUiTheme(r?.settings?.theme || "dark"));
+    window.minicc.getSettings().then((r: any) => setUiTheme(resolveTheme(r?.settings?.theme)));
   }, []);
   async function pickTheme(t: string) {
     setUiTheme(t);
@@ -5215,7 +5214,6 @@ function SettingsModal({
               <div className="app-set-group">{t("set.d.theme")}</div>
               <div className="theme-pick" style={{ marginBottom: "14px" }}>
                 {[
-                  { id: "dark", label: t("set.d.dark") },
                   { id: "light", label: t("set.d.light") },
                   { id: "gold", label: t("set.d.gold") },
                 ].map((th) => (
@@ -6592,9 +6590,9 @@ function AppSettingsModal({
   keepRecent: number;
   onKeepRecent: (n: number) => void;
 }) {
-  const [theme, setTheme] = useState("dark");
+  const [theme, setTheme] = useState("light");
   useEffect(() => {
-    window.minicc.getSettings().then((r: any) => setTheme(r?.settings?.theme || "dark"));
+    window.minicc.getSettings().then((r: any) => setTheme(resolveTheme(r?.settings?.theme)));
   }, []);
   // 选主题：实时预览 + 立即持久化(spread 现有 settings 只改 theme)
   async function pickTheme(t: string) {
@@ -6690,7 +6688,6 @@ function AppSettingsModal({
         <div className="app-set-group">界面主题</div>
         <div className="theme-pick" style={{ marginBottom: "14px" }}>
           {[
-            { id: "dark", label: "暗色" },
             { id: "light", label: "白色" },
             { id: "gold", label: "淡金" },
           ].map((t) => (
