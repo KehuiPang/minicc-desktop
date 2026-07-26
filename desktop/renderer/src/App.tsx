@@ -106,6 +106,14 @@ function messagesToItems(messages: any[]): Item[] {
 // 返回值以「出错：」开头，鉴权类务必含 isAuthError 能识别的关键词（未授权/凭证），以便触发一键授权条。
 function friendlyError(raw: string): string {
   const r = raw || "";
+  // 无为托管网关的业务错误 → 友好中文（优先，避免被下方通用 401/429 规则吃掉）
+  if (/insufficient_balance/i.test(r)) return "无为币余额不足：请点账号头像「充值」后，再使用无为托管模型。";
+  if (/daily_cap_reached/i.test(r)) return "今日无为托管消耗已达上限：明日自动恢复，或联系客服提额。";
+  if (/gateway_not_configured/i.test(r)) return "无为托管暂不可用（服务维护中）：请稍后再试，或切换到其它模型。";
+  if (/unknown_hosted_model/i.test(r)) return "该无为托管模型暂不可用，请换一个模型。";
+  if (/upstream_error/i.test(r)) return "模型服务商暂时不可用：请稍后重试。";
+  if (/gateway_error[\s\S]*(invalid_token|no_token)/i.test(r))
+    return "无为账号登录已过期：请重新登录后再用托管模型。";
   if (/authentication method|apiKey or authToken|x-api-key|unauthorized|\b401\b|invalid.*key|api key/i.test(r))
     return "出错：当前模型未授权或缺少凭证（API Key / 订阅授权），请先完成授权。";
   if (/rate.?limit|\b429\b|quota|exceed|too many/i.test(r))
@@ -954,8 +962,8 @@ export function App() {
   }, [showSettings]);
   // 内置平台 + 用户自定义中转站，按用户自定义顺序、隐藏项不进切换菜单
   const providerList = arrangePresets(
-    // 托管平台仅对灰度放开(flags 含 subscription)的用户可见
-    [...PRESETS, ...stations.map(stationToPreset)].filter((p) => !p.hosted || showSubscription),
+    // 托管平台：登录无为账号即可见（用托管须登录+有无为币，网关另有余额/日封顶兜底）
+    [...PRESETS, ...stations.map(stationToPreset)].filter((p) => !p.hosted || !!wuwei),
     providerOrder,
     hiddenProviders,
     false,
@@ -2067,24 +2075,32 @@ export function App() {
                             >
                               {wuwei.user.name || wuwei.user.email || "无为用户"}
                             </div>
-                            <div
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 5,
-                                marginTop: 4,
-                                padding: "1px 9px 1px 6px",
-                                borderRadius: 999,
-                                background: "var(--bg-soft)",
-                                border: "1px solid var(--border)",
-                                color: "var(--spark)",
-                                fontSize: 12,
-                                width: "fit-content",
-                              }}
-                            >
-                              <CoinIcon size={13} />
-                              <span style={{ fontWeight: 700 }}>{wuwei.coin.balance}</span>
-                              <span style={{ fontWeight: 500, opacity: 0.7 }}>{t("acct.guestIncentive")}</span>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                              <div
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 5,
+                                  padding: "1px 9px 1px 6px",
+                                  borderRadius: 999,
+                                  background: "var(--bg-soft)",
+                                  border: "1px solid var(--border)",
+                                  color: "var(--spark)",
+                                  fontSize: 12,
+                                  width: "fit-content",
+                                }}
+                              >
+                                <CoinIcon size={13} />
+                                <span style={{ fontWeight: 700 }}>{wuwei.coin.balance}</span>
+                                <span style={{ fontWeight: 500, opacity: 0.7 }}>{t("acct.guestIncentive")}</span>
+                              </div>
+                              <span
+                                title="前往官网充值无为币"
+                                onClick={() => window.minicc.openExternal("https://wuweiai.io/pricing")}
+                                style={{ fontSize: 11.5, color: "var(--spark)", cursor: "pointer", fontWeight: 500 }}
+                              >
+                                充值
+                              </span>
                             </div>
                           </div>
                         </div>
