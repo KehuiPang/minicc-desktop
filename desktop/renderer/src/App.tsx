@@ -5909,7 +5909,7 @@ function SettingsModal({
                 <div className="mcp-pane">
                   <input
                     className="mcp-search"
-                    placeholder="搜索已装工具 / 本地目录 / 在线 MCP 库…"
+                    placeholder={t("set.mcp.search")}
                     value={mcpSearch}
                     onChange={(e) => setMcpSearch(e.target.value)}
                   />
@@ -5920,8 +5920,8 @@ function SettingsModal({
                       if (el.scrollTop + el.clientHeight >= el.scrollHeight - 90) loadMoreMcp();
                     }}
                   >
-                    <div className="mcp-sec">已配置（{names.length}）</div>
-                    {names.length === 0 && <div className="mcp-empty">还没配置。从下方目录一键安装，或点右下「高级」写 JSON。</div>}
+                    <div className="mcp-sec">{t("set.mcp.configured")}（{names.length}）</div>
+                    {names.length === 0 && <div className="mcp-empty">{t("set.mcp.empty")}</div>}
                     {names.filter(matchServer).map((n) => {
                       const sv = servers[n];
                       const st = statusOf(n);
@@ -5942,14 +5942,14 @@ function SettingsModal({
                               onClick={() => badge === "ready" && setMcpExpanded(mcpExpanded === n ? null : n)}
                             >
                               {badge === "disabled"
-                                ? "已关闭"
+                                ? t("set.mcp.disabled")
                                 : badge === "needs-config"
-                                  ? "待填写配置"
+                                  ? t("set.mcp.needsConfig")
                                   : badge === "ready"
-                                    ? `${tools.length} 工具 ${mcpExpanded === n ? "▴" : "▾"}`
+                                    ? `${tools.length} ${t("set.mcp.tools")} ${mcpExpanded === n ? "▴" : "▾"}`
                                     : badge === "error"
-                                      ? "连接失败"
-                                      : "连接中…"}
+                                      ? t("set.mcp.error")
+                                      : t("set.mcp.connecting")}
                             </span>
                             <span className="mcp-actions">
                               <button
@@ -5957,13 +5957,13 @@ function SettingsModal({
                                 className="mcp-btn"
                                 onClick={() => (mcpEdit === n ? setMcpEdit(null) : startEditMcp(n, sv))}
                               >
-                                {mcpEdit === n ? "收起" : "编辑"}
+                                {mcpEdit === n ? t("set.mcp.collapse") : t("set.mcp.edit")}
                               </button>
                               <button type="button" className="mcp-btn" onClick={() => mcpToggle(n)}>
-                                {sv.disabled ? "启用" : "关闭"}
+                                {sv.disabled ? t("set.mcp.enable") : t("set.mcp.disable")}
                               </button>
                               <button type="button" className="mcp-btn del" onClick={() => mcpRemove(n)}>
-                                删除
+                                {t("set.mcp.delete")}
                               </button>
                             </span>
                           </div>

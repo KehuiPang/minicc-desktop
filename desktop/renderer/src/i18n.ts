@@ -182,6 +182,20 @@ const DICT: Record<string, { zh: string; en: string }> = {
     zh: "每行一条，例如：\n- 始终用中文回复\n- 我叫 Logic，做后端\n- 部署脚本在 delopy_batch/",
     en: "One per line, e.g.:\n- Always reply in English\n- I'm Logic, a backend dev\n- Deploy scripts are in deploy_batch/",
   },
+  // MCP tab
+  "set.mcp.search": { zh: "搜索已装工具 / 本地目录 / 在线 MCP 库…", en: "Search installed tools / local dir / online MCP registry…" },
+  "set.mcp.configured": { zh: "已配置", en: "Configured" },
+  "set.mcp.empty": { zh: "还没配置。从下方目录一键安装，或点右下「高级」写 JSON。", en: "None yet. Install from the registry below, or click “Advanced” to write JSON." },
+  "set.mcp.disabled": { zh: "已关闭", en: "Off" },
+  "set.mcp.needsConfig": { zh: "待填写配置", en: "Needs config" },
+  "set.mcp.tools": { zh: "工具", en: "tools" },
+  "set.mcp.error": { zh: "连接失败", en: "Failed" },
+  "set.mcp.connecting": { zh: "连接中…", en: "Connecting…" },
+  "set.mcp.collapse": { zh: "收起", en: "Collapse" },
+  "set.mcp.edit": { zh: "编辑", en: "Edit" },
+  "set.mcp.enable": { zh: "启用", en: "Enable" },
+  "set.mcp.disable": { zh: "关闭", en: "Disable" },
+  "set.mcp.delete": { zh: "删除", en: "Remove" },
 };
 
 export function makeT(lang: Lang) {
