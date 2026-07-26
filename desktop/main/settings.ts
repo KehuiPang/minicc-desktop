@@ -1,9 +1,24 @@
-// 用户设置持久化：模型后端(provider)与模型选择，存 ~/.minicc/config.json。
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+// 用户设置持久化：模型后端(provider)与模型选择，存 ~/.wuwei/config.json。
+import { readFileSync, writeFileSync, mkdirSync, existsSync, cpSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const DIR = join(homedir(), ".minicc");
+const DIR = join(homedir(), ".wuwei");
+
+// 数据目录改名迁移：老版本存 ~/.minicc，改名后首启把老数据复制进 ~/.wuwei。
+// force:false → 不覆盖已存在文件(保住 ~/.wuwei 里已有的 auth.json 等)；一次性(靠 marker)。
+export function migrateFromMinicc(): void {
+  try {
+    const oldDir = join(homedir(), ".minicc");
+    const marker = join(DIR, ".migrated-from-minicc");
+    if (!existsSync(oldDir) || existsSync(marker)) return;
+    mkdirSync(DIR, { recursive: true });
+    cpSync(oldDir, DIR, { recursive: true, force: false, errorOnExist: false });
+    writeFileSync(marker, new Date().toISOString());
+  } catch {
+    /* 迁移失败不阻塞启动，最坏是走全新数据 */
+  }
+}
 const FILE = join(DIR, "config.json");
 const RL = join(DIR, "ratelimits.json");
 const USG = join(DIR, "usage.json");

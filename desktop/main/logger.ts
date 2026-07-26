@@ -1,9 +1,9 @@
-// 文件日志：写到 ~/.minicc/logs/minicc.log，方便事后排查(不用瞎猜)。
+// 文件日志：写到 ~/.wuwei/logs/minicc.log，方便事后排查(不用瞎猜)。
 import { appendFileSync, mkdirSync, statSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const DIR = join(homedir(), ".minicc", "logs");
+const DIR = join(homedir(), ".wuwei", "logs");
 export const LOG_FILE = join(DIR, "minicc.log");
 const MAX_BYTES = 3 * 1024 * 1024; // 超过 3MB 滚动一次
 

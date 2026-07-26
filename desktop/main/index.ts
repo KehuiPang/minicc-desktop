@@ -25,7 +25,7 @@ import * as secrets from "./secrets.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-// 全局记忆：读/写 ~/.minicc/memory.md
+// 全局记忆：读/写 ~/.wuwei/memory.md
 function loadMemory(): string {
   try {
     return readFileSync(MEMORY_FILE, "utf8");
@@ -61,9 +61,13 @@ import {
   saveWindowBounds,
   loadSessionBalances,
   saveSessionBalances,
+  migrateFromMinicc,
   type Settings,
   type SessionBal,
 } from "./settings.js";
+
+// 数据目录 .minicc→.wuwei 改名后的一次性迁移，须在任何数据读取前执行。
+migrateFromMinicc();
 import { getAccount, logout } from "./account.js";
 import {
   claudeOAuthLogin,
@@ -1745,8 +1749,8 @@ ipcMain.on("memory:set", (_e, text: string) => {
   for (const a of agents.values()) a.setSystem(buildSysPrompt(cwd, modelLabel, loadSettings()?.providerId));
 });
 
-// —— 输入框草稿：实时落盘 ~/.minicc/draft.json，重开/更新后自动恢复(含粘贴的截图 base64) ——
-const DRAFT_FILE = join(homedir(), ".minicc", "draft.json");
+// —— 输入框草稿：实时落盘 ~/.wuwei/draft.json，重开/更新后自动恢复(含粘贴的截图 base64) ——
+const DRAFT_FILE = join(homedir(), ".wuwei", "draft.json");
 ipcMain.handle("draft:get", () => {
   try {
     return JSON.parse(readFileSync(DRAFT_FILE, "utf8"));
@@ -1830,7 +1834,7 @@ ipcMain.handle("brain:read-doc", (_e, ref: string) => brain.readDoc(String(ref))
 
 // —— 概念抽取：用当前对话模型(k3)从已索引文档「按文档级」批量抽概念+关系填进 graph ——
 // 按文档级(而非块级)大幅省 token：204 文档 = 204 次调用，非 3571 块。可停、进度持久、默认只抽未抽过的文档。
-const CONCEPTS_DONE_FILE = join(homedir(), ".minicc", "brain", "concepts-done.json");
+const CONCEPTS_DONE_FILE = join(homedir(), ".wuwei", "brain", "concepts-done.json");
 function loadConceptsDone(): Set<string> {
   try {
     return new Set(JSON.parse(readFileSync(CONCEPTS_DONE_FILE, "utf8")).files || []);

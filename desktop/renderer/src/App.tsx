@@ -613,7 +613,7 @@ export function App() {
   const sidebarWRef = useRef(sidebarW);
   sidebarWRef.current = sidebarW;
   const [pendingImages, setPendingImages] = useState<string[]>([]);
-  // 输入框草稿持久化：文字+粘贴的截图实时落盘(~/.minicc/draft.json)，重开/更新后自动恢复。
+  // 输入框草稿持久化：文字+粘贴的截图实时落盘(~/.wuwei/draft.json)，重开/更新后自动恢复。
   // draftLoadedRef 保证「先加载完再回写」，避免初始空草稿把已存内容冲掉。
   const draftLoadedRef = useRef(false);
   useEffect(() => {
@@ -5617,7 +5617,7 @@ function SettingsModal({
                 {lang === "zh"
                   ? "你对模型说「记住…」时它会自动往这里追加；也可在此手动增删。保存后下一条消息即生效。存于 "
                   : "When you tell the model “remember…”, it appends here; you can also edit manually. Takes effect on the next message. Stored at "}
-                <code>~/.minicc/memory.md</code>。
+                <code>~/.wuwei/memory.md</code>。
               </p>
             </div>
           )}
@@ -5992,8 +5992,8 @@ function SettingsModal({
                     </div>
                   </div>
                   <p className="s-note pp-fixed">
-                    {t("set.brain.footStored")} <code>~/.minicc/brain/graph.json</code>, {t("set.brain.footModels")}{" "}
-                    <code>~/.minicc/brain/models</code>. {t("set.brain.footDesc")}
+                    {t("set.brain.footStored")} <code>~/.wuwei/brain/graph.json</code>, {t("set.brain.footModels")}{" "}
+                    <code>~/.wuwei/brain/models</code>. {t("set.brain.footDesc")}
                   </p>
                 </div>
               );
@@ -6239,7 +6239,7 @@ function SettingsModal({
                     <button type="button" className="link-inline" onClick={() => setMcpRawEdit((v) => !v)}>
                       {mcpRawEdit ? "收起 JSON" : "高级：编辑 JSON"}
                     </button>
-                    <span className="mcp-path">~/.minicc/mcp.json</span>
+                    <span className="mcp-path">~/.wuwei/mcp.json</span>
                   </div>
                   {mcpRawEdit && (
                     <>

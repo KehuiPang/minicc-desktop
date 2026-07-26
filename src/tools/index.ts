@@ -9,7 +9,7 @@ import type { Tool, ToolContext, ToolResult } from "../types.js";
 import * as brain from "../brain/index.js";
 
 // 全局记忆文件：跨会话持久，注入到每次对话的系统提示词
-export const MEMORY_FILE = join(homedir(), ".minicc", "memory.md");
+export const MEMORY_FILE = join(homedir(), ".wuwei", "memory.md");
 
 const pexec = promisify(exec);
 

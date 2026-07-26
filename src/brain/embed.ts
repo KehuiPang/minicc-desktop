@@ -8,15 +8,15 @@ import { isMainThread } from "node:worker_threads";
 
 const MODEL = "Xenova/multilingual-e5-small";
 export const EMBED_DIM = 384;
-export const MODELS_DIR = join(homedir(), ".minicc", "brain", "models");
-const ERR_FILE = join(homedir(), ".minicc", "brain", "embed-error.txt");
+export const MODELS_DIR = join(homedir(), ".wuwei", "brain", "models");
+const ERR_FILE = join(homedir(), ".wuwei", "brain", "embed-error.txt");
 
 let extractorPromise: Promise<any> | null = null;
 let failed = false;
 
 function dumpErr(where: string, e: any) {
   try {
-    mkdirSync(join(homedir(), ".minicc", "brain"), { recursive: true });
+    mkdirSync(join(homedir(), ".wuwei", "brain"), { recursive: true });
     const msg = `[${new Date().toISOString()}] ${where}\nwasmDir=${wasmDir()}\nmsg=${e?.message || e}\nstack=${e?.stack || ""}\n`;
     writeFileSync(ERR_FILE, msg);
   } catch {

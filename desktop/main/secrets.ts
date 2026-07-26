@@ -7,7 +7,7 @@ import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 
-const VAULT_PATH = join(homedir(), ".minicc", "secrets.json");
+const VAULT_PATH = join(homedir(), ".wuwei", "secrets.json");
 
 // 占位符：用不常见的括号包裹，模型极少会去改写它，回填走精确匹配
 const PH_OPEN = "⟦secret:";

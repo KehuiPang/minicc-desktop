@@ -1,12 +1,12 @@
 // Brain 图的持久化 + 纯函数增删改查 + 权重强化。
-// 存储：~/.minicc/brain/graph.json（单文件；节点/边规模在千级，JSON 足够）。
+// 存储：~/.wuwei/brain/graph.json（单文件；节点/边规模在千级，JSON 足够）。
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { BrainGraph, BrainNode, BrainEdge } from "./types.js";
 import { EMPTY_GRAPH } from "./types.js";
 
-export const BRAIN_DIR = join(homedir(), ".minicc", "brain");
+export const BRAIN_DIR = join(homedir(), ".wuwei", "brain");
 export const GRAPH_FILE = join(BRAIN_DIR, "graph.json");
 
 // 规范化成稳定 key：trim + 小写 + 折叠内部空白（中文原样保留）

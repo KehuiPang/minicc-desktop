@@ -26,8 +26,8 @@
     "node": ">=20"
   },
   "build": {
-    "appId": "com.minicc.app",
-    "productName": "minicc",
+    "appId": "com.wuwei.app",
+    "productName": "wuwei",
     "directories": {
       "output": "release"
     },
@@ -54,7 +54,7 @@
       "category": "public.app-category.developer-tools"
     },
     "dmg": {
-      "title": "minicc ${version}"
+      "title": "wuwei ${version}"
     },
     "linux": {
       "target": [
@@ -89,7 +89,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "minicc-${version}-setup.${ext}"
+      "artifactName": "wuwei-${version}-setup.${ext}"
     },
     "npmRebuild": false
   },

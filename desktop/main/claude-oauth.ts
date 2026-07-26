@@ -30,7 +30,7 @@ export interface ClaudeOAuthResult {
 
 // —— app 自己的 OAuth 令牌 sidecar：存 refresh_token/过期时间，供静默续期。
 // 独立于 settings.json（渲染层 setSettings 会整包覆盖，放这里不被冲掉），也绝不动 ~/.claude.json。
-const AUTH_FILE = join(homedir(), ".minicc", "claude-oauth.json");
+const AUTH_FILE = join(homedir(), ".wuwei", "claude-oauth.json");
 export interface ClaudeAuthStore {
   accessToken: string;
   refreshToken?: string;
