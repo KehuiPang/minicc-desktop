@@ -5,10 +5,11 @@
       <stop offset="1" stop-color="#14171C"/>
     </linearGradient>
   </defs>
-  <!-- squircle 玄墨黑背景：中间 824×824，四周约 100px 透明（与其他 app 一致大小） -->
+  <!-- 玄墨黑 squircle 背景 -->
   <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#bg)"/>
-  <!-- 月白圆环，右上留缺口（一念之门）。半径缩小，留足到边距 -->
-  <path d="M728.7 473.8 A220 220 0 1 1 587.2 305.3" fill="none" stroke="#F4F6F8" stroke-width="44" stroke-linecap="round"/>
-  <!-- 缺口处一点朱赭火种 -->
-  <circle cx="680.5" cy="370.5" r="45" fill="#C05F3C"/>
+  <!-- 官网 WuMark 圆相(同 path、不旋转)，缩放居中放入方块。月白环 + 朱赭火种 -->
+  <g transform="translate(146.15,152.24) scale(3.0488)">
+    <path d="M152.04 193.48 A82 82 0 1 1 195.48 150.04" fill="none" stroke="#F4F6F8" stroke-width="12" stroke-linecap="round"/>
+    <circle cx="195.48" cy="150.04" r="10" fill="#C05F3C"/>
+  </g>
 </svg>

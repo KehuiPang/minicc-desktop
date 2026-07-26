@@ -143,7 +143,7 @@ function isAuthErrorText(text: string): boolean {
 
 // minicc 主标·橙色 sparkle 星星（沿用初版 app 图标的四角星几何，缩放到 24 视口；
 // 主星 currentColor 随主题走，右上小星用一点朱 --spark 呼应品牌）
-// 无为官方主标「一念之门圆相」（几何同 WuweiLogo / 品牌中心主标）：
+// 无为官方主标（几何同 WuweiLogo / 官网 WuMark：同 path、不旋转、stroke 12/dot 10）。
 // 顶栏用 currentColor 描边以适配文字色，缺口处一点朱赭火种。
 function WuweiMark({ size = 18 }: { size?: number }) {
   return (
@@ -155,16 +155,14 @@ function WuweiMark({ size = 18 }: { size?: number }) {
       aria-hidden="true"
       style={{ flex: "0 0 auto" }}
     >
-      <g transform="rotate(-8 120 118)">
-        <path
-          d="M152.04 193.48 A82 82 0 1 1 195.48 150.04"
-          stroke="currentColor"
-          strokeWidth="9.5"
-          strokeLinecap="round"
-          fill="none"
-        />
-        <circle cx="195.48" cy="150.04" r="7.6" fill="#C05F3C" />
-      </g>
+      <path
+        d="M152.04 193.48 A82 82 0 1 1 195.48 150.04"
+        stroke="currentColor"
+        strokeWidth="12"
+        strokeLinecap="round"
+        fill="none"
+      />
+      <circle cx="195.48" cy="150.04" r="10" fill="#C05F3C" />
     </svg>
   );
 }
@@ -184,21 +182,19 @@ function CoinIcon({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
-// 无为官方主标「一念之门圆相」（还原 品牌中心/assets/无为_主标_浅底版.svg）：
-// 玄墨黑开口圆环 + 缺口处一点朱赭，整体转 -8°；无背景，用于浅色表面。
+// 无为官方主标「一念之门圆相」（精确复刻 wuwei-site LandNav 的 WuMark：同 path、不旋转、stroke 12/dot 10）。
+// 用于浅色登录面：描边玄墨黑，朱赭火种点。
 function WuweiLogo({ size = 46 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 240 240" aria-hidden="true" style={{ flex: "0 0 auto", display: "block" }}>
-      <g transform="rotate(-8 120 118)">
-        <path
-          d="M152.04 193.48 A82 82 0 1 1 195.48 150.04"
-          fill="none"
-          stroke="#16191E"
-          strokeWidth="9.5"
-          strokeLinecap="round"
-        />
-        <circle cx="195.48" cy="150.04" r="7.6" fill="#C05F3C" />
-      </g>
+      <path
+        d="M152.04 193.48 A82 82 0 1 1 195.48 150.04"
+        fill="none"
+        stroke="#16191E"
+        strokeWidth="12"
+        strokeLinecap="round"
+      />
+      <circle cx="195.48" cy="150.04" r="10" fill="#C05F3C" />
     </svg>
   );
 }
