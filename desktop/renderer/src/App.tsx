@@ -183,25 +183,21 @@ function CoinIcon({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
-// 无为标准 logo（还原 build/icon.svg）：玄墨黑 squircle + 月白圆环(右上缺口「一念之门」) + 朱赭火种
+// 无为官方主标「一念之门圆相」（还原 品牌中心/assets/无为_主标_浅底版.svg）：
+// 玄墨黑开口圆环 + 缺口处一点朱赭，整体转 -8°；无背景，用于浅色表面。
 function WuweiLogo({ size = 46 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 1024 1024" aria-hidden="true" style={{ flex: "0 0 auto", display: "block" }}>
-      <defs>
-        <linearGradient id="wuweiLogoBg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#1E232B" />
-          <stop offset="1" stopColor="#14171C" />
-        </linearGradient>
-      </defs>
-      <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#wuweiLogoBg)" />
-      <path
-        d="M728.7 473.8 A220 220 0 1 1 587.2 305.3"
-        fill="none"
-        stroke="#F4F6F8"
-        strokeWidth="44"
-        strokeLinecap="round"
-      />
-      <circle cx="680.5" cy="370.5" r="45" fill="#C05F3C" />
+    <svg width={size} height={size} viewBox="0 0 240 240" aria-hidden="true" style={{ flex: "0 0 auto", display: "block" }}>
+      <g transform="rotate(-8 120 118)">
+        <path
+          d="M152.04 193.48 A82 82 0 1 1 195.48 150.04"
+          fill="none"
+          stroke="#16191E"
+          strokeWidth="9.5"
+          strokeLinecap="round"
+        />
+        <circle cx="195.48" cy="150.04" r="7.6" fill="#C05F3C" />
+      </g>
     </svg>
   );
 }
