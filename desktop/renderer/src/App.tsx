@@ -1943,22 +1943,30 @@ export function App() {
                           <GiftIcon size={22} color="#F4F6F8" />
                         </div>
                         {/* 重点：免费顶级模型 */}
-                        <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 7, lineHeight: 1.35 }}>
+                        <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 5, lineHeight: 1.35 }}>
                           {t("login.freeModels")}
                         </div>
-                        {/* 次要：无为币激励，小提示 */}
+                        {/* 具体模型名，让「顶级」落地 */}
+                        <div style={{ fontSize: 11, color: "var(--text-faint)", letterSpacing: 0.3, marginBottom: 13 }}>
+                          Claude · GPT · Gemini · DeepSeek{lang === "zh" ? " 等" : " & more"}
+                        </div>
+                        {/* 次要：无为币激励，小徽章 */}
                         <div
                           style={{
                             display: "inline-flex",
                             alignItems: "center",
                             gap: 4,
-                            fontSize: 12,
-                            color: "var(--text-muted)",
+                            fontSize: 11.5,
+                            fontWeight: 500,
+                            color: "#C05F3C",
+                            background: "rgba(192,95,60,.09)",
+                            padding: "3px 11px",
+                            borderRadius: 20,
                             marginBottom: 16,
                           }}
                         >
                           <CoinIcon size={12} />
-                          {lang === "zh" ? "注册即得 100 无为币" : "Get 100 credits on sign-up"}
+                          {lang === "zh" ? "注册即得 100 无为币" : "Get 100 credits"}
                         </div>
                         <button
                           onClick={() => {
