@@ -5387,25 +5387,23 @@ function SettingsModal({
                       </p>
                     </>
                   )}
-                  <label className="field">
-                    <span>{t("set.m.oauthToken")}</span>
-                    <div className="key-wrap">
-                      <input
-                        type={showKey ? "text" : "password"}
-                        value={oauthToken}
-                        onChange={(e) => setOauthToken(e.target.value)}
-                        placeholder={preset.keyHint}
-                      />
-                      <button
-                        type="button"
-                        className="eye-btn"
-                        onClick={() => setShowKey((v) => !v)}
-                        title={showKey ? t("set.m.hide") : t("set.m.show")}
-                      >
-                        <EyeIcon off={showKey} />
-                      </button>
-                    </div>
-                  </label>
+                  {/* OAuth Token 由授权流程自动填入；授权前不显示、授权后只读展示——避免用户误把授权码填进来 */}
+                  {oauthToken ? (
+                    <label className="field">
+                      <span>{t("set.m.oauthToken")}</span>
+                      <div className="key-wrap">
+                        <input type={showKey ? "text" : "password"} value={oauthToken} readOnly />
+                        <button
+                          type="button"
+                          className="eye-btn"
+                          onClick={() => setShowKey((v) => !v)}
+                          title={showKey ? t("set.m.hide") : t("set.m.show")}
+                        >
+                          <EyeIcon off={showKey} />
+                        </button>
+                      </div>
+                    </label>
+                  ) : null}
                 </>
               )}
 

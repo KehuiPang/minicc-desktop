@@ -169,7 +169,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "set.m.back": { zh: "返回", en: "Back" },
   "set.m.authBrowser": { zh: "🔑 一键授权（用浏览器登录）", en: "🔑 Authorize (sign in via browser)" },
   "set.m.useInApp": { zh: "改用应用内窗口登录", en: "Use in-app window instead" },
-  "set.m.oauthToken": { zh: "OAuth Token（一键授权会自动填，也可手动粘贴）", en: "OAuth Token (auto-filled, or paste manually)" },
+  "set.m.oauthToken": { zh: "OAuth Token（授权后自动填入 · 只读）", en: "OAuth Token (auto-filled after authorization · read-only)" },
   "set.m.hide": { zh: "隐藏", en: "Hide" },
   "set.m.show": { zh: "显示", en: "Show" },
   "set.m.codexAuthing": { zh: "🔑 授权中…（浏览器完成登录）", en: "🔑 Authorizing… (finish in browser)" },
