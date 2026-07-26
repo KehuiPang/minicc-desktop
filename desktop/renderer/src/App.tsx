@@ -354,10 +354,11 @@ function WuweiLoginModal({
             {t("login.signin")}
           </div>
           {incentive && (
-            <div style={{ textAlign: "center", fontSize: 12, color: "var(--text-muted)", marginBottom: 14, lineHeight: 1.7 }}>
-              {t("login.freeModels")}
-              <br />
-              {t("login.incentive")}
+            <div style={{ textAlign: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 3 }}>
+                {t("login.freeModels")}
+              </div>
+              <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{t("login.incentive")}</div>
             </div>
           )}
           {/* 邮箱/手机 切换：仅中文版有手机号 */}
@@ -1941,27 +1942,22 @@ export function App() {
                         >
                           <GiftIcon size={22} color="#F4F6F8" />
                         </div>
-                        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
-                          {lang === "zh" ? "登录无为账号" : "Sign in to Wuwei"}
-                        </div>
-                        <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+                        {/* 重点：免费顶级模型 */}
+                        <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 7, lineHeight: 1.35 }}>
                           {t("login.freeModels")}
                         </div>
+                        {/* 次要：无为币激励，小提示 */}
                         <div
                           style={{
                             display: "inline-flex",
                             alignItems: "center",
-                            gap: 5,
+                            gap: 4,
                             fontSize: 12,
-                            fontWeight: 500,
-                            color: "#C05F3C",
-                            background: "rgba(192,95,60,.1)",
-                            padding: "4px 12px",
-                            borderRadius: 20,
+                            color: "var(--text-muted)",
                             marginBottom: 16,
                           }}
                         >
-                          <CoinIcon size={13} />
+                          <CoinIcon size={12} />
                           {lang === "zh" ? "注册即得 100 无为币" : "Get 100 credits on sign-up"}
                         </div>
                         <button
