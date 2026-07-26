@@ -169,10 +169,26 @@ function WuweiMark({ size = 18 }: { size?: number }) {
 
 // —— 简约 SVG 图标（禁用 emoji，统一线性风、跟随 currentColor）——
 function CoinIcon({ size = 14 }: { size?: number }) {
+  // 币：填充淡底 + 描边 + ¥ 记号，比双环更像“货币”
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ flex: "0 0 auto" }}>
-      <circle cx="12" cy="12" r="8.4" stroke="currentColor" strokeWidth="1.6" />
-      <circle cx="12" cy="12" r="3.3" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="12" cy="12" r="9" fill="currentColor" opacity="0.16" />
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M8.4 8l3.6 4 3.6-4M12 12v4.2M9.2 12.4h5.6M9.2 14.6h5.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+// 无为禅意圆（ensō）：品牌标，一笔未闭合的圆，契合「无为」道家意象
+function EnsoMark({ size = 26 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true" style={{ flex: "0 0 auto", display: "block" }}>
+      <path
+        d="M31 11.5A17 17 0 1 0 39 26.5"
+        stroke="currentColor"
+        strokeWidth="3.4"
+        strokeLinecap="round"
+        fill="none"
+      />
     </svg>
   );
 }
@@ -240,6 +256,10 @@ function GiftIcon({ size = 22, color = "currentColor" }: { size?: number; color?
 //   POST /api/auth/send-code   {target}                  → {ok}|{error}   (target=邮箱或手机号)
 //   POST /api/auth/register    {email,code,password}     → {...tokens}|{error}
 //   POST /api/auth/verify-code {target,code}             → {...tokens}|{error}  (无账号自动注册)
+// 登录方式开关：手机号 / 微信后端尚未接通，先隐藏；接通后翻成 true 即恢复。
+const PHONE_LOGIN_ENABLED = false;
+const WECHAT_LOGIN_ENABLED = false;
+
 function WuweiLoginModal({
   incentive,
   lang,
@@ -261,6 +281,7 @@ function WuweiLoginModal({
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false); // 验证码发送单独态，不牵连主按钮
   const [err, setErr] = useState("");
   const [cooldown, setCooldown] = useState(0);
   useEffect(() => {
@@ -269,20 +290,39 @@ function WuweiLoginModal({
     return () => clearTimeout(t);
   }, [cooldown]);
 
+  // 后端可能回错误码(如 missing_credentials)或人类可读消息；码→友好文案，消息→原样。
+  function friendlyErr(raw?: string): string {
+    const s = (raw || "").trim();
+    if (!s) return t("login.err.generic");
+    const mapped = t("login.err." + s.toLowerCase(), "");
+    if (mapped) return mapped;
+    // 含空格或非 ASCII → 认为是已可读的消息，原样显示；否则是未知机器码，给通用兜底
+    if (/\s/.test(s) || /[^\x00-\x7f]/.test(s)) return s;
+    return t("login.err.generic");
+  }
   async function sendCode() {
     const target = mode === "phone" ? phone.trim() : email.trim();
     if (!target) {
-      setErr(mode === "phone" ? "请输入手机号" : "请输入邮箱");
+      setErr(mode === "phone" ? t("login.needPhone") : t("login.needEmail"));
       return;
     }
-    setBusy(true);
+    setSending(true);
     setErr("");
     const r = await window.minicc.wuweiSendCode(target);
-    setBusy(false);
+    setSending(false);
     if (r === true) setCooldown(60);
-    else setErr(typeof r === "string" ? r : "发送失败");
+    else setErr(typeof r === "string" ? friendlyErr(r) : t("login.sendFail"));
   }
   async function submit() {
+    // 客户端先做空值校验，避免把 missing_credentials 这类码丢给用户
+    if (mode === "phone") {
+      if (!phone.trim()) return setErr(t("login.needPhone"));
+      if (!code.trim()) return setErr(t("login.needCode"));
+    } else {
+      if (!email.trim()) return setErr(t("login.needEmail"));
+      if (mode === "email-register" && !code.trim()) return setErr(t("login.needCode"));
+      if (!password) return setErr(t("login.needPassword"));
+    }
     setBusy(true);
     setErr("");
     let res: { me?: WuweiMe; error?: string };
@@ -291,7 +331,7 @@ function WuweiLoginModal({
     else res = await window.minicc.wuweiCodeLogin(phone.trim(), code.trim());
     setBusy(false);
     if (res.me) onSuccess(res.me);
-    else setErr(res.error || "操作失败");
+    else setErr(friendlyErr(res.error));
   }
   async function googleLogin() {
     setBusy(true);
@@ -299,7 +339,7 @@ function WuweiLoginModal({
     const me = await window.minicc.wuweiLogin();
     setBusy(false);
     if (me) onSuccess(me);
-    else setErr("Google 登录未完成");
+    else setErr(t("login.googleIncomplete"));
   }
 
   const inputStyle: React.CSSProperties = {
@@ -325,6 +365,22 @@ function WuweiLoginModal({
     fontWeight: on ? 600 : 400,
     borderBottom: on ? "2px solid var(--spark)" : "2px solid transparent",
   });
+  // 验证码按钮：与输入框同高、主题中性、品牌色文字；冷却/发送时置灰
+  const codeBtnStyle: React.CSSProperties = {
+    flex: "0 0 auto",
+    padding: "0 12px",
+    height: 36,
+    borderRadius: 8,
+    border: "1px solid var(--border)",
+    background: "var(--bg-soft)",
+    color: cooldown > 0 || sending ? "var(--text-muted)" : "var(--spark)",
+    fontSize: 12,
+    fontWeight: 500,
+    whiteSpace: "nowrap",
+    cursor: cooldown > 0 || sending ? "default" : "pointer",
+    marginBottom: 9,
+  };
+  const codeBtnLabel = cooldown > 0 ? `${cooldown}s` : sending ? t("login.sending") : t("login.getCode");
 
   return (
     <>
@@ -350,8 +406,25 @@ function WuweiLoginModal({
           >
             ×
           </button>
-          <div style={{ textAlign: "center", fontSize: 15, fontWeight: 600, marginBottom: incentive ? 6 : 14 }}>
-            {t("login.signin")}
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7, marginBottom: incentive ? 8 : 16 }}>
+            <div
+              style={{
+                width: 46,
+                height: 46,
+                borderRadius: "50%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "var(--bg-soft)",
+                border: "1px solid var(--border)",
+                color: "var(--spark)",
+              }}
+            >
+              <EnsoMark size={26} />
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: 0.5 }}>
+              {mode === "email-register" ? t("login.register") : t("login.signin")}
+            </div>
           </div>
           {incentive && (
             <div style={{ textAlign: "center", marginBottom: 14 }}>
@@ -361,8 +434,8 @@ function WuweiLoginModal({
               <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{t("login.incentive")}</div>
             </div>
           )}
-          {/* 邮箱/手机 切换：仅中文版有手机号 */}
-          {zh && (
+          {/* 邮箱/手机 切换：仅中文版有手机号（后端未接通时整块隐藏） */}
+          {zh && PHONE_LOGIN_ENABLED && (
             <div style={{ display: "flex", marginBottom: 14 }}>
               <button style={tabStyle(mode !== "phone")} onClick={() => { setMode("email-login"); setErr(""); }}>
                 {t("login.tab.email")}
@@ -378,12 +451,8 @@ function WuweiLoginModal({
               <input style={inputStyle} placeholder={t("login.phone")} value={phone} onChange={(e) => setPhone(e.target.value)} />
               <div style={{ display: "flex", gap: 8 }}>
                 <input style={{ ...inputStyle, flex: 1 }} placeholder={t("login.code")} value={code} onChange={(e) => setCode(e.target.value)} />
-                <button
-                  onClick={sendCode}
-                  disabled={busy || cooldown > 0}
-                  style={{ flex: "0 0 auto", padding: "0 12px", height: 36, borderRadius: 8, border: "1px solid var(--border)", background: "none", color: "var(--text-muted)", fontSize: 12, cursor: cooldown > 0 ? "default" : "pointer", marginBottom: 9 }}
-                >
-                  {cooldown > 0 ? `${cooldown}s` : t("login.getCode")}
+                <button onClick={sendCode} disabled={sending || cooldown > 0} style={codeBtnStyle}>
+                  {codeBtnLabel}
                 </button>
               </div>
               <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 12 }}>{t("login.autoRegister")}</div>
@@ -394,12 +463,8 @@ function WuweiLoginModal({
               {mode === "email-register" && (
                 <div style={{ display: "flex", gap: 8 }}>
                   <input style={{ ...inputStyle, flex: 1 }} placeholder={t("login.emailCode")} value={code} onChange={(e) => setCode(e.target.value)} />
-                  <button
-                    onClick={sendCode}
-                    disabled={busy || cooldown > 0}
-                    style={{ flex: "0 0 auto", padding: "0 12px", height: 36, borderRadius: 8, border: "1px solid #274A63", background: "none", color: "#6F9FAD", fontSize: 12, cursor: cooldown > 0 ? "default" : "pointer", marginBottom: 9 }}
-                  >
-                    {cooldown > 0 ? `${cooldown}s` : t("login.getCode")}
+                  <button onClick={sendCode} disabled={sending || cooldown > 0} style={codeBtnStyle}>
+                    {codeBtnLabel}
                   </button>
                 </div>
               )}
@@ -437,11 +502,11 @@ function WuweiLoginModal({
           <button
             onClick={googleLogin}
             disabled={busy}
-            style={{ width: "100%", padding: "9px", borderRadius: 9, border: "1px solid var(--border)", background: "none", color: "var(--text)", fontSize: 13, cursor: "pointer", marginBottom: zh ? 8 : 0 }}
+            style={{ width: "100%", padding: "9px", borderRadius: 9, border: "1px solid var(--border)", background: "none", color: "var(--text)", fontSize: 13, cursor: "pointer", marginBottom: zh && WECHAT_LOGIN_ENABLED ? 8 : 0 }}
           >
             {t("login.google")}
           </button>
-          {zh && (
+          {zh && WECHAT_LOGIN_ENABLED && (
             <button
               disabled
               title={t("login.wechat")}
@@ -1891,11 +1956,23 @@ export function App() {
                               {wuwei.user.name || wuwei.user.email || "无为用户"}
                             </div>
                             <div
-                              style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 3, color: "#C05F3C", fontSize: 12 }}
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 5,
+                                marginTop: 4,
+                                padding: "1px 9px 1px 6px",
+                                borderRadius: 999,
+                                background: "var(--bg-soft)",
+                                border: "1px solid var(--border)",
+                                color: "var(--spark)",
+                                fontSize: 12,
+                                width: "fit-content",
+                              }}
                             >
                               <CoinIcon size={13} />
-                              <span style={{ fontWeight: 600 }}>{wuwei.coin.balance}</span>
-                              <span style={{ color: "#6F9FAD", fontWeight: 400 }}>无为币</span>
+                              <span style={{ fontWeight: 700 }}>{wuwei.coin.balance}</span>
+                              <span style={{ fontWeight: 500, opacity: 0.7 }}>{t("acct.guestIncentive")}</span>
                             </div>
                           </div>
                         </div>
@@ -1947,31 +2024,21 @@ export function App() {
                           {t("login.freeModels")}
                         </div>
                         {/* 具体模型名，让「顶级」落地 */}
-                        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5, marginBottom: 13 }}>
-                          {[
-                            { n: "Kimi", c: "#1E1E1E" },
-                            { n: "Claude", c: "#C15F3C" },
-                            { n: "GPT", c: "#10A37F" },
-                            { n: "DeepSeek", c: "#4D6BFE" },
-                            { n: lang === "zh" ? "智谱" : "GLM", c: "#3859FF" },
-                          ].map((m) => (
-                            <span
-                              key={m.n}
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 4,
-                                fontSize: 11,
-                                color: "var(--text-dim)",
-                                background: "var(--bg-soft)",
-                                border: "1px solid var(--border)",
-                                padding: "2px 8px",
-                                borderRadius: 20,
-                              }}
-                            >
-                              <span style={{ width: 7, height: 7, borderRadius: "50%", background: m.c, flex: "0 0 auto" }} />
-                              {m.n}
-                            </span>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "center",
+                            alignItems: "center",
+                            gap: 14,
+                            marginBottom: 13,
+                            fontSize: 12.5,
+                            fontWeight: 500,
+                            color: "var(--text-dim)",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {["Kimi", "Claude", "GPT"].map((n) => (
+                            <span key={n}>{n}</span>
                           ))}
                         </div>
                         {/* 次要：无为币激励，小徽章 */}
@@ -5527,29 +5594,26 @@ function SettingsModal({
                 <div className="prompt-pane" style={{ display: "flex", flexDirection: "column", gap: 10, minHeight: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                     <span className="s-note" style={{ margin: 0 }}>
-                      概念 <b>{brainStat.nodes}</b> · 关系 <b>{brainStat.edges}</b> · 已向量化{" "}
+                      {t("set.brain.statNodes")} <b>{brainStat.nodes}</b> · {t("set.brain.statEdges")}{" "}
+                      <b>{brainStat.edges}</b> · {t("set.brain.statEmbedded")}{" "}
                       <b>{brainStat.embedded}</b>/{brainStat.nodes}
                     </span>
                     <button type="button" onClick={() => reloadBrain()}>
-                      刷新
+                      {t("set.brain.refresh")}
                     </button>
                     <button
                       type="button"
                       disabled={brainWarming}
                       onClick={async () => {
                         setBrainWarming(true);
-                        setBrainWarmMsg("正在加载本地向量模型（首次约120MB，走镜像可能要几分钟）…");
+                        setBrainWarmMsg(t("set.brain.warmLoading"));
                         const ok = await window.minicc.brainWarmup();
                         setBrainWarming(false);
-                        setBrainWarmMsg(
-                          ok
-                            ? "✓ 向量模型就绪，语义检索已启用。"
-                            : "✗ 模型加载失败，已退化为关键词检索，可稍后重试。",
-                        );
+                        setBrainWarmMsg(ok ? t("set.brain.warmOk") : t("set.brain.warmFail"));
                         reloadBrain();
                       }}
                     >
-                      {brainWarming ? "加载中…" : "启用/预热向量模型"}
+                      {brainWarming ? t("set.brain.warming") : t("set.brain.warmBtn")}
                     </button>
                     {brainWarmMsg && (
                       <span className="s-note" style={{ margin: 0 }}>
@@ -5561,21 +5625,21 @@ function SettingsModal({
                   <div style={{ display: "flex", gap: 6 }}>
                     <input
                       style={{ flex: 1 }}
-                      placeholder="试检索：如「figcheck 部署」——看看大脑会给出什么"
+                      placeholder={t("set.brain.recallPlaceholder")}
                       value={brainRecallQ}
                       onChange={(e) => setBrainRecallQ(e.target.value)}
                       onKeyDown={async (e) => {
                         if (e.key === "Enter")
-                          setBrainRecallOut((await window.minicc.brainRecall(brainRecallQ)) || "(无命中)");
+                          setBrainRecallOut((await window.minicc.brainRecall(brainRecallQ)) || t("set.brain.noHit"));
                       }}
                     />
                     <button
                       type="button"
                       onClick={async () =>
-                        setBrainRecallOut((await window.minicc.brainRecall(brainRecallQ)) || "(无命中)")
+                        setBrainRecallOut((await window.minicc.brainRecall(brainRecallQ)) || t("set.brain.noHit"))
                       }
                     >
-                      检索
+                      {t("set.brain.recall")}
                     </button>
                   </div>
                   {brainRecallOut && (
@@ -5600,7 +5664,7 @@ function SettingsModal({
                     {/* 左：概念列表 */}
                     <div style={{ width: 220, display: "flex", flexDirection: "column", gap: 6, minHeight: 0 }}>
                       <input
-                        placeholder="过滤概念…"
+                        placeholder={t("set.brain.filterPlaceholder")}
                         value={brainFilter}
                         onChange={(e) => setBrainFilter(e.target.value)}
                       />
@@ -5622,7 +5686,7 @@ function SettingsModal({
                           });
                         }}
                       >
-                        + 新概念
+                        {t("set.brain.newNode")}
                       </button>
                       <div style={{ overflow: "auto", flex: 1 }}>
                         {sorted.map((n) => (
@@ -5641,12 +5705,12 @@ function SettingsModal({
                           >
                             <div style={{ fontWeight: 600, fontSize: 13 }}>{n.name}</div>
                             <div className="s-note" style={{ margin: 0 }}>
-                              {n.type} · 命中{n.hits}
+                              {n.type} · {t("set.brain.hits")}{n.hits}
                             </div>
                           </div>
                         ))}
                         {sorted.length === 0 && (
-                          <div className="s-note">暂无概念。对话中让模型 brain_learn，或点「+ 新概念」手动加。</div>
+                          <div className="s-note">{t("set.brain.emptyNodes")}</div>
                         )}
                       </div>
                     </div>
@@ -5654,33 +5718,33 @@ function SettingsModal({
                     {/* 右：详情编辑 */}
                     <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
                       {!brainDraft ? (
-                        <div className="s-note">← 选择左侧概念查看/编辑，或点「+ 新概念」。</div>
+                        <div className="s-note">{t("set.brain.selectHint")}</div>
                       ) : (
                         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                           <label className="field">
-                            <span>名称</span>
+                            <span>{t("set.brain.fName")}</span>
                             <input
                               value={brainDraft.name}
                               onChange={(e) => setBrainDraft({ ...brainDraft, name: e.target.value })}
                             />
                           </label>
                           <label className="field">
-                            <span>类型</span>
+                            <span>{t("set.brain.fType")}</span>
                             <input
                               value={brainDraft.type}
-                              placeholder="项目/服务器/脚本/注意事项…"
+                              placeholder={t("set.brain.fTypePlaceholder")}
                               onChange={(e) => setBrainDraft({ ...brainDraft, type: e.target.value })}
                             />
                           </label>
                           <label className="field">
-                            <span>摘要</span>
+                            <span>{t("set.brain.fSummary")}</span>
                             <input
                               value={brainDraft.summary}
                               onChange={(e) => setBrainDraft({ ...brainDraft, summary: e.target.value })}
                             />
                           </label>
                           <label className="field">
-                            <span>别名（逗号分隔）</span>
+                            <span>{t("set.brain.fAliases")}</span>
                             <input
                               value={brainDraft.aliases.join(", ")}
                               onChange={(e) =>
@@ -5695,19 +5759,19 @@ function SettingsModal({
                             />
                           </label>
                           <label className="field">
-                            <span>结构化属性（每行 键: 值）</span>
+                            <span>{t("set.brain.fAttrs")}</span>
                             <textarea
                               className="sysprompt-area"
                               style={{ minHeight: 90 }}
                               value={attrsToText(brainDraft.attrs)}
-                              placeholder={"git路径: ~/...\n测试环境: fig01\n部署脚本: ..."}
+                              placeholder={t("set.brain.fAttrsPlaceholder")}
                               onChange={(e) => setBrainDraft({ ...brainDraft, attrs: textToAttrs(e.target.value) })}
                             />
                           </label>
                           {brainDraft.id && (
                             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                               <span className="s-note" style={{ margin: 0 }}>
-                                关系
+                                {t("set.brain.relations")}
                               </span>
                               {brainEdges
                                 .filter((ed) => ed.from === brainDraft.id)
@@ -5723,20 +5787,20 @@ function SettingsModal({
                                         reloadBrain();
                                       }}
                                     >
-                                      删
+                                      {t("set.brain.delEdge")}
                                     </button>
                                   </div>
                                 ))}
                               <div style={{ display: "flex", gap: 6 }}>
                                 <input
                                   style={{ width: 110 }}
-                                  placeholder="关系名"
+                                  placeholder={t("set.brain.relationName")}
                                   value={brainNewEdge.relation}
                                   onChange={(e) => setBrainNewEdge({ ...brainNewEdge, relation: e.target.value })}
                                 />
                                 <input
                                   style={{ flex: 1 }}
-                                  placeholder="目标概念名"
+                                  placeholder={t("set.brain.targetNode")}
                                   value={brainNewEdge.to}
                                   onChange={(e) => setBrainNewEdge({ ...brainNewEdge, to: e.target.value })}
                                 />
@@ -5754,7 +5818,7 @@ function SettingsModal({
                                     }
                                   }}
                                 >
-                                  加关系
+                                  {t("set.brain.addEdge")}
                                 </button>
                               </div>
                             </div>
@@ -5773,10 +5837,10 @@ function SettingsModal({
                                   attrs: brainDraft.attrs,
                                 });
                                 await reloadBrain();
-                                setBrainWarmMsg("✓ 已保存");
+                                setBrainWarmMsg(t("set.brain.saved"));
                               }}
                             >
-                              保存
+                              {t("set.brain.save")}
                             </button>
                             {brainDraft.id && (
                               <button
@@ -5788,7 +5852,7 @@ function SettingsModal({
                                   reloadBrain();
                                 }}
                               >
-                                删除概念
+                                {t("set.brain.delNode")}
                               </button>
                             )}
                           </div>
@@ -5806,13 +5870,13 @@ function SettingsModal({
                     }}
                   >
                     <span className="s-note" style={{ margin: 0 }}>
-                      📚 文档库（冷存储 · 知识宫殿等长期大文本，按需路由读原文）· 已索引{" "}
-                      <b>{docStat.chunks}</b> 块 / <b>{docStat.files}</b> 文档
+                      {t("set.brain.docLib")}{" "}
+                      <b>{docStat.chunks}</b> {t("set.brain.docChunks")} / <b>{docStat.files}</b> {t("set.brain.docFiles")}
                     </span>
                     <div style={{ display: "flex", gap: 6 }}>
                       <input
                         style={{ flex: 1 }}
-                        placeholder="要索引的目录，如 ~/Documents/tanxun/知识宫殿"
+                        placeholder={t("set.brain.docDirPlaceholder")}
                         value={docDir}
                         onChange={(e) => setDocDir(e.target.value)}
                       />
@@ -5821,18 +5885,18 @@ function SettingsModal({
                         disabled={docBuilding || conExtract?.running || !docDir.trim()}
                         onClick={async () => {
                           setDocBuilding(true);
-                          setDocProg("准备…");
+                          setDocProg(t("set.brain.docPreparing"));
                           try {
                             const s = await window.minicc.brainBuildDocs(docDir.trim());
                             setDocStat(s);
                           } catch (e: any) {
-                            setDocProg("✗ " + (e?.message || "构建失败"));
+                            setDocProg("✗ " + (e?.message || t("set.brain.docBuildFail")));
                           } finally {
                             setDocBuilding(false);
                           }
                         }}
                       >
-                        {docBuilding ? "索引中…" : docStat.chunks > 0 ? "重建索引" : "建立索引"}
+                        {docBuilding ? t("set.brain.docBuilding") : docStat.chunks > 0 ? t("set.brain.docRebuild") : t("set.brain.docBuild")}
                       </button>
                     </div>
                     {docProg && (
@@ -5845,44 +5909,44 @@ function SettingsModal({
                       <button
                         type="button"
                         disabled={docStat.files === 0 || conExtract?.running}
-                        title="用当前模型从已索引文档抽取概念与关系，填进知识网络（默认只抽未抽过的文档）"
+                        title={t("set.brain.extractNewTitle")}
                         onClick={async () => {
                           const r = await window.minicc.brainExtractConcepts({ all: false });
-                          if (!r.started) setBrainWarmMsg("✗ " + (r.reason || "无法开始抽取"));
+                          if (!r.started) setBrainWarmMsg("✗ " + (r.reason || t("set.brain.extractFail")));
                         }}
                       >
-                        {conExtract?.running ? "抽取中…" : "抽取概念(新增)"}
+                        {conExtract?.running ? t("set.brain.extracting") : t("set.brain.extractNew")}
                       </button>
                       <button
                         type="button"
                         disabled={docStat.files === 0 || conExtract?.running}
-                        title="忽略已抽记录，对全部文档重新抽取（更费 token）"
+                        title={t("set.brain.extractAllTitle")}
                         onClick={async () => {
                           const r = await window.minicc.brainExtractConcepts({ all: true });
-                          if (!r.started) setBrainWarmMsg("✗ " + (r.reason || "无法开始抽取"));
+                          if (!r.started) setBrainWarmMsg("✗ " + (r.reason || t("set.brain.extractFail")));
                         }}
                       >
-                        全部重抽
+                        {t("set.brain.extractAll")}
                       </button>
                       {conExtract?.running && (
                         <button type="button" className="allow" onClick={() => window.minicc.brainStopConcepts()}>
-                          停止
+                          {t("set.brain.stop")}
                         </button>
                       )}
                       {conExtract && (conExtract.running || conExtract.phase === "done" || conExtract.phase === "stopped") && (
                         <span className="s-note" style={{ margin: 0 }}>
                           {conExtract.running
-                            ? `抽取 ${conExtract.done}/${conExtract.total} 篇 · 已生成 ${conExtract.created} 概念${conExtract.cur ? " · " + conExtract.cur : ""}`
+                            ? `${t("set.brain.exRunning")} ${conExtract.done}/${conExtract.total} ${t("set.brain.exDocs")} · ${t("set.brain.exGen")} ${conExtract.created} ${t("set.brain.exConcepts")}${conExtract.cur ? " · " + conExtract.cur : ""}`
                             : conExtract.phase === "stopped"
-                              ? `已停止（${conExtract.done}/${conExtract.total} 篇，${conExtract.created} 概念）`
-                              : `✓ 抽取完成，共 ${conExtract.created} 概念`}
+                              ? `${t("set.brain.exStopped")} (${conExtract.done}/${conExtract.total} ${t("set.brain.exDocs")}, ${conExtract.created} ${t("set.brain.exConcepts")})`
+                              : `${t("set.brain.exDone")} · ${t("set.brain.exTotalGen")} ${conExtract.created} ${t("set.brain.exConcepts")}`}
                         </span>
                       )}
                     </div>
                   </div>
                   <p className="s-note pp-fixed">
-                    存于 <code>~/.minicc/brain/graph.json</code>，向量模型在 <code>~/.minicc/brain/models</code>。
-                    模型对话中调用 brain_learn/brain_link 会自动往这里长知识；「抽取概念」按钮可用 k3 从文档批量补概念。
+                    {t("set.brain.footStored")} <code>~/.minicc/brain/graph.json</code>, {t("set.brain.footModels")}{" "}
+                    <code>~/.minicc/brain/models</code>. {t("set.brain.footDesc")}
                   </p>
                 </div>
               );
@@ -5973,7 +6037,7 @@ function SettingsModal({
                           {mcpEdit === n && (
                             <div className="mcp-editor">
                               {mcpEditFields.length === 0 && (
-                                <div className="mcp-ed-none">此服务器无需额外配置，开箱可用。</div>
+                                <div className="mcp-ed-none">{t("set.mcp.edNone")}</div>
                               )}
                               {mcpEditFields.map((f, fi) => {
                                 const raw = f.kind === "arg" ? mcpEditArgs[f.idx!] ?? "" : mcpEditEnvMap[f.key!] ?? "";
@@ -5983,7 +6047,7 @@ function SettingsModal({
                                   <div className="mcp-ed-field" key={fi}>
                                     <div className="mcp-ed-flabel">
                                       {f.label}
-                                      {isPh && <span className="mcp-ed-req"> · 需填写</span>}
+                                      {isPh && <span className="mcp-ed-req">{t("set.mcp.edReq")}</span>}
                                     </div>
                                     {f.hint && <div className="mcp-ed-fhint">{f.hint}</div>}
                                     <input
@@ -6002,10 +6066,10 @@ function SettingsModal({
                               })}
                               <div className="mcp-ed-actions">
                                 <button type="button" className="mcp-btn" onClick={() => setMcpEdit(null)}>
-                                  取消
+                                  {t("set.cancel")}
                                 </button>
                                 <button type="button" className="mcp-btn save" onClick={() => saveEditMcp(n)}>
-                                  保存并重连
+                                  {t("set.mcp.saveReconnect")}
                                 </button>
                               </div>
                             </div>
@@ -6026,7 +6090,7 @@ function SettingsModal({
                       );
                     })}
 
-                    <div className="mcp-sec">可安装</div>
+                    <div className="mcp-sec">{t("set.mcp.installable")}</div>
                     {MCP_CATALOG.filter(
                       (c) => !q || c.name.toLowerCase().includes(q) || c.label.includes(mcpSearch) || c.desc.includes(mcpSearch),
                     ).map((c) => {
@@ -6040,7 +6104,7 @@ function SettingsModal({
                             <span className="mcp-cat-desc">{c.desc}</span>
                           </div>
                           <button type="button" className="mcp-btn" disabled={installed} onClick={() => mcpInstall(c)}>
-                            {installed ? "已安装" : "安装"}
+                            {installed ? t("set.mcp.installed") : t("set.mcp.install")}
                           </button>
                         </div>
                       );
@@ -6049,9 +6113,9 @@ function SettingsModal({
                     {/* 在线库：搜索整个官方 MCP Registry */}
                     {q.length >= 2 && (
                       <>
-                        <div className="mcp-sec">在线库（MCP Registry）{mcpSearching ? " · 搜索中…" : ""}</div>
+                        <div className="mcp-sec">{t("set.mcp.online")}{mcpSearching ? t("set.mcp.searching") : ""}</div>
                         {!mcpSearching && mcpOnline.length === 0 && (
-                          <div className="mcp-empty">在线库没搜到可本地安装的结果，换个词试试。</div>
+                          <div className="mcp-empty">{t("set.mcp.onlineEmpty")}</div>
                         )}
                         {mcpOnline.map((r, i) => {
                           const key = r.fullName + ":" + r.version + ":" + i;
@@ -6078,28 +6142,28 @@ function SettingsModal({
                                   disabled={installed}
                                   onClick={() => mcpInstall(r)}
                                 >
-                                  {installed ? "已安装" : "安装"}
+                                  {installed ? t("set.mcp.installed") : t("set.mcp.install")}
                                 </button>
                               </div>
                               {open && (
                                 <div className="mcp-detail">
                                   <div className="mcp-d-row">
-                                    <b>全名</b>
+                                    <b>{t("set.mcp.dFullName")}</b>
                                     <span>{r.fullName}</span>
                                   </div>
                                   <div className="mcp-d-row">
-                                    <b>说明</b>
-                                    <span>{r.description || "（无）"}</span>
+                                    <b>{t("set.mcp.dDesc")}</b>
+                                    <span>{r.description || t("set.mcp.dNone")}</span>
                                   </div>
                                   <div className="mcp-d-row">
-                                    <b>安装</b>
+                                    <b>{t("set.mcp.dInstall")}</b>
                                     <code>
                                       {r.command} {r.args.join(" ")}
                                     </code>
                                   </div>
                                   {r.repo && (
                                     <div className="mcp-d-row">
-                                      <b>仓库</b>
+                                      <b>{t("set.mcp.dRepo")}</b>
                                       <a
                                         className="link-inline"
                                         onClick={() => window.minicc.openExternal(r.repo)}
@@ -6114,10 +6178,10 @@ function SettingsModal({
                             </div>
                           );
                         })}
-                        {mcpLoadingMore && <div className="mcp-empty">加载更多…</div>}
+                        {mcpLoadingMore && <div className="mcp-empty">{t("set.mcp.loadingMore")}</div>}
                         {!mcpLoadingMore && mcpCursor && mcpOnline.length > 0 && (
                           <div className="mcp-empty mcp-loadmore" onClick={loadMoreMcp}>
-                            下滑或点此加载更多
+                            {t("set.mcp.loadMore")}
                           </div>
                         )}
                       </>
@@ -6176,7 +6240,7 @@ function SettingsModal({
                 .filter((g) => g.tools.length > 0);
               const shownTotal = filtered.reduce((n, g) => n + g.tools.length, 0);
               const badge = (kind: ToolGroup["kind"]) =>
-                kind === "builtin" ? "内置" : kind === "browser" ? "浏览器" : "MCP";
+                kind === "builtin" ? t("set.tools.badgeBuiltin") : kind === "browser" ? t("set.tools.badgeBrowser") : t("set.tools.badgeMcp");
               return (
                 <div className="tools-pane">
                   <div className="tools-bar">
@@ -6184,7 +6248,7 @@ function SettingsModal({
                       className="mcp-search"
                       value={toolFilter}
                       onChange={(e) => setToolFilter(e.target.value)}
-                      placeholder={`搜索工具名 / 描述…（共 ${toolTotal} 个）`}
+                      placeholder={`${t("set.tools.search")}（${toolTotal}）`}
                     />
                     <div className="tools-viewsw">
                       <button
@@ -6192,7 +6256,7 @@ function SettingsModal({
                         className={"tv-btn" + (toolView === "list" ? " on" : "")}
                         onClick={() => setToolView("list")}
                       >
-                        列表
+                        {t("set.tools.list")}
                       </button>
                       <button
                         type="button"
@@ -6222,7 +6286,7 @@ function SettingsModal({
                       )}
                     </pre>
                   ) : filtered.length === 0 ? (
-                    <div className="mcp-empty">没有匹配的工具</div>
+                    <div className="mcp-empty">{t("set.tools.noMatch")}</div>
                   ) : (
                     filtered.map((g) => (
                       <div key={g.source} className="tools-group">
@@ -6240,7 +6304,7 @@ function SettingsModal({
                           >
                             <span className="tool-name">
                               {t.name}
-                              {t.readOnly && <span className="tool-ro">只读</span>}
+                              {t.readOnly && <span className="tool-ro">{t("set.tools.readOnly")}</span>}
                             </span>
                             <span className="tool-desc">{t.description}</span>
                           </button>
@@ -6250,7 +6314,7 @@ function SettingsModal({
                   )}
                   {toolView === "list" && (
                     <div className="tools-count">
-                      显示 {shownTotal} / {toolTotal} 个工具
+                      {t("set.tools.showing")} {shownTotal} / {toolTotal} {t("set.tools.toolsUnit")}
                     </div>
                   )}
                 </div>
@@ -6261,40 +6325,40 @@ function SettingsModal({
           {tab === "secrets" && (
             <div className="secrets-pane">
               <p className="s-note">
-                密钥本地加密存储(系统钥匙串),明文永不落盘、也永不发给模型。发送时命中的密钥自动用占位符替换,本机执行时以环境变量/占位符回填。
-                {!secretsAvail && <b style={{ color: "var(--danger, #c0392b)" }}> ⚠ 当前系统加密不可用,暂无法安全存储。</b>}
+                {t("set.sec.note")}
+                {!secretsAvail && <b style={{ color: "var(--danger, #c0392b)" }}>{t("set.sec.unavailable")}</b>}
               </p>
 
               <div className="sec-add">
                 <div className="sec-add-row">
                   <input
                     className="sec-in"
-                    placeholder="名称 (如 openai_api_key)"
+                    placeholder={t("set.sec.namePlaceholder")}
                     value={secNew.name}
                     onChange={(e) => setSecNew({ ...secNew, name: e.target.value })}
                   />
                   <input
                     className="sec-in"
                     type="password"
-                    placeholder="密钥值 (加密存储,不回显)"
+                    placeholder={t("set.sec.valuePlaceholder")}
                     value={secNew.value}
                     onChange={(e) => setSecNew({ ...secNew, value: e.target.value })}
                   />
                 </div>
                 <button type="button" className="sec-more-toggle" onClick={() => setSecMore((v) => !v)}>
-                  {secMore ? "▾ 收起" : "▸ 展开更多（环境变量名 / 备注）"}
+                  {secMore ? t("set.sec.collapse") : t("set.sec.expand")}
                 </button>
                 {secMore && (
                   <div className="sec-add-row">
                     <input
                       className="sec-in"
-                      placeholder="环境变量名 (如 OPENAI_API_KEY,默认同名称)"
+                      placeholder={t("set.sec.envPlaceholder")}
                       value={secNew.envVar}
                       onChange={(e) => setSecNew({ ...secNew, envVar: e.target.value })}
                     />
                     <input
                       className="sec-in"
-                      placeholder="备注 (可选)"
+                      placeholder={t("set.sec.notePlaceholder")}
                       value={secNew.note}
                       onChange={(e) => setSecNew({ ...secNew, note: e.target.value })}
                     />
@@ -6302,10 +6366,10 @@ function SettingsModal({
                 )}
                 <div className="sec-add-actions">
                   <button type="button" className="allow" onClick={addSecret} disabled={!secretsAvail}>
-                    + 添加密钥
+                    {t("set.sec.add")}
                   </button>
                   <button type="button" onClick={() => setSecImportOpen((v) => !v)} disabled={!secretsAvail}>
-                    从 .env 导入
+                    {t("set.sec.importEnv")}
                   </button>
                   {secErr && <span className="sec-err">{secErr}</span>}
                 </div>
@@ -6313,12 +6377,12 @@ function SettingsModal({
                   <div className="sec-import">
                     <textarea
                       className="sec-import-ta"
-                      placeholder={"粘贴 .env 内容，每行 KEY=VALUE\nOPENAI_API_KEY=sk-...\nDB_PASSWORD=..."}
+                      placeholder={t("set.sec.importPlaceholder")}
                       value={secImportText}
                       onChange={(e) => setSecImportText(e.target.value)}
                     />
                     <button type="button" className="allow" onClick={doImportEnv}>
-                      导入
+                      {t("set.sec.import")}
                     </button>
                   </div>
                 )}
@@ -6332,7 +6396,7 @@ function SettingsModal({
                         <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
                         <line x1="1" y1="1" x2="23" y2="23" />
                       </svg>
-                      隐藏明文
+                      {t("set.sec.hidePlain")}
                     </button>
                   ) : unlockOpen ? (
                     <div className="sec-unlock">
@@ -6340,13 +6404,13 @@ function SettingsModal({
                         type="password"
                         className="sec-in"
                         autoFocus
-                        placeholder="输入本机账号密码以查看明文"
+                        placeholder={t("set.sec.unlockPlaceholder")}
                         value={unlockPw}
                         onChange={(e) => setUnlockPw(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && doUnlock()}
                       />
                       <button type="button" className="allow" onClick={doUnlock}>
-                        解锁
+                        {t("set.sec.unlock")}
                       </button>
                       <button
                         type="button"
@@ -6356,7 +6420,7 @@ function SettingsModal({
                           setUnlockErr("");
                         }}
                       >
-                        取消
+                        {t("set.cancel")}
                       </button>
                       {unlockErr && <span className="sec-err">{unlockErr}</span>}
                     </div>
@@ -6366,7 +6430,7 @@ function SettingsModal({
                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                         <circle cx="12" cy="12" r="3" />
                       </svg>
-                      查看明文（需本机账号密码）
+                      {t("set.sec.revealPlain")}
                     </button>
                   )}
                 </div>
@@ -6374,7 +6438,7 @@ function SettingsModal({
 
               <div className="sec-list">
                 {secrets.length === 0 ? (
-                  <div className="mcp-empty">还没有密钥。把常用密钥加进来,聊天/工具里出现就自动脱敏替换。</div>
+                  <div className="mcp-empty">{t("set.sec.empty")}</div>
                 ) : (
                   secrets.map((s) => (
                     <div key={s.id} className="sec-row">
@@ -6393,13 +6457,13 @@ function SettingsModal({
                       <button
                         type="button"
                         className="sec-del"
-                        title="删除"
+                        title={t("set.sec.delete")}
                         onClick={async () => {
                           await window.minicc.secretsDelete(s.id);
                           reloadSecrets();
                         }}
                       >
-                        删除
+                        {t("set.sec.delete")}
                       </button>
                     </div>
                   ))
@@ -6460,16 +6524,16 @@ function SettingsModal({
         <div className="add-st-dialog tool-detail" onClick={(e) => e.stopPropagation()}>
           <h3>
             {toolSel.name}
-            {toolSel.readOnly && <span className="tool-ro">只读</span>}
+            {toolSel.readOnly && <span className="tool-ro">{t("set.tools.readOnly")}</span>}
           </h3>
           <p className="s-note tool-detail-desc">{toolSel.description}</p>
-          <div className="tool-detail-label">入参 Schema</div>
+          <div className="tool-detail-label">{t("set.tools.detailSchema")}</div>
           <pre className="tools-json tool-detail-schema">
             {JSON.stringify(toolSel.inputSchema, null, 2)}
           </pre>
           <div className="btns">
             <button className="allow" onClick={() => setToolSel(null)}>
-              关闭
+              {t("set.tools.close")}
             </button>
           </div>
         </div>
