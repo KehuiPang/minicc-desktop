@@ -1314,9 +1314,10 @@ if (!gotLock) {
   // 系统托盘 + 右键菜单（任务栏图标右键：打开无为 / 退出）
   function createTray() {
     try {
-      const iconFile = join(__dirname, "../../build/icon.png");
+      // 托盘专用多尺寸 ico：Windows 按 DPI 自动选最清晰的一档，别手动缩到 18(会糊)
+      const iconFile = join(__dirname, "../../build/tray.ico");
       const img = nativeImage.createFromPath(iconFile);
-      tray = new Tray(img.isEmpty() ? img : img.resize({ width: 18, height: 18 }));
+      tray = new Tray(img);
       tray.setToolTip("无为");
       tray.setContextMenu(
         Menu.buildFromTemplate([

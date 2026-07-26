@@ -300,10 +300,35 @@ function WuweiLoginModal({
   function friendlyErr(raw?: string): string {
     const s = (raw || "").trim();
     if (!s) return t("login.err.generic");
+    // 1. 精确错误码(如 missing_credentials / email_exists)
     const mapped = t("login.err." + s.toLowerCase(), "");
     if (mapped) return mapped;
-    // 含空格或非 ASCII → 认为是已可读的消息，原样显示；否则是未知机器码，给通用兜底
-    if (/\s/.test(s) || /[^\x00-\x7f]/.test(s)) return s;
+    // 2. 已含中文(多为我们后端的可读提示) → 原样显示
+    if (/[一-鿿]/.test(s)) return s;
+    // 3. 匹配已知英文消息(Supabase 等第三方回的) → 映射成中文
+    const low = s.toLowerCase();
+    const M: [string, string][] = [
+      ["invalid login credentials", "login.err.invalid_credentials"],
+      ["invalid credentials", "login.err.invalid_credentials"],
+      ["email not confirmed", "login.err.email_not_confirmed"],
+      ["already registered", "login.err.email_exists"],
+      ["already been registered", "login.err.email_exists"],
+      ["user not found", "login.err.user_not_found"],
+      ["signups not allowed", "login.err.user_not_found"],
+      ["has expired", "login.err.code_expired"],
+      ["expired", "login.err.code_expired"],
+      ["invalid otp", "login.err.invalid_code"],
+      ["invalid token", "login.err.invalid_code"],
+      ["token is invalid", "login.err.invalid_code"],
+      ["should be at least", "login.err.weak_password"],
+      ["for security purposes", "login.err.rate_limited"],
+      ["rate limit", "login.err.rate_limited"],
+      ["too many", "login.err.rate_limited"],
+      ["network", "login.err.network"],
+      ["failed to fetch", "login.err.network"],
+    ];
+    for (const [pat, key] of M) if (low.includes(pat)) return t(key);
+    // 4. 其它未知英文技术消息 → 通用兜底(绝不把英文技术串丢给用户)
     return t("login.err.generic");
   }
   async function sendCode() {
@@ -528,12 +553,15 @@ function WuweiLoginModal({
                     {mode === "email-register" ? t("login.haveAccount") : t("login.noAccount")}
                   </span>
                   {mode === "email-login" && (
-                    <span
-                      style={{ color: "var(--text-muted)", cursor: "pointer" }}
-                      onClick={() => { setMode("email-reset"); setErr(""); }}
-                    >
-                      {t("login.forgotPassword")}
-                    </span>
+                    <>
+                      <span style={{ width: 1, height: 11, background: "var(--border)", alignSelf: "center" }} />
+                      <span
+                        style={{ color: "var(--text-muted)", cursor: "pointer" }}
+                        onClick={() => { setMode("email-reset"); setErr(""); }}
+                      >
+                        {t("login.forgotPassword")}
+                      </span>
+                    </>
                   )}
                 </>
               )}

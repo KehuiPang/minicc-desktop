@@ -68,6 +68,7 @@ const DICT: Record<string, { zh: string; en: string }> = {
   // 后端错误码 → 友好文案
   "login.err.missing_credentials": { zh: "请输入邮箱和密码", en: "Enter your email and password" },
   "login.err.invalid_credentials": { zh: "邮箱或密码不正确", en: "Wrong email or password" },
+  "login.err.email_not_confirmed": { zh: "邮箱尚未验证，请先完成邮箱验证", en: "Email not verified yet — please verify first" },
   "login.err.invalid_login": { zh: "邮箱或密码不正确", en: "Wrong email or password" },
   "login.err.user_not_found": { zh: "该账号不存在，请先注册", en: "Account not found — sign up first" },
   "login.err.email_not_found": { zh: "该账号不存在，请先注册", en: "Account not found — sign up first" },

@@ -34,10 +34,12 @@
     "files": [
       "out/**/*",
       "build/icon.png",
+      "build/tray.ico",
       "package.json"
     ],
     "asarUnpack": [
       "build/icon.png",
+      "build/tray.ico",
       "**/node_modules/@anthropic-ai/**",
       "**/node_modules/onnxruntime-node/**",
       "**/node_modules/@xenova/**"
