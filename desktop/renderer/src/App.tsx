@@ -279,7 +279,7 @@ function WuweiLoginModal({
   onClose: () => void;
   onSuccess: (me: WuweiMe) => void;
 }) {
-  type Mode = "email-login" | "email-register" | "phone";
+  type Mode = "email-login" | "email-register" | "email-reset" | "phone";
   const zh = lang === "zh";
   const [mode, setMode] = useState<Mode>("email-login");
   const [email, setEmail] = useState("");
@@ -314,10 +314,21 @@ function WuweiLoginModal({
     }
     setSending(true);
     setErr("");
-    const r = await window.minicc.wuweiSendCode(target, lang);
+    // 注册要求邮箱未注册、找回密码要求已注册 → 后端按 purpose 查重
+    const purpose = mode === "email-reset" ? "reset" : mode === "email-register" ? "register" : undefined;
+    const r = await window.minicc.wuweiSendCode(target, lang, purpose);
     setSending(false);
-    if (r === true) setCooldown(60);
-    else setErr(typeof r === "string" ? friendlyErr(r) : t("login.sendFail"));
+    if (r === true) {
+      setCooldown(60);
+      return;
+    }
+    // 注册时邮箱已存在 → 提示并引导去登录
+    if (r === "email_exists") {
+      setErr(t("login.err.email_exists"));
+      setMode("email-login");
+      return;
+    }
+    setErr(typeof r === "string" ? friendlyErr(r) : t("login.sendFail"));
   }
   async function submit() {
     // 客户端先做空值校验，避免把 missing_credentials 这类码丢给用户
@@ -326,14 +337,16 @@ function WuweiLoginModal({
       if (!code.trim()) return setErr(t("login.needCode"));
     } else {
       if (!email.trim()) return setErr(t("login.needEmail"));
-      if (mode === "email-register" && !code.trim()) return setErr(t("login.needCode"));
+      if ((mode === "email-register" || mode === "email-reset") && !code.trim()) return setErr(t("login.needCode"));
       if (!password) return setErr(t("login.needPassword"));
     }
     setBusy(true);
     setErr("");
     let res: { me?: WuweiMe; error?: string };
     if (mode === "email-login") res = await window.minicc.wuweiPasswordLogin(email.trim(), password);
-    else if (mode === "email-register") res = await window.minicc.wuweiRegister(email.trim(), code.trim(), password);
+    // 找回密码复用 register 接口：验证码校验通过后重设密码并直接登录
+    else if (mode === "email-register" || mode === "email-reset")
+      res = await window.minicc.wuweiRegister(email.trim(), code.trim(), password);
     else res = await window.minicc.wuweiCodeLogin(phone.trim(), code.trim());
     setBusy(false);
     if (res.me) onSuccess(res.me);
@@ -415,7 +428,11 @@ function WuweiLoginModal({
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginBottom: incentive ? 8 : 16 }}>
             <WuweiLogo size={46} />
             <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: 0.5 }}>
-              {mode === "email-register" ? t("login.register") : t("login.signin")}
+              {mode === "email-register"
+                ? t("login.register")
+                : mode === "email-reset"
+                  ? t("login.resetTitle")
+                  : t("login.signin")}
             </div>
           </div>
           {incentive && (
@@ -452,7 +469,7 @@ function WuweiLoginModal({
           ) : (
             <>
               <input style={inputStyle} placeholder={t("login.email")} value={email} onChange={(e) => setEmail(e.target.value)} />
-              {mode === "email-register" && (
+              {(mode === "email-register" || mode === "email-reset") && (
                 <div style={{ display: "flex", gap: 8 }}>
                   <input style={{ ...inputStyle, flex: 1 }} placeholder={t("login.emailCode")} value={code} onChange={(e) => setCode(e.target.value)} />
                   <button onClick={sendCode} disabled={sending || cooldown > 0} style={codeBtnStyle}>
@@ -460,7 +477,19 @@ function WuweiLoginModal({
                   </button>
                 </div>
               )}
-              <input style={inputStyle} type="password" placeholder={mode === "email-register" ? t("login.setPassword") : t("login.password")} value={password} onChange={(e) => setPassword(e.target.value)} />
+              <input
+                style={inputStyle}
+                type="password"
+                placeholder={
+                  mode === "email-register"
+                    ? t("login.setPassword")
+                    : mode === "email-reset"
+                      ? t("login.newPassword")
+                      : t("login.password")
+                }
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
             </>
           )}
 
@@ -471,18 +500,43 @@ function WuweiLoginModal({
             disabled={busy}
             style={{ width: "100%", padding: "10px", borderRadius: 9, border: "none", background: "var(--spark)", color: "#F4F6F8", fontSize: 14, fontWeight: 600, cursor: busy ? "default" : "pointer", marginBottom: 10 }}
           >
-            {busy ? t("login.busy") : mode === "email-register" ? t("login.register") : t("login.signin")}
+            {busy
+              ? t("login.busy")
+              : mode === "email-register"
+                ? t("login.register")
+                : mode === "email-reset"
+                  ? t("login.resetSubmit")
+                  : t("login.signin")}
           </button>
 
-          {/* 注册/登录 小提示（手机号自动注册，不显示） */}
+          {/* 切换：注册↔登录、忘记密码、找回密码返回（手机号自动注册，不显示） */}
           {mode !== "phone" && (
-            <div style={{ textAlign: "center", fontSize: 12, marginBottom: 12 }}>
-              <span
-                style={{ color: "var(--text-muted)", cursor: "pointer" }}
-                onClick={() => { setMode(mode === "email-register" ? "email-login" : "email-register"); setErr(""); }}
-              >
-                {mode === "email-register" ? t("login.haveAccount") : t("login.noAccount")}
-              </span>
+            <div style={{ textAlign: "center", fontSize: 12, marginBottom: 12, display: "flex", justifyContent: "center", gap: 14 }}>
+              {mode === "email-reset" ? (
+                <span
+                  style={{ color: "var(--text-muted)", cursor: "pointer" }}
+                  onClick={() => { setMode("email-login"); setErr(""); }}
+                >
+                  {t("login.backToLogin")}
+                </span>
+              ) : (
+                <>
+                  <span
+                    style={{ color: "var(--text-muted)", cursor: "pointer" }}
+                    onClick={() => { setMode(mode === "email-register" ? "email-login" : "email-register"); setErr(""); }}
+                  >
+                    {mode === "email-register" ? t("login.haveAccount") : t("login.noAccount")}
+                  </span>
+                  {mode === "email-login" && (
+                    <span
+                      style={{ color: "var(--text-muted)", cursor: "pointer" }}
+                      onClick={() => { setMode("email-reset"); setErr(""); }}
+                    >
+                      {t("login.forgotPassword")}
+                    </span>
+                  )}
+                </>
+              )}
             </div>
           )}
 

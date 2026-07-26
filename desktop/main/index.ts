@@ -2238,7 +2238,9 @@ ipcMain.handle("account:wuwei-register", (_e, email: string, code: string, passw
 ipcMain.handle("account:wuwei-code-login", (_e, target: string, code: string) =>
   wuweiCodeLogin(target, code).then((r) => finishWuweiSignin(r, "login")),
 );
-ipcMain.handle("account:wuwei-send-code", (_e, target: string, lang?: string) => wuweiSendCode(target, lang));
+ipcMain.handle("account:wuwei-send-code", (_e, target: string, lang?: string, purpose?: string) =>
+  wuweiSendCode(target, lang, purpose),
+);
 // 冷启动/刷新：读本地会话 → /api/me；401 走 /api/refresh 续期后重试。
 ipcMain.handle("account:wuwei-me", async () => {
   const sess = loadWuweiSession();
