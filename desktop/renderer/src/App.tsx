@@ -1816,9 +1816,9 @@ export function App() {
                 </div>
                 <div
                   className="acct-name"
-                  title={wuwei ? wuwei.user.name || wuwei.user.email || "无为用户" : "游客（未登录）"}
+                  title={wuwei ? wuwei.user.name || wuwei.user.email || "无为用户" : t("acct.notLoggedIn")}
                 >
-                  {wuweiBusy ? "登录中…" : wuwei ? wuwei.user.name || wuwei.user.email || "无为用户" : "游客"}
+                  {wuweiBusy ? "登录中…" : wuwei ? wuwei.user.name || wuwei.user.email || "无为用户" : t("acct.guest")}
                 </div>
                 <span className="acct-caret">⋯</span>
               </button>
@@ -1884,7 +1884,7 @@ export function App() {
                           }}
                         >
                           <GearIcon size={15} />
-                          设置
+                          {t("acct.settings")}
                         </button>
                         {/* 退出放最后一项 */}
                         <button
@@ -1896,7 +1896,7 @@ export function App() {
                           }}
                         >
                           <LogoutIcon size={15} />
-                          退出
+                          {t("acct.logout")}
                         </button>
                       </>
                     ) : (
@@ -2812,6 +2812,8 @@ export function App() {
           onStream={changeStream}
           keepRecent={keepRecent}
           onKeepRecent={changeKeepRecent}
+          lang={lang}
+          onLang={changeLang}
         />
       )}
       {/* 应用内登录框：邮箱/手机号/Google。未登录点发送(loginResume)或点账号登录时弹出 */}
@@ -4169,6 +4171,8 @@ function SettingsModal({
   onStream,
   keepRecent,
   onKeepRecent,
+  lang,
+  onLang,
 }: {
   onClose: () => void;
   liveModels: Record<string, string[]>;
@@ -4180,6 +4184,8 @@ function SettingsModal({
   onStream: (mode: "typewriter" | "stream" | "instant", speed: number) => void;
   keepRecent: number;
   onKeepRecent: (n: number) => void;
+  lang: Lang;
+  onLang: (l: Lang) => void;
 }) {
   // 界面主题（并入设置页「外观」）
   const [uiTheme, setUiTheme] = useState("dark");
@@ -4981,6 +4987,19 @@ function SettingsModal({
           {/* ── 通用：会话分组 + 上下文压缩 + 账号读取 ── */}
           {tab === "general" && (
             <>
+              <div className="app-set-group">语言 / Language</div>
+              <div className="theme-pick" style={{ marginBottom: "16px" }}>
+                {(["zh", "en"] as Lang[]).map((l) => (
+                  <button
+                    key={l}
+                    type="button"
+                    className={"theme-opt" + (lang === l ? " on" : "")}
+                    onClick={() => onLang(l)}
+                  >
+                    {l === "zh" ? "中文" : "English"}
+                  </button>
+                ))}
+              </div>
               <div className="app-set-group">会话分组</div>
               <div className="theme-pick" style={{ marginBottom: "6px" }}>
                 {[
