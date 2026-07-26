@@ -1947,8 +1947,32 @@ export function App() {
                           {t("login.freeModels")}
                         </div>
                         {/* 具体模型名，让「顶级」落地 */}
-                        <div style={{ fontSize: 11, color: "var(--text-faint)", letterSpacing: 0.3, marginBottom: 13 }}>
-                          Claude · GPT · Gemini · DeepSeek{lang === "zh" ? " 等" : " & more"}
+                        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5, marginBottom: 13 }}>
+                          {[
+                            { n: "Kimi", c: "#1E1E1E" },
+                            { n: "Claude", c: "#C15F3C" },
+                            { n: "GPT", c: "#10A37F" },
+                            { n: "DeepSeek", c: "#4D6BFE" },
+                            { n: lang === "zh" ? "智谱" : "GLM", c: "#3859FF" },
+                          ].map((m) => (
+                            <span
+                              key={m.n}
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 4,
+                                fontSize: 11,
+                                color: "var(--text-dim)",
+                                background: "var(--bg-soft)",
+                                border: "1px solid var(--border)",
+                                padding: "2px 8px",
+                                borderRadius: 20,
+                              }}
+                            >
+                              <span style={{ width: 7, height: 7, borderRadius: "50%", background: m.c, flex: "0 0 auto" }} />
+                              {m.n}
+                            </span>
+                          ))}
                         </div>
                         {/* 次要：无为币激励，小徽章 */}
                         <div
@@ -5116,7 +5140,7 @@ function SettingsModal({
           {tab === "model" && (
             <>
               <label className="field">
-                <span>模型平台</span>
+                <span>{t("set.m.platform")}</span>
                 <select value={pid} onChange={(e) => changePreset(e.target.value)}>
                   {orderedPresets.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -5137,17 +5161,17 @@ function SettingsModal({
                     setShowAddStation(true);
                   }}
                 >
-                  ＋ 添加中转站
+                  {t("set.m.addStation")}
                 </button>
                 {preset.custom && (
                   <button type="button" className="station-del" onClick={() => deleteStation(pid)}>
-                    删除「{preset.label.replace(/（中转）$/, "")}」
+                    {t("set.m.delete")}「{preset.label.replace(/（中转）$/, "")}」
                   </button>
                 )}
               </div>
 
               <label className="field">
-                <span>模型</span>
+                <span>{t("set.m.model")}</span>
                 {modelOptions.length > 0 && !customModel ? (
                   <select
                     value={model}
@@ -5165,13 +5189,13 @@ function SettingsModal({
                         {m}
                       </option>
                     ))}
-                    <option value="__custom__">自定义 / 其它…</option>
+                    <option value="__custom__">{t("set.m.custom")}</option>
                   </select>
                 ) : (
                   <input
                     value={model}
                     onChange={(e) => setModel(e.target.value)}
-                    placeholder="模型名（直接输入）"
+                    placeholder={t("set.m.modelPlaceholder")}
                   />
                 )}
               </label>
@@ -5179,9 +5203,11 @@ function SettingsModal({
 
               {(preset.kind === "anthropic-apikey" || preset.kind === "openai") && preset.keyUrl && (
                 <div className="key-guide">
-                  没有 API Key？
-                  <a onClick={startGetKey}>去 {preset.label} 官网获取（复制后自动填入验证）↗</a>
-                  <span className="key-steps">（登录 → 创建 API Key → 复制，回来自动检测设置）</span>
+                  {t("set.m.noKey")}
+                  <a onClick={startGetKey}>
+                    {lang === "zh" ? `去 ${preset.label} 官网获取（复制后自动填入验证）↗` : `Get one from ${preset.label} ↗`}
+                  </a>
+                  <span className="key-steps">{t("set.m.getKeySteps")}</span>
                   {(sKeyWaiting || sKeyMsg) && (
                     <p className={"skey-msg" + (sKeyMsg.startsWith("✓") ? " ok" : sKeyMsg.startsWith("✗") ? " err" : "")}>
                       {sKeyMsg}
@@ -5191,7 +5217,7 @@ function SettingsModal({
                           className="link-inline"
                           onClick={() => trySettingsKey(apiKey)}
                         >
-                          立即验证已填入的
+                          {t("set.m.verifyNow")}
                         </button>
                       )}
                     </p>
@@ -5205,14 +5231,12 @@ function SettingsModal({
                 <>
                   {sAwaitCode ? (
                     <>
-                      <p className="s-note">
-                        浏览器里登录并点“同意”后，复制页面显示的授权码粘到下方（留空则自动读剪贴板），再点完成。
-                      </p>
+                      <p className="s-note">{t("set.m.oauthCodeHint")}</p>
                       <div className="key-wrap">
                         <input
                           value={sCode}
                           onChange={(e) => setSCode(e.target.value)}
-                          placeholder="粘贴授权码（可留空自动读剪贴板）"
+                          placeholder={t("set.m.pasteCode")}
                         />
                       </div>
                       <button
@@ -5221,11 +5245,11 @@ function SettingsModal({
                         onClick={claudeCompleteBrowser}
                         disabled={claudeBusy}
                       >
-                        {claudeBusy ? "校验中…" : "完成授权"}
+                        {claudeBusy ? t("set.m.verifying") : t("set.m.completeAuth")}
                       </button>
                       <p className="s-note">
                         <a className="link-inline" onClick={() => !claudeBusy && setSAwaitCode(false)}>
-                          返回
+                          {t("set.m.back")}
                         </a>
                       </p>
                     </>
@@ -5237,18 +5261,20 @@ function SettingsModal({
                         onClick={claudeOpenBrowser}
                         disabled={claudeBusy}
                       >
-                        🔑 一键授权（用浏览器登录）
+                        {t("set.m.authBrowser")}
                       </button>
                       <p className="s-note">
-                        用系统默认浏览器打开授权页，可直接选已登录的 Google 账号，登录并点“同意”后，复制授权码回来完成（走订阅额度，不额外计费）。
+                        {lang === "zh"
+                          ? "用系统默认浏览器打开授权页，可直接选已登录的 Google 账号，登录并点“同意”后，复制授权码回来完成（走订阅额度，不额外计费）。"
+                          : "Opens the authorization page in your default browser; pick your signed-in Google account, click “Allow”, then copy the code back (uses your subscription quota, no extra charge)."}
                         <a className="link-inline" onClick={() => !claudeBusy && claudeLoginWindow()}>
-                          改用应用内窗口登录
+                          {t("set.m.useInApp")}
                         </a>
                       </p>
                     </>
                   )}
                   <label className="field">
-                    <span>OAuth Token（一键授权会自动填，也可手动粘贴）</span>
+                    <span>{t("set.m.oauthToken")}</span>
                     <div className="key-wrap">
                       <input
                         type={showKey ? "text" : "password"}
@@ -5260,7 +5286,7 @@ function SettingsModal({
                         type="button"
                         className="eye-btn"
                         onClick={() => setShowKey((v) => !v)}
-                        title={showKey ? "隐藏" : "显示"}
+                        title={showKey ? t("set.m.hide") : t("set.m.show")}
                       >
                         <EyeIcon off={showKey} />
                       </button>
@@ -5280,23 +5306,25 @@ function SettingsModal({
                       try {
                         const ok = await window.minicc.codexLogin();
                         if (ok) onClose();
-                        else alert("Codex 授权未完成（取消/超时/端口 1455 被占）。");
+                        else alert(lang === "zh" ? "Codex 授权未完成（取消/超时/端口 1455 被占）。" : "Codex authorization failed (canceled/timeout/port 1455 busy).");
                       } finally {
                         setSCodexBusy(false);
                       }
                     }}
                   >
-                    {sCodexBusy ? "🔑 授权中…（浏览器完成登录）" : "🔑 一键授权（ChatGPT 登录）"}
+                    {sCodexBusy ? t("set.m.codexAuthing") : t("set.m.codexAuth")}
                   </button>
                   <p className="s-note">
-                    用系统默认浏览器打开 ChatGPT 登录（走本地回环，无需安装 codex CLI）。登录并同意后自动回来完成，授权写入本机 ~/.codex，可直接对话（走订阅额度）。
+                    {lang === "zh"
+                      ? "用系统默认浏览器打开 ChatGPT 登录（走本地回环，无需安装 codex CLI）。登录并同意后自动回来完成，授权写入本机 ~/.codex，可直接对话（走订阅额度）。"
+                      : "Opens ChatGPT login in your default browser (local loopback, no codex CLI needed). After you sign in and allow, it completes automatically and writes to ~/.codex — ready to chat (uses your subscription quota)."}
                   </p>
                 </>
               )}
 
               {(preset.kind === "anthropic-apikey" || preset.kind === "openai") && (
                 <label className="field">
-                  <span>API Key</span>
+                  <span>{t("set.m.apiKey")}</span>
                   <div className="key-wrap">
                     <input
                       type={showKey ? "text" : "password"}
@@ -6382,9 +6410,9 @@ function SettingsModal({
         </div>
 
         <div className="btns">
-          <button onClick={onClose}>取消</button>
+          <button onClick={onClose}>{t("set.cancel")}</button>
           <button className="allow" onClick={() => save()}>
-            {tab === "model" ? "保存并切换" : "保存"}
+            {tab === "model" ? t("set.save") : t("set.saveOnly")}
           </button>
         </div>
         </div>

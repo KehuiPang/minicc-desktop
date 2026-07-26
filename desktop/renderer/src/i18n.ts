@@ -124,6 +124,38 @@ const DICT: Record<string, { zh: string; en: string }> = {
   "set.d.dark": { zh: "暗色", en: "Dark" },
   "set.d.light": { zh: "白色", en: "Light" },
   "set.d.gold": { zh: "淡金", en: "Gold" },
+  // 模型 tab
+  "set.m.platform": { zh: "模型平台", en: "Provider" },
+  "set.m.addStation": { zh: "＋ 添加中转站", en: "＋ Add relay" },
+  "set.m.delete": { zh: "删除", en: "Delete" },
+  "set.m.model": { zh: "模型", en: "Model" },
+  "set.m.custom": { zh: "自定义 / 其它…", en: "Custom / other…" },
+  "set.m.modelPlaceholder": { zh: "模型名（直接输入）", en: "Model name (type it)" },
+  "set.m.noKey": { zh: "没有 API Key？", en: "No API key?" },
+  "set.m.getKeySteps": {
+    zh: "（登录 → 创建 API Key → 复制，回来自动检测设置）",
+    en: "(Sign in → create API key → copy; it's auto-detected here)",
+  },
+  "set.m.verifyNow": { zh: "立即验证已填入的", en: "Verify now" },
+  "set.m.oauthCodeHint": {
+    zh: "浏览器里登录并点“同意”后，复制页面显示的授权码粘到下方（留空则自动读剪贴板），再点完成。",
+    en: "Sign in in the browser and click “Allow”, then paste the code below (or leave blank to read clipboard) and finish.",
+  },
+  "set.m.pasteCode": { zh: "粘贴授权码（可留空自动读剪贴板）", en: "Paste code (blank = read clipboard)" },
+  "set.m.verifying": { zh: "校验中…", en: "Verifying…" },
+  "set.m.completeAuth": { zh: "完成授权", en: "Finish" },
+  "set.m.back": { zh: "返回", en: "Back" },
+  "set.m.authBrowser": { zh: "🔑 一键授权（用浏览器登录）", en: "🔑 Authorize (sign in via browser)" },
+  "set.m.useInApp": { zh: "改用应用内窗口登录", en: "Use in-app window instead" },
+  "set.m.oauthToken": { zh: "OAuth Token（一键授权会自动填，也可手动粘贴）", en: "OAuth Token (auto-filled, or paste manually)" },
+  "set.m.hide": { zh: "隐藏", en: "Hide" },
+  "set.m.show": { zh: "显示", en: "Show" },
+  "set.m.codexAuthing": { zh: "🔑 授权中…（浏览器完成登录）", en: "🔑 Authorizing… (finish in browser)" },
+  "set.m.codexAuth": { zh: "🔑 一键授权（ChatGPT 登录）", en: "🔑 Authorize (ChatGPT login)" },
+  "set.m.apiKey": { zh: "API Key", en: "API Key" },
+  "set.save": { zh: "保存并切换", en: "Save & switch" },
+  "set.saveOnly": { zh: "保存", en: "Save" },
+  "set.cancel": { zh: "取消", en: "Cancel" },
 };
 
 export function makeT(lang: Lang) {
