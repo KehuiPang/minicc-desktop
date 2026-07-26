@@ -277,7 +277,7 @@ function WuweiLoginModal({
   lang: Lang;
   t: T;
   onClose: () => void;
-  onSuccess: (me: WuweiMe) => void;
+  onSuccess: (me: WuweiMe, action?: "login" | "register" | "reset") => void;
 }) {
   type Mode = "email-login" | "email-register" | "email-reset" | "phone";
   const zh = lang === "zh";
@@ -374,7 +374,8 @@ function WuweiLoginModal({
       res = await window.minicc.wuweiRegister(email.trim(), code.trim(), password);
     else res = await window.minicc.wuweiCodeLogin(phone.trim(), code.trim());
     setBusy(false);
-    if (res.me) onSuccess(res.me);
+    if (res.me)
+      onSuccess(res.me, mode === "email-register" ? "register" : mode === "email-reset" ? "reset" : "login");
     else setErr(friendlyErr(res.error));
   }
   async function googleLogin() {
@@ -809,10 +810,17 @@ export function App() {
     setWuwei(null);
   }
   // 应用内登录框成功回调：更新账号 + 关框 + (若从发送门槛来)续发刚才拦下的消息
-  function onWuweiLoggedIn(me: WuweiMe) {
+  function onWuweiLoggedIn(me: WuweiMe, action?: "login" | "register" | "reset") {
     setWuwei(me);
     setShowLoginForm(false);
-    push({ type: "notice", text: `无为账号已登录：${me.user.name || me.user.email || "用户"}` });
+    const who = me.user.name || me.user.email || "用户";
+    const msg =
+      action === "register"
+        ? `✓ 注册成功，欢迎加入无为！已登录：${who}`
+        : action === "reset"
+          ? `✓ 密码已重置，已自动登录：${who}`
+          : `✓ 已登录：${who}`;
+    push({ type: "notice", text: msg });
     if (loginResume) {
       const t = input.trim();
       if (t || pendingImages.length) {
@@ -2870,18 +2878,6 @@ export function App() {
                       : `○ ${t("foot.ready")}`}
               </span>
               <span className="fs-extra">
-                {wuwei && (
-                  <>
-                    <span
-                      title="无为币余额"
-                      style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "var(--spark)" }}
-                    >
-                      <CoinIcon size={12} />
-                      {wuwei.coin.balance}
-                    </span>
-                    <span className="fs-dot">·</span>
-                  </>
-                )}
                 <span>
                   {t("foot.context")} {(usage.lastInput / 1000).toFixed(1)}k
                 </span>
