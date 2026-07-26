@@ -168,12 +168,12 @@ export async function wuweiPasswordLogin(identifier: string, password: string): 
 }
 
 /** 发送手机/邮箱验证码。POST 官网 /api/auth/send-code。返回 true 或错误文案。 */
-export async function wuweiSendCode(target: string): Promise<true | string> {
+export async function wuweiSendCode(target: string, lang?: string): Promise<true | string> {
   try {
     const res = await fetch(`${SITE}/api/auth/send-code`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target }),
+      body: JSON.stringify({ target, lang }),
     });
     const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
     if (!res.ok || j.error) return j.error || `发送失败（${res.status}）`;

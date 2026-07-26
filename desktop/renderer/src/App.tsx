@@ -314,7 +314,7 @@ function WuweiLoginModal({
     }
     setSending(true);
     setErr("");
-    const r = await window.minicc.wuweiSendCode(target);
+    const r = await window.minicc.wuweiSendCode(target, lang);
     setSending(false);
     if (r === true) setCooldown(60);
     else setErr(typeof r === "string" ? friendlyErr(r) : t("login.sendFail"));
