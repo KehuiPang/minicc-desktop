@@ -1,8 +1,8 @@
 <svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-  <!-- 托盘专用：紧凑玄墨黑方块(小留白) + 放大的官方圆相环, 保证 16px 下也清晰可辨 -->
-  <rect x="1" y="1" width="62" height="62" rx="15" fill="#1A1E25"/>
-  <g transform="translate(8.6,9) scale(0.195)">
-    <path d="M152.04 193.48 A82 82 0 1 1 195.48 150.04" fill="none" stroke="#F4F6F8" stroke-width="25" stroke-linecap="round"/>
-    <circle cx="195.48" cy="150.04" r="20" fill="#C05F3C"/>
+  <!-- 托盘专用：方块略提亮(在深色任务栏上有边界感) + 加粗放大的官方圆相环, 16px 也清晰 -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#232A34"/>
+  <g transform="translate(4.2,4.7) scale(0.2317)">
+    <path d="M152.04 193.48 A82 82 0 1 1 195.48 150.04" fill="none" stroke="#F4F6F8" stroke-width="30" stroke-linecap="round"/>
+    <circle cx="195.48" cy="150.04" r="19.4" fill="#C05F3C"/>
   </g>
 </svg>

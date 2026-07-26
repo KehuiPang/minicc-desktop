@@ -35,7 +35,14 @@ const HASH_BRIDGE_HTML = `<!doctype html><meta charset="utf-8"><title>无为登�
 
 const DONE_HTML = `<!doctype html><meta charset="utf-8"><title>无为登录</title>
 <body style="font-family:system-ui;background:#16191E;color:#F4F6F8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
-<div style="text-align:center"><div style="font-size:32px">✅</div><p>登录完成，请回到无为客户端。本页可关闭。</p></div></body>`;
+<div style="text-align:center"><div style="font-size:32px">✅</div><p id="m">登录成功！本页将自动关闭…</p></div>
+<script>
+setTimeout(function(){
+  window.close();
+  // 浏览器通常禁止脚本关闭非脚本打开的标签页；关不掉则退回"可关闭"提示，不空许诺
+  setTimeout(function(){ var m=document.getElementById('m'); if(m) m.textContent='登录成功，请回到无为客户端，本页可关闭。'; }, 500);
+}, 2500);
+</script></body>`;
 
 /** 弹系统浏览器走完整登录，成功返回会话；用户放弃/超时返回 null。 */
 export function wuweiLogin(): Promise<WuweiSession | null> {

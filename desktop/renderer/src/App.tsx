@@ -515,6 +515,16 @@ function WuweiLoginModal({
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
+              {mode === "email-login" && (
+                <div style={{ textAlign: "right", marginTop: -3, marginBottom: 4 }}>
+                  <span
+                    style={{ fontSize: 11.5, color: "var(--text-muted)", cursor: "pointer" }}
+                    onClick={() => { setMode("email-reset"); setErr(""); }}
+                  >
+                    {t("login.forgotPassword")}
+                  </span>
+                </div>
+              )}
             </>
           )}
 
@@ -534,35 +544,35 @@ function WuweiLoginModal({
                   : t("login.signin")}
           </button>
 
-          {/* 切换：注册↔登录、忘记密码、找回密码返回（手机号自动注册，不显示） */}
+          {/* 底部切换：前缀灰字 + 动作词品牌色强调（忘记密码已移到密码框下方） */}
           {mode !== "phone" && (
-            <div style={{ textAlign: "center", fontSize: 12, marginBottom: 12, display: "flex", justifyContent: "center", gap: 14 }}>
+            <div style={{ textAlign: "center", fontSize: 12, marginBottom: 12, color: "var(--text-muted)" }}>
               {mode === "email-reset" ? (
                 <span
-                  style={{ color: "var(--text-muted)", cursor: "pointer" }}
+                  style={{ color: "var(--spark)", fontWeight: 500, cursor: "pointer" }}
                   onClick={() => { setMode("email-login"); setErr(""); }}
                 >
                   {t("login.backToLogin")}
                 </span>
+              ) : mode === "email-register" ? (
+                <>
+                  {t("login.haveAccountPrefix")}
+                  <span
+                    style={{ color: "var(--spark)", fontWeight: 500, cursor: "pointer" }}
+                    onClick={() => { setMode("email-login"); setErr(""); }}
+                  >
+                    {t("login.gotoLogin")}
+                  </span>
+                </>
               ) : (
                 <>
+                  {t("login.noAccountPrefix")}
                   <span
-                    style={{ color: "var(--text-muted)", cursor: "pointer" }}
-                    onClick={() => { setMode(mode === "email-register" ? "email-login" : "email-register"); setErr(""); }}
+                    style={{ color: "var(--spark)", fontWeight: 500, cursor: "pointer" }}
+                    onClick={() => { setMode("email-register"); setErr(""); }}
                   >
-                    {mode === "email-register" ? t("login.haveAccount") : t("login.noAccount")}
+                    {t("login.registerNow")}
                   </span>
-                  {mode === "email-login" && (
-                    <>
-                      <span style={{ width: 1, height: 11, background: "var(--border)", alignSelf: "center" }} />
-                      <span
-                        style={{ color: "var(--text-muted)", cursor: "pointer" }}
-                        onClick={() => { setMode("email-reset"); setErr(""); }}
-                      >
-                        {t("login.forgotPassword")}
-                      </span>
-                    </>
-                  )}
                 </>
               )}
             </div>
