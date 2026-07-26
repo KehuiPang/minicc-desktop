@@ -501,8 +501,24 @@ function WuweiLoginModal({
           <button
             onClick={googleLogin}
             disabled={busy}
-            style={{ width: "100%", padding: "9px", borderRadius: 9, border: "1px solid var(--border)", background: "none", color: "var(--text)", fontSize: 13, cursor: "pointer", marginBottom: zh && WECHAT_LOGIN_ENABLED ? 8 : 0 }}
+            style={{
+              width: "100%",
+              padding: "10px",
+              borderRadius: 9,
+              border: "1px solid #dadce0",
+              background: "#fff",
+              color: "#3c4043",
+              fontSize: 13,
+              fontWeight: 500,
+              cursor: busy ? "default" : "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 9,
+              marginBottom: zh && WECHAT_LOGIN_ENABLED ? 8 : 0,
+            }}
           >
+            <img src={BRAND_LOGOS.google} alt="" width={17} height={17} style={{ display: "block", flex: "0 0 auto" }} />
             {t("login.google")}
           </button>
           {zh && WECHAT_LOGIN_ENABLED && (
