@@ -2169,21 +2169,28 @@ ipcMain.handle("account:wuwei-login", async () => {
   return me;
 });
 // —— 应用内登录（邮箱密码/邮箱注册/手机验证码）：成功存会话+返回 {me}，失败返回 {error:文案} ——
-async function finishWuweiSignin(r: WuweiSession | string): Promise<{ me?: unknown; error?: string }> {
+async function finishWuweiSignin(
+  r: WuweiSession | string,
+  action: "login" | "register" = "login",
+): Promise<{ me?: unknown; error?: string }> {
   if (typeof r === "string") return { error: r };
   saveWuweiSession(r);
   const me = await wuweiFetchMe(r.accessToken);
-  if (me === "unauthorized" || !me) return { error: "登录成功但拉取账号失败" };
+  if (me === "unauthorized" || !me) {
+    return {
+      error: action === "register" ? "注册成功，但拉取账号失败，请重开登录" : "登录成功，但拉取账号失败，请重试",
+    };
+  }
   return { me };
 }
 ipcMain.handle("account:wuwei-password-login", (_e, identifier: string, password: string) =>
-  wuweiPasswordLogin(identifier, password).then(finishWuweiSignin),
+  wuweiPasswordLogin(identifier, password).then((r) => finishWuweiSignin(r, "login")),
 );
 ipcMain.handle("account:wuwei-register", (_e, email: string, code: string, password: string) =>
-  wuweiRegister(email, code, password).then(finishWuweiSignin),
+  wuweiRegister(email, code, password).then((r) => finishWuweiSignin(r, "register")),
 );
 ipcMain.handle("account:wuwei-code-login", (_e, target: string, code: string) =>
-  wuweiCodeLogin(target, code).then(finishWuweiSignin),
+  wuweiCodeLogin(target, code).then((r) => finishWuweiSignin(r, "login")),
 );
 ipcMain.handle("account:wuwei-send-code", (_e, target: string) => wuweiSendCode(target));
 // 冷启动/刷新：读本地会话 → /api/me；401 走 /api/refresh 续期后重试。

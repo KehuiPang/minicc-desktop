@@ -143,27 +143,28 @@ function isAuthErrorText(text: string): boolean {
 
 // minicc 主标·橙色 sparkle 星星（沿用初版 app 图标的四角星几何，缩放到 24 视口；
 // 主星 currentColor 随主题走，右上小星用一点朱 --spark 呼应品牌）
-// 无为品牌标：月白「○带缺口」+ 缺口处一点朱赭「一念」火种（一念之门）
+// 无为官方主标「一念之门圆相」（几何同 WuweiLogo / 品牌中心主标）：
+// 顶栏用 currentColor 描边以适配文字色，缺口处一点朱赭火种。
 function WuweiMark({ size = 18 }: { size?: number }) {
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 24 24"
+      viewBox="0 0 240 240"
       fill="none"
       aria-hidden="true"
       style={{ flex: "0 0 auto" }}
     >
-      {/* 月白圆环，右上留缺口 */}
-      <path
-        d="M17.5 5.6 A9 9 0 1 0 19.6 9.2"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        fill="none"
-      />
-      {/* 缺口处一点朱赭火种 */}
-      <circle cx="18.6" cy="5.2" r="1.9" fill="var(--spark)" />
+      <g transform="rotate(-8 120 118)">
+        <path
+          d="M152.04 193.48 A82 82 0 1 1 195.48 150.04"
+          stroke="currentColor"
+          strokeWidth="9.5"
+          strokeLinecap="round"
+          fill="none"
+        />
+        <circle cx="195.48" cy="150.04" r="7.6" fill="#C05F3C" />
+      </g>
     </svg>
   );
 }
