@@ -2870,7 +2870,18 @@ export function App() {
                       : `○ ${t("foot.ready")}`}
               </span>
               <span className="fs-extra">
-                <span className="fs-dot">·</span>
+                {wuwei && (
+                  <>
+                    <span
+                      title="无为币余额"
+                      style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "var(--spark)" }}
+                    >
+                      <CoinIcon size={12} />
+                      {wuwei.coin.balance}
+                    </span>
+                    <span className="fs-dot">·</span>
+                  </>
+                )}
                 <span>
                   {t("foot.context")} {(usage.lastInput / 1000).toFixed(1)}k
                 </span>
