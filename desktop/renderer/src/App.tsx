@@ -354,7 +354,9 @@ function WuweiLoginModal({
             {t("login.signin")}
           </div>
           {incentive && (
-            <div style={{ textAlign: "center", fontSize: 12, color: "var(--text-muted)", marginBottom: 14 }}>
+            <div style={{ textAlign: "center", fontSize: 12, color: "var(--text-muted)", marginBottom: 14, lineHeight: 1.7 }}>
+              {t("login.freeModels")}
+              <br />
               {t("login.incentive")}
             </div>
           )}
@@ -1939,8 +1941,11 @@ export function App() {
                         >
                           <GiftIcon size={22} color="#F4F6F8" />
                         </div>
-                        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
                           {lang === "zh" ? "登录无为账号" : "Sign in to Wuwei"}
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+                          {t("login.freeModels")}
                         </div>
                         <div
                           style={{
