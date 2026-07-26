@@ -6,6 +6,9 @@
 // → 后台用 code + code_verifier 换 access_token。全程主进程 fetch，无 CORS 限制。
 import { BrowserWindow, shell } from "electron";
 import { createHash, randomBytes } from "node:crypto";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, dirname } from "node:path";
 import { log } from "./logger.js";
 
 // Claude Code 的公开 OAuth 客户端参数（与官方 CLI 一致；订阅额度，不额外计费）
@@ -23,6 +26,60 @@ export interface ClaudeOAuthResult {
   token: string; // access_token (sk-ant-oat01…)，写入 settings.oauthToken
   refreshToken?: string;
   expiresAt?: number; // epoch 毫秒
+}
+
+// —— app 自己的 OAuth 令牌 sidecar：存 refresh_token/过期时间，供静默续期。
+// 独立于 settings.json（渲染层 setSettings 会整包覆盖，放这里不被冲掉），也绝不动 ~/.claude.json。
+const AUTH_FILE = join(homedir(), ".minicc", "claude-oauth.json");
+export interface ClaudeAuthStore {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt?: number;
+}
+export function saveClaudeAuth(a: ClaudeAuthStore): void {
+  try {
+    mkdirSync(dirname(AUTH_FILE), { recursive: true });
+    writeFileSync(AUTH_FILE, JSON.stringify(a, null, 2));
+  } catch (e) {
+    log("claudeOAuth", "写 sidecar 失败", String(e));
+  }
+}
+export function loadClaudeAuth(): ClaudeAuthStore | null {
+  try {
+    return JSON.parse(readFileSync(AUTH_FILE, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+// 用 refresh_token 换新 access_token（Anthropic 会轮换 refresh_token，务必存回新的）。
+export async function claudeOAuthRefresh(refreshToken: string): Promise<ClaudeOAuthResult | null> {
+  try {
+    const res = await fetch(TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: CLIENT_ID,
+      }),
+    });
+    const j: any = await res.json().catch(() => null);
+    if (!res.ok || !j?.access_token) {
+      log("claudeOAuth", "refresh 失败 status=", res.status, "resp=", JSON.stringify(j).slice(0, 200));
+      return null;
+    }
+    const r: ClaudeOAuthResult = {
+      token: j.access_token,
+      refreshToken: j.refresh_token || refreshToken, // 未轮换则沿用旧的
+      expiresAt: j.expires_in ? Date.now() + j.expires_in * 1000 : undefined,
+    };
+    saveClaudeAuth({ accessToken: r.token, refreshToken: r.refreshToken, expiresAt: r.expiresAt });
+    return r;
+  } catch (e) {
+    log("claudeOAuth", "refresh 异常", String(e));
+    return null;
+  }
 }
 
 // 从回调 URL 里取出 code 与 state（Claude 有时把 code 拼成 "code#state"）
@@ -66,11 +123,14 @@ async function exchangeToken(
     return null;
   }
   log("claudeOAuth", "✓ 拿到 access_token", String(j.access_token).slice(0, 12) + "…");
-  return {
+  const result: ClaudeOAuthResult = {
     token: j.access_token,
     refreshToken: j.refresh_token,
     expiresAt: j.expires_in ? Date.now() + j.expires_in * 1000 : undefined,
   };
+  // 落 sidecar：后续静默续期靠它（refresh_token + 过期时间）
+  saveClaudeAuth({ accessToken: result.token, refreshToken: result.refreshToken, expiresAt: result.expiresAt });
+  return result;
 }
 
 // 构造一次 PKCE 授权：返回授权 URL、verifier、state

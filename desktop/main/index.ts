@@ -65,7 +65,13 @@ import {
   type SessionBal,
 } from "./settings.js";
 import { getAccount, logout } from "./account.js";
-import { claudeOAuthLogin, claudeOAuthOpenBrowser, claudeOAuthExchange } from "./claude-oauth.js";
+import {
+  claudeOAuthLogin,
+  claudeOAuthOpenBrowser,
+  claudeOAuthExchange,
+  claudeOAuthRefresh,
+  loadClaudeAuth,
+} from "./claude-oauth.js";
 import { codexOAuthLogin } from "./codex-oauth.js";
 import {
   wuweiLogin,
@@ -871,6 +877,41 @@ function applySettings(s: Settings) {
   if (s.providerId) void silentRefreshAccount(s.providerId); // 用存的 token 静默刷新，无需重登
 }
 
+// Claude 订阅 OAuth：token 快过期时用 refresh_token 静默续期，避免请求报 401「token expired/invalid」。
+// 只动 app 自己的 token(settings.oauthToken + sidecar 文件)，绝不碰 ~/.claude.json（避免搞挂 Claude Code 登录）。
+// 老用户(有 oauthToken 但无 sidecar/refresh) → 不动，手动重登一次后即自动续期。
+let refreshingClaude: Promise<void> | null = null;
+async function ensureFreshClaudeOAuth(): Promise<void> {
+  const st = loadSettings();
+  if (!st || st.kind !== "anthropic-oauth") return;
+  const auth = loadClaudeAuth();
+  if (!auth?.refreshToken || !auth.expiresAt) return; // 无 refresh/过期信息 → 交给手动重登
+  if (auth.expiresAt - Date.now() > 5 * 60 * 1000) return; // 还有 >5 分钟 → 无需续期
+  if (refreshingClaude) return refreshingClaude; // 合并并发，避免同一时刻多次刷新
+  refreshingClaude = (async () => {
+    try {
+      log("claudeOAuth", "token 将过期，静默续期…");
+      const r = await claudeOAuthRefresh(auth.refreshToken!); // 内部已把新值写回 sidecar
+      if (!r?.token) {
+        log("claudeOAuth", "续期失败，保留旧 token（可能需手动重登）");
+        return;
+      }
+      const s = loadSettings();
+      if (!s) return;
+      s.oauthToken = r.token;
+      if (s.creds?.["claude-oauth"]) s.creds["claude-oauth"].oauthToken = r.token;
+      saveSettings(s);
+      applyEnvFromSettings(s);
+      provider = makeProvider(loadConfig());
+      for (const a of agents.values()) a.setProvider(provider); // 热更所有会话，用新 token
+      log("claudeOAuth", "✓ 已续期并热更 provider");
+    } finally {
+      refreshingClaude = null;
+    }
+  })();
+  return refreshingClaude;
+}
+
 // —— 浏览器控制：Electron 内置 Chromium 的 WebContentsView，可嵌入主窗口面板"可视化" AI 操作 ——
 let browserView: WebContentsView | null = null;
 let browserAttached = false;
@@ -1353,6 +1394,7 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
     return;
   }
   if (runs.has(useId)) return; // 该会话已在跑，忽略重复提交
+  await ensureFreshClaudeOAuth(); // Claude 订阅 OAuth 快过期则先静默续期，避免本轮请求 401
   // 每轮开跑前刷新系统提示词，让上一轮 remember 写入的记忆立即生效(日报等场景用 sysOverride 注入聚合内容)
   agent.setSystem(sysOverride ?? buildSysPrompt(cwd, modelLabel, loadSettings()?.providerId));
   const ac = new AbortController();
