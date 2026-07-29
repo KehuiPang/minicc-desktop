@@ -5362,8 +5362,9 @@ function SettingsModal({
       systemPrompt: platPromptOn ? platPrompt : undefined, // 本平台专属提示词(关掉=undefined 跟随全局)
     };
     const newCreds = { ...credsRef.current, [pid]: slot }; // 存进当前平台的槽(用最新creds,别丢其它槽)
+    // 只发本页负责的字段(模型/凭证/平台/系统提示/中转站)。主进程 settings:set 会合并到磁盘,
+    // 其余字段(会话提醒/保留条数/输出方式/主题/app 开关等各走独立 IPC)一律不碰、不覆盖。
     window.minicc.setSettings({
-      ...loadedRef.current, // 保留 theme / app 等本页不管的字段
       kind: preset.kind,
       providerId: pid,
       model: model || undefined,
