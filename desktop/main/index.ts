@@ -1439,7 +1439,14 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
     // 若已被 chat:stop 手动停止(runs 里已换掉/删掉本 ac),就不再重复报,避免"已停止"提示重复
     if (runs.get(useId) === ac) {
       if (e?.name === "AbortError" || ac.signal.aborted) send("evt:stopped", { sid: useId });
-      else send("evt:error", { sid: useId, message: e.message });
+      else {
+        // 记全量原始错误(含 API 400 body/status),便于排查;友好化仅用于前端展示
+        try {
+          log("turnError", useId.slice(0, 8), "status=", e?.status, "msg=", String(e?.message || e).slice(0, 800),
+              e?.error ? "body=" + JSON.stringify(e.error).slice(0, 800) : "");
+        } catch { /* ignore */ }
+        send("evt:error", { sid: useId, message: e.message });
+      }
     }
   } finally {
     if (runs.get(useId) === ac) {
