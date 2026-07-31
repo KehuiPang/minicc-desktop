@@ -551,9 +551,10 @@ export function App() {
   }, []);
 
   // 当前平台预设(用于右下角模型快切列出该平台模型)；设置面板关闭后刷新
+  // 注意：curProviderId 只跟「当前会话」(由 evt:ready.providerId 驱动)，绝不用全局默认覆盖，
+  // 否则会出现「底栏显示 Claude、模型却是 qwen」的错乱(默认平台 ≠ 当前会话平台)。
   useEffect(() => {
     window.minicc.getSettings().then((r) => {
-      setCurProviderId(r?.settings?.providerId || "");
       setStations(r?.settings?.customStations || []);
       setProviderOrder(r?.settings?.providerOrder || []);
       setHiddenProviders(r?.settings?.hiddenProviders || []);
@@ -745,6 +746,7 @@ export function App() {
     const m = slot.model || p.models[0] || "";
     window.minicc.setSessionProvider(currentIdRef.current, p.id, p.kind, m);
     setCurProviderId(p.id);
+    setMeta((mt) => ({ ...mt, model: m })); // 立即把模型跟平台一起切，避免「新平台+旧模型」的瞬时错乱
     setShowProviderMenu(false);
   }
 
