@@ -102,6 +102,8 @@ let modelLabel = "";
 let ctxWindow = 1_000_000; // 当前模型上下文窗口(占用条用真实值)
 // 每会话的后端/模型标签(UI 显示各会话自己的平台/模型)
 const agentMeta = new Map<string, { backend: string; model: string; ctxWindow: number; sub: boolean }>();
+// 每会话的平台/模型选择(内存覆盖,即时生效,不依赖会话是否已落盘)——空会话切换也立刻生效
+const sessionProvOverride = new Map<string, { providerId: string; kind: Settings["kind"]; model: string }>();
 let subFlag = false; // 当前后端是否订阅类(决定前端是否显示 5小时/周额度)
 let cwd = process.cwd();
 const agents = new Map<string, Agent>();
@@ -926,6 +928,8 @@ function refreshAllAgentSystems() {
 }
 // 该会话应使用的平台/模型：会话自存优先，否则用全局默认(settings 顶层)
 function provForSession(id: string, s: Settings): { providerId: string; kind: Settings["kind"]; model: string } {
+  const ov = sessionProvOverride.get(id); // 内存覆盖优先(即时生效，含未落盘会话)
+  if (ov) return ov;
   const m = listSessions().find((x) => x.id === id);
   if (m?.providerId && m?.providerKind) return { providerId: m.providerId, kind: m.providerKind, model: m.model || s.model || "" };
   return { providerId: s.providerId || "", kind: s.kind, model: s.model || "" };
@@ -1184,8 +1188,10 @@ function getAgent(id: string): Agent | null {
 function switchSessionProvider(id: string, providerId: string, kind: Settings["kind"], model: string) {
   const s = loadSettings() || ({} as Settings);
   // 空 model→用该平台记住的模型，避免退化成 loadConfig 的通用默认
-  model = model || (s.creds || {})[providerId]?.model || model;
-  setSessionProvider(id, providerId, kind, model);
+  model = model || (s.creds || {})[providerId]?.model || cfgForProvider(s, providerId, kind, "").model;
+  log("switchProvider", "会话=", id.slice(0, 8), "平台=", providerId, "kind=", kind, "模型=", model, "当前会话=", currentId.slice(0, 8));
+  sessionProvOverride.set(id, { providerId, kind, model }); // 内存即时生效(不依赖落盘)
+  setSessionProvider(id, providerId, kind, model); // 已落盘的会话同步写盘
   const cfg = cfgForProvider(s, providerId, kind, model);
   const a = getAgent(id);
   if (a) {
@@ -1757,14 +1763,13 @@ ipcMain.on("session:switch", (_e, id: string) => {
   void emitAccount();
 });
 
-// 切换某会话的平台/模型(底栏切换)：只改这个会话，不动别的会话
-ipcMain.on("session:set-provider", (_e, sid: string, providerId: string, kind: Settings["kind"], model: string) => {
-  switchSessionProvider(sid || currentId, providerId, kind, model);
+// 切换某会话的平台/模型(底栏切换)：底栏永远作用于「当前会话」，直接用主进程 currentId，避免前端 id 不同步
+ipcMain.on("session:set-provider", (_e, _sid: string, providerId: string, kind: Settings["kind"], model: string) => {
+  switchSessionProvider(currentId, providerId, kind, model);
 });
-ipcMain.on("session:set-model", (_e, sid: string, model: string) => {
-  const id = sid || currentId;
-  const sp = provForSession(id, loadSettings() || ({} as Settings));
-  switchSessionProvider(id, sp.providerId, sp.kind, model);
+ipcMain.on("session:set-model", (_e, _sid: string, model: string) => {
+  const sp = provForSession(currentId, loadSettings() || ({} as Settings));
+  switchSessionProvider(currentId, sp.providerId, sp.kind, model);
 });
 
 // 崩溃恢复——用户点「继续」：切到该会话、清中断标记，注入一句续跑指令让 AI 接着未完成的工作。
