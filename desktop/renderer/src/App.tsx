@@ -330,6 +330,7 @@ export function App() {
   const [hiddenProviders, setHiddenProviders] = useState<string[]>([]); // 隐藏的平台
   const [removedProviders, setRemovedProviders] = useState<string[]>([]); // 已删除的平台
   const [providerOverrides, setProviderOverrides] = useState<Record<string, { label?: string; baseUrl?: string }>>({}); // 平台改名/改端点
+  const [curCustomModels, setCurCustomModels] = useState<string[]>([]); // 当前供应商用户手加的模型(供底部快切)
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [showProviderMenu, setShowProviderMenu] = useState(false);
   const [sidebarW, setSidebarW] = useState(
@@ -558,6 +559,8 @@ export function App() {
       setHiddenProviders(r?.settings?.hiddenProviders || []);
       setRemovedProviders((r?.settings as any)?.removedProviders || []);
       setProviderOverrides((r?.settings as any)?.providerOverrides || {});
+      const curPid = r?.settings?.providerId || "";
+      setCurCustomModels((r?.settings as any)?.creds?.[curPid]?.customModels || []);
       setGroupMode((r?.settings as any)?.groupMode || "manual");
       setStreamMode((r?.settings as any)?.streamMode || "stream");
       setStreamSpeed((r?.settings as any)?.streamSpeed || 400);
@@ -582,9 +585,12 @@ export function App() {
   // 再并入当前生效的模型(meta.model)——自建端点等没有预设列表时，配好的模型也能在快切里看到/切换。
   const quickModels = [
     ...new Set(
-      [...(curPreset?.models ?? []), ...(liveModels[curProviderId] || []), meta.model].filter(
-        Boolean,
-      ) as string[],
+      [
+        ...(curPreset?.models ?? []),
+        ...(curCustomModels || []), // 用户给该供应商加的模型也进快切(否则只显示当前那一个)
+        ...(liveModels[curProviderId] || []),
+        meta.model,
+      ].filter(Boolean) as string[],
     ),
   ];
   async function quickModel(m: string) {
