@@ -17,6 +17,13 @@ import type {
 const CLAUDE_CODE_IDENTITY =
   "You are Claude Code, Anthropic's official CLI for Claude.";
 
+// 可注入的 HTTP 客户端：默认用全局 fetch(undici)。Electron 主进程会注入 net.fetch(Chromium 网络栈)——
+// 这样连局域网 IP(自建端点)时会正确触发/遵守 macOS「本地网络」权限，undici 直连则会被系统静默拦截。
+let httpFetch: typeof fetch = (input: any, init?: any) => fetch(input, init);
+export function setHttpFetch(f: typeof fetch): void {
+  httpFetch = f;
+}
+
 // —— 临时错误自动退避重试（429 限速 / 503 / 5xx / engine overloaded / 网络抖动）——
 // 只在「开始读流之前」重试，故不会重复出字；并发撞限速会自己缓一下继续，不用手动重发。
 function backoffMs(attempt: number): number {
@@ -41,7 +48,7 @@ async function fetchWithRetry(url: string, init: RequestInit, retries = 4): Prom
   for (let attempt = 0; ; attempt++) {
     let res: Response | null = null;
     try {
-      res = await fetch(url, init);
+      res = await httpFetch(url, init);
     } catch (e: any) {
       if (e?.name === "AbortError" || signal?.aborted || attempt >= retries) throw e;
       await sleep(backoffMs(attempt), signal); // 网络错误退避重试

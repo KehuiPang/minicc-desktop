@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { loadConfig } from "../../src/config.js";
-import { makeProvider } from "../../src/agent/provider.js";
+import { makeProvider, setHttpFetch } from "../../src/agent/provider.js";
 import { Agent } from "../../src/agent/loop.js";
 import { systemPrompt, renderPrompt, DEFAULT_SYSTEM_PROMPT } from "../../src/agent/prompt.js";
 import { ALL_TOOLS, TOOL_MAP, MEMORY_FILE } from "../../src/tools/index.js";
@@ -854,6 +854,13 @@ function syncBrainDocsFlag(st: Settings | null) {
 
 function initProvider() {
   cwd = process.cwd();
+  // 用 Electron 的 net.fetch(Chromium 网络栈)替代 undici：连局域网 IP(自建端点)时能正确触发/遵守
+  // macOS「本地网络」权限(undici 直连会被系统静默拦截、也不登记到隐私列表)。net.fetch 是标准 fetch 兼容。
+  try {
+    setHttpFetch(((input: any, init?: any) => net.fetch(input, init)) as typeof fetch);
+  } catch {
+    /* 非 Electron/未就绪：保持默认全局 fetch */
+  }
   const st = loadSettings();
   applyEnvFromSettings(st); // 有已保存设置则据此，否则自动推断
   syncBrainDocsFlag(st);
@@ -2501,7 +2508,7 @@ ipcMain.handle("models:fetch", async () => {
       url = base + "/models";
       headers.Authorization = "Bearer " + cfg.apiKey;
     }
-    const r = await fetch(url, { headers });
+    const r = await net.fetch(url, { headers }); // net.fetch 走 Chromium 栈，遵守 macOS 本地网络权限
     if (!r.ok) return [];
     const j: any = await r.json().catch(() => null);
     const ids = (j?.data || j?.models || [])
