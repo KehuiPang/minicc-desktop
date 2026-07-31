@@ -50,6 +50,7 @@ import {
   setSessionProject,
   setGroupsOrder,
   setSessionDone,
+  setSessionProvider,
   setSessionRunning,
   clearInterrupted,
   dismissResume,
@@ -92,13 +93,15 @@ protocol.registerSchemesAsPrivileged([
 
 let win: BrowserWindow | null = null;
 
-// provider/系统提示全局共享；每个会话一个 Agent（各自 messages）
+// provider/系统提示：全局 = 当前可见会话的运行时(供 conn/fetchModels/UI)；每个会话一个 Agent，各自持有自己的 provider
 let provider: ReturnType<typeof makeProvider> | null = null;
 let sysPrompt = "";
 let agentOpts = { compactThreshold: 60000, keepRecent: 6 };
 let backendLabel = "";
 let modelLabel = "";
 let ctxWindow = 1_000_000; // 当前模型上下文窗口(占用条用真实值)
+// 每会话的后端/模型标签(UI 显示各会话自己的平台/模型)
+const agentMeta = new Map<string, { backend: string; model: string; ctxWindow: number; sub: boolean }>();
 let subFlag = false; // 当前后端是否订阅类(决定前端是否显示 5小时/周额度)
 let cwd = process.cwd();
 const agents = new Map<string, Agent>();
@@ -873,24 +876,71 @@ function applySettings(sIn: Settings) {
   // 各走独立 IPC 存的设置)一律保留、不被整体替换覆盖。显式传 undefined 仍可清字段(切平台清 key 用)。
   const s: Settings = { ...(loadSettings() || {}), ...sIn };
   log("applySettings", "平台=", s.providerId, "模型=", s.model, "有key=", !!s.apiKey);
-  saveSettings(s);
-  applyEnvFromSettings(s);
+  saveSettings(s); // s.providerId/model = 新的「默认」(新会话用)
   syncBrainDocsFlag(s);
+  refreshAgentTools(); // 「知识网络」开关变了→即时给所有会话加/摘 brain_* 工具
+  // 系统提示词/记忆等可能变了：热更每个会话的系统提示(各用自己的模型名，别串)
+  for (const [aid, a] of agents.entries()) {
+    const m = agentMeta.get(aid);
+    a.setSystem(buildSysPrompt(cwd, m?.model || s.model || "", provForSession(aid, s).providerId));
+  }
+  // 「保存并切换」：把当前会话切到所选平台/模型——只动当前会话，其它会话各自保留
+  if (currentId) switchSessionProvider(currentId, s.providerId || "", s.kind, s.model || "");
+  void emitAccount();
+  if (s.providerId) void silentRefreshAccount(s.providerId);
+}
+
+// —— 每会话独立平台/模型 ——
+// 需临时覆写的 env(applyEnvFromSettings 会写这些)，快照法：写→loadConfig→还原，互不干扰、支持并发
+const PROV_ENV_KEYS = [
+  "MINICC_PROVIDER", "MINICC_MODEL", "MINICC_OAUTH_TOKEN", "MINICC_BASE_URL",
+  "MINICC_API_KEY", "ANTHROPIC_API_KEY", "MINICC_VISION", "MINICC_NO_TOOLS",
+];
+// 用指定平台的槽构造该会话专属 Config(复用 loadConfig，认证逻辑不变)。env 写→读→还原，全同步无 await
+function cfgForProvider(s: Settings, providerId: string, kind: Settings["kind"], model: string): ReturnType<typeof loadConfig> {
+  const slot = (s.creds || {})[providerId] || {};
+  const snap: Record<string, string | undefined> = {};
+  for (const k of PROV_ENV_KEYS) snap[k] = process.env[k];
+  applyEnvFromSettings({ ...s, kind, providerId, model, apiKey: slot.apiKey, baseUrl: slot.baseUrl, oauthToken: slot.oauthToken });
   const cfg = loadConfig();
+  for (const k of PROV_ENV_KEYS) {
+    if (snap[k] === undefined) delete process.env[k];
+    else process.env[k] = snap[k];
+  }
+  return cfg;
+}
+// 热更所有会话的系统提示：每个会话各用自己的模型名/平台(记忆/脑网络等变更后调用，别用全局串味)
+function refreshAllAgentSystems() {
+  const s = loadSettings() || ({} as Settings);
+  for (const [aid, a] of agents.entries()) {
+    const m = agentMeta.get(aid);
+    a.setSystem(buildSysPrompt(cwd, m?.model || modelLabel, provForSession(aid, s).providerId));
+  }
+}
+// 该会话应使用的平台/模型：会话自存优先，否则用全局默认(settings 顶层)
+function provForSession(id: string, s: Settings): { providerId: string; kind: Settings["kind"]; model: string } {
+  const m = listSessions().find((x) => x.id === id);
+  if (m?.providerId && m?.providerKind) return { providerId: m.providerId, kind: m.providerKind, model: m.model || s.model || "" };
+  return { providerId: s.providerId || "", kind: s.kind, model: s.model || "" };
+}
+// 把「当前可见会话」的平台/模型设为全局运行时(供 conn:check/fetchModels/底栏显示)——不落盘、不动其它会话
+function setRuntimeForSession(id: string) {
+  const s = loadSettings() || ({} as Settings);
+  const sp = provForSession(id, s);
+  const snap: Record<string, string | undefined> = {};
+  for (const k of PROV_ENV_KEYS) snap[k] = process.env[k];
+  applyEnvFromSettings({ ...s, kind: sp.kind, providerId: sp.providerId, model: sp.model,
+    apiKey: (s.creds || {})[sp.providerId]?.apiKey, baseUrl: (s.creds || {})[sp.providerId]?.baseUrl, oauthToken: (s.creds || {})[sp.providerId]?.oauthToken });
+  const cfg = loadConfig();
+  // 全局 env 保留为当前会话的(供 conn:check 等读取)——此处不还原
+  void snap;
   provider = makeProvider(cfg);
-  backendLabel = labelFor(cfg, s.providerId);
+  backendLabel = labelFor(cfg, sp.providerId);
   modelLabel = cfg.model;
   ctxWindow = cfg.contextWindow;
-  subFlag = isSub(s.providerId);
-  sysPrompt = buildSysPrompt(cwd, modelLabel, s.providerId); // 底层模型/自定义提示词变了都同步
-  for (const a of agents.values()) {
-    a.setProvider(provider);
-    a.setSystem(sysPrompt); // 热更每个会话的系统提示，问"你是什么模型"能答对
-  }
-  refreshAgentTools(); // 「知识网络」开关变了→即时给所有会话加/摘 brain_* 工具
-  send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow });
-  void emitAccount(); // 切平台后左下角账号/余额随之更新
-  if (s.providerId) void silentRefreshAccount(s.providerId); // 用存的 token 静默刷新，无需重登
+  subFlag = isSub(sp.providerId);
+  sysPrompt = buildSysPrompt(cwd, modelLabel, sp.providerId);
+  send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow, providerId: sp.providerId });
 }
 
 // —— 浏览器控制：Electron 内置 Chromium 的 WebContentsView，可嵌入主窗口面板"可视化" AI 操作 ——
@@ -1103,18 +1153,42 @@ function refreshAgentTools() {
   for (const a of agents.values()) a.setTools(tools, map);
 }
 
-// 取/建某会话的 Agent（懒加载并恢复其历史）
+// 取/建某会话的 Agent（懒加载并恢复其历史）；每会话用自己的平台/模型构造独立 provider
 function getAgent(id: string): Agent | null {
   if (!provider) return null;
   let a = agents.get(id);
   if (!a) {
-    a = new Agent(provider, sysPrompt, desktopTools(), { cwd, sessionId: id }, desktopToolMap(), agentOpts);
+    const s = loadSettings() || ({} as Settings);
+    const sp = provForSession(id, s);
+    const cfg = cfgForProvider(s, sp.providerId, sp.kind, sp.model);
+    const p = makeProvider(cfg);
+    const sys = buildSysPrompt(cwd, cfg.model, sp.providerId);
+    a = new Agent(p, sys, desktopTools(), { cwd, sessionId: id }, desktopToolMap(),
+      { compactThreshold: cfg.compactThreshold, keepRecent: cfg.keepRecentTurns });
     a.setMessages(loadMessages(id));
-    const meta = listSessions().find((s) => s.id === id); // 恢复该会话的用量
+    const meta = listSessions().find((s2) => s2.id === id); // 恢复该会话的用量
     if (meta?.usage) a.setUsage(meta.usage);
     agents.set(id, a);
+    agentMeta.set(id, { backend: labelFor(cfg, sp.providerId), model: cfg.model, ctxWindow: cfg.contextWindow, sub: isSub(sp.providerId) });
   }
   return a;
+}
+// 切换某会话的平台/模型：只重建它自己的 provider，不动其它会话；若是当前会话则同步全局运行时+底栏
+function switchSessionProvider(id: string, providerId: string, kind: Settings["kind"], model: string) {
+  const s = loadSettings() || ({} as Settings);
+  // 空 model→用该平台记住的模型，避免退化成 loadConfig 的通用默认
+  model = model || (s.creds || {})[providerId]?.model || model;
+  setSessionProvider(id, providerId, kind, model);
+  const cfg = cfgForProvider(s, providerId, kind, model);
+  const a = getAgent(id);
+  if (a) {
+    a.setProvider(makeProvider(cfg));
+    a.setSystem(buildSysPrompt(cwd, cfg.model, providerId));
+    a.setCompactOpts({ compactThreshold: cfg.compactThreshold, keepRecent: cfg.keepRecentTurns });
+  }
+  agentMeta.set(id, { backend: labelFor(cfg, providerId), model: cfg.model, ctxWindow: cfg.contextWindow, sub: isSub(providerId) });
+  if (id === currentId) setRuntimeForSession(id); // 当前会话→同步底栏/conn 状态
+  send("evt:sessions", listSessions());
 }
 
 const EMPTY_USAGE = { totalInput: 0, totalOutput: 0, lastInput: 0, totalCacheHit: 0, totalCacheMiss: 0, totalSteps: 0 };
@@ -1131,6 +1205,7 @@ function bootstrapSessions() {
   const a = getAgent(currentId);
   send("evt:sessions", listSessions());
   send("evt:session-loaded", { id: currentId, messages: a ? a.getMessages() : [] });
+  setRuntimeForSession(currentId); // 底栏平台/模型反映当前会话自己的(而非全局默认)
   const rl = loadRateLimits(); // 上次的订阅额度快照（账号级），打开即显示
   if (rl) send("evt:ratelimits", rl);
   sendUsageFor(currentId); // 当前会话自己的用量
@@ -1433,8 +1508,9 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
     return;
   }
   if (runs.has(useId)) return; // 该会话已在跑，忽略重复提交
-  // 每轮开跑前刷新系统提示词，让上一轮 remember 写入的记忆立即生效(日报等场景用 sysOverride 注入聚合内容)
-  agent.setSystem(sysOverride ?? buildSysPrompt(cwd, modelLabel, loadSettings()?.providerId));
+  // 每轮开跑前刷新系统提示词，让上一轮 remember 写入的记忆立即生效(用【本会话】自己的模型/平台，别用全局串味)
+  const am = agentMeta.get(useId);
+  agent.setSystem(sysOverride ?? buildSysPrompt(cwd, am?.model || modelLabel, provForSession(useId, loadSettings() || ({} as Settings)).providerId));
   const ac = new AbortController();
   runs.set(useId, ac);
   emitTasks();
@@ -1619,6 +1695,7 @@ ipcMain.on("session:new", () => {
   currentId = randomUUID();
   const a = getAgent(currentId);
   send("evt:session-loaded", { id: currentId, messages: a ? a.getMessages() : [] });
+  setRuntimeForSession(currentId); // 新会话用默认平台/模型，底栏随之更新
   sendUsageFor(currentId);
   void emitAccount();
 });
@@ -1668,8 +1745,19 @@ ipcMain.on("session:switch", (_e, id: string) => {
   const a = getAgent(id);
   // getDisplayMessages：带上还没并入历史的注入消息，否则切回正在跑的会话时「刚发的那条」会不见
   send("evt:session-loaded", { id, messages: a ? a.getDisplayMessages() : [] });
+  setRuntimeForSession(id); // 底栏平台/模型、conn 状态 反映「本会话」自己的
   sendUsageFor(id);
   void emitAccount();
+});
+
+// 切换某会话的平台/模型(底栏切换)：只改这个会话，不动别的会话
+ipcMain.on("session:set-provider", (_e, sid: string, providerId: string, kind: Settings["kind"], model: string) => {
+  switchSessionProvider(sid || currentId, providerId, kind, model);
+});
+ipcMain.on("session:set-model", (_e, sid: string, model: string) => {
+  const id = sid || currentId;
+  const sp = provForSession(id, loadSettings() || ({} as Settings));
+  switchSessionProvider(id, sp.providerId, sp.kind, model);
 });
 
 // 崩溃恢复——用户点「继续」：切到该会话、清中断标记，注入一句续跑指令让 AI 接着未完成的工作。
@@ -1856,7 +1944,7 @@ ipcMain.handle("settings:get", () => ({
 // 脑网络/密钥 提示词覆盖：只落盘该字段并热更所有会话系统提示(不重启 provider)。传 null=恢复默认
 function hotRefreshSys() {
   sysPrompt = buildSysPrompt(cwd, modelLabel, loadSettings()?.providerId);
-  for (const a of agents.values()) a.setSystem(sysPrompt);
+  refreshAllAgentSystems();
 }
 ipcMain.on("settings:set-brain-prompt", (_e, text: string | null) => {
   const s = loadSettings() || ({} as Settings);
@@ -1904,7 +1992,7 @@ ipcMain.on("settings:set-app", (_e, patch: Record<string, boolean>) => {
   saveSettings(s);
   syncBrainDocsFlag(s);
   sysPrompt = buildSysPrompt(cwd, modelLabel, s.providerId);
-  for (const a of agents.values()) a.setSystem(sysPrompt);
+  refreshAllAgentSystems();
   refreshAgentTools();
 });
 
@@ -1934,7 +2022,7 @@ ipcMain.handle("memory:get", () => loadMemory());
 ipcMain.on("memory:set", (_e, text: string) => {
   saveMemory(text);
   // 立即刷新当前会话系统提示词,手动改的记忆下一条消息就生效
-  for (const a of agents.values()) a.setSystem(buildSysPrompt(cwd, modelLabel, loadSettings()?.providerId));
+  refreshAllAgentSystems();
 });
 
 // —— 输入框草稿：实时落盘 ~/.minicc/draft.json，重开/更新后自动恢复(含粘贴的截图 base64) ——
@@ -1961,7 +2049,7 @@ ipcMain.on("draft:set", (_e, draft: { text?: string; images?: string[] }) => {
 
 // —— 本地知识网络 Brain（设置里的"知识网络"面板 + 模型预热）——
 function refreshSysAfterBrain() {
-  for (const a of agents.values()) a.setSystem(buildSysPrompt(cwd, modelLabel, loadSettings()?.providerId));
+  refreshAllAgentSystems();
 }
 ipcMain.handle("brain:graph", () => brain.getGraphLite());
 ipcMain.handle("brain:stats", () => brain.stats());

@@ -29,6 +29,10 @@ export interface SessionMeta {
   running?: boolean; // 正在跑一轮(开跑置 true、结束置 false)；能跨重启存活→崩溃/强杀时残留 true
   interrupted?: boolean; // 上次运行被强制中断(启动时检测到残留 running=true 或内容明显干到一半)→提示恢复
   resumeDismissed?: boolean; // 用户点过「忽略」→内容启发式不再重复提示该会话(强杀 running 仍会重新提示)
+  // 每会话独立的平台/模型：切换只影响本会话；未设=用全局默认(settings 顶层)
+  providerId?: string;
+  providerKind?: "codex" | "anthropic-oauth" | "anthropic-apikey" | "openai";
+  model?: string;
 }
 
 function ensure() {
@@ -100,6 +104,22 @@ export function setSessionOrder(id: string, order: number) {
   const s = l.find((x) => x.id === id);
   if (!s || !Number.isFinite(order)) return;
   s.order = order;
+  saveList(l);
+}
+
+// 每会话独立平台/模型：切换只影响本会话(空 model 保留原值)
+export function setSessionProvider(
+  id: string,
+  providerId: string,
+  providerKind: SessionMeta["providerKind"],
+  model?: string,
+) {
+  const l = listSessions();
+  const s = l.find((x) => x.id === id);
+  if (!s) return;
+  s.providerId = providerId || undefined;
+  s.providerKind = providerKind;
+  if (model) s.model = model;
   saveList(l);
 }
 
@@ -341,6 +361,9 @@ export function saveSession(
     running: prev?.running, // 保留运行/中断标记，别被每轮落盘抹掉(否则崩溃检测失效)
     interrupted: prev?.interrupted,
     resumeDismissed: prev?.resumeDismissed,
+    providerId: prev?.providerId, // 保留每会话独立平台/模型
+    providerKind: prev?.providerKind,
+    model: prev?.model,
   });
   saveList(l);
 }

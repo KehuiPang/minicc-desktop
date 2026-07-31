@@ -41,6 +41,9 @@ contextBridge.exposeInMainWorld("minicc", {
   undoLast: () => ipcRenderer.send("chat:undo-last"),
   newSession: () => ipcRenderer.send("session:new"),
   switchSession: (id: string) => ipcRenderer.send("session:switch", id),
+  setSessionModel: (sid: string, model: string) => ipcRenderer.send("session:set-model", sid, model), // 每会话独立:只改本会话模型
+  setSessionProvider: (sid: string, providerId: string, kind: string, model: string) =>
+    ipcRenderer.send("session:set-provider", sid, providerId, kind, model), // 每会话独立:只改本会话平台
   resumeSession: (id: string) => ipcRenderer.send("session:resume", id), // 崩溃恢复:继续中断的任务
   dismissInterrupted: (id: string) => ipcRenderer.send("session:dismiss-interrupted", id), // 崩溃恢复:忽略
   deleteSession: (id: string) => ipcRenderer.send("session:delete", id),

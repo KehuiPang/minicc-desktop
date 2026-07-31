@@ -29,6 +29,8 @@ export interface MiniccApi {
   undoLast(): void;
   newSession(): void;
   switchSession(id: string): void;
+  setSessionModel(sid: string, model: string): void;
+  setSessionProvider(sid: string, providerId: string, kind: string, model: string): void;
   resumeSession(id: string): void;
   dismissInterrupted(id: string): void;
   deleteSession(id: string): void;

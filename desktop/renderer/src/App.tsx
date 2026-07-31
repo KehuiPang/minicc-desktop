@@ -330,7 +330,7 @@ export function App() {
   const [hiddenProviders, setHiddenProviders] = useState<string[]>([]); // 隐藏的平台
   const [removedProviders, setRemovedProviders] = useState<string[]>([]); // 已删除的平台
   const [providerOverrides, setProviderOverrides] = useState<Record<string, { label?: string; baseUrl?: string }>>({}); // 平台改名/改端点
-  const [curCustomModels, setCurCustomModels] = useState<string[]>([]); // 当前供应商用户手加的模型(供底部快切)
+  const [allCustomModels, setAllCustomModels] = useState<Record<string, string[]>>({}); // 各供应商用户手加的模型(供底部快切,按当前平台取)
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [showProviderMenu, setShowProviderMenu] = useState(false);
   const [sidebarW, setSidebarW] = useState(
@@ -559,8 +559,10 @@ export function App() {
       setHiddenProviders(r?.settings?.hiddenProviders || []);
       setRemovedProviders((r?.settings as any)?.removedProviders || []);
       setProviderOverrides((r?.settings as any)?.providerOverrides || {});
-      const curPid = r?.settings?.providerId || "";
-      setCurCustomModels((r?.settings as any)?.creds?.[curPid]?.customModels || []);
+      const credsAll = (r?.settings as any)?.creds || {};
+      const cm: Record<string, string[]> = {};
+      for (const k of Object.keys(credsAll)) if (credsAll[k]?.customModels?.length) cm[k] = credsAll[k].customModels;
+      setAllCustomModels(cm);
       setGroupMode((r?.settings as any)?.groupMode || "manual");
       setStreamMode((r?.settings as any)?.streamMode || "stream");
       setStreamSpeed((r?.settings as any)?.streamSpeed || 400);
@@ -587,16 +589,15 @@ export function App() {
     ...new Set(
       [
         ...(curPreset?.models ?? []),
-        ...(curCustomModels || []), // 用户给该供应商加的模型也进快切(否则只显示当前那一个)
+        ...(allCustomModels[curProviderId] || []), // 当前供应商用户加的模型也进快切
         ...(liveModels[curProviderId] || []),
         meta.model,
       ].filter(Boolean) as string[],
     ),
   ];
-  async function quickModel(m: string) {
-    const r = await window.minicc.getSettings();
-    const cur = r?.settings;
-    if (cur) window.minicc.setSettings({ ...cur, model: m });
+  function quickModel(m: string) {
+    // 只改「当前会话」的模型，不动别的会话(每会话独立)
+    window.minicc.setSessionModel(currentIdRef.current, m);
     setShowModelMenu(false);
   }
 
@@ -738,18 +739,11 @@ export function App() {
 
   // 快捷切换供应商：带出该平台已存的 key/baseUrl，默认用该平台第一个模型
   async function quickProvider(p: (typeof PRESETS)[number]) {
+    // 只把「当前会话」切到该平台(空 model→主进程用该平台记住的模型/预设默认)，不动别的会话
     const r = await window.minicc.getSettings();
-    const cur = r?.settings || {};
-    const slot = (cur.creds || {})[p.id] || {};
-    window.minicc.setSettings({
-      ...cur,
-      kind: p.kind,
-      providerId: p.id,
-      apiKey: slot.apiKey,
-      oauthToken: slot.oauthToken,
-      baseUrl: p.fixedBaseUrl ? p.baseUrl : slot.baseUrl || p.baseUrl,
-      model: p.models[0] || cur.model,
-    });
+    const slot = (r?.settings?.creds || {})[p.id] || {};
+    const m = slot.model || p.models[0] || "";
+    window.minicc.setSessionProvider(currentIdRef.current, p.id, p.kind, m);
     setCurProviderId(p.id);
     setShowProviderMenu(false);
   }
@@ -761,6 +755,7 @@ export function App() {
       switch (ch) {
         case "evt:ready":
           setMeta(payload);
+          if (payload.providerId !== undefined) setCurProviderId(payload.providerId); // 底栏平台标签跟随当前会话
           setApiKeyStep("idle"); // 切平台/模型：重置 key 等待态，避免残留
           setOauthStep("idle");
           void runConnCheck(); // 启动 / 切平台切模型后自动检测连通状态
