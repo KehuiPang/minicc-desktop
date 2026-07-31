@@ -1933,6 +1933,62 @@ body {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05); /* 极轻，和输入框同层次，不显得浮在其上 */
 }
 .ask-q { margin-bottom: 16px; }
+/* 询问弹窗顶栏：拖动手柄 + 折叠按钮 */
+.ask-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -4px -4px 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.ask-drag {
+  cursor: grab;
+  color: var(--text-dim);
+  font-size: 13px;
+  user-select: none;
+  padding: 0 2px;
+}
+.ask-drag:active { cursor: grabbing; }
+.ask-bar-title { flex: 1; font-size: 11.5px; color: var(--text-dim); }
+.ask-fold {
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text);
+  border-radius: 7px;
+  width: 24px;
+  height: 22px;
+  line-height: 1;
+  cursor: pointer;
+  font-size: 14px;
+}
+.ask-fold:hover { border-color: var(--accent); color: var(--accent); }
+/* 折叠态小条 */
+.ask-collapsed {
+  position: fixed;
+  z-index: 160;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: auto;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+}
+.ask-collapsed-title { font-size: 13px; color: var(--text); }
+.ic-bell { vertical-align: -2px; opacity: 0.85; }
+.ask-toast-title .ic-bell { color: var(--accent); }
+.ask-expand {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  padding: 4px 14px;
+  cursor: pointer;
+  font-size: 12.5px;
+}
 .ask-q:last-of-type { margin-bottom: 8px; }
 /* 别的会话发起 ask 时的右上角通知 */
 .ask-toasts {

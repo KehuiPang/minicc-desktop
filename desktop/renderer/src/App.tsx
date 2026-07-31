@@ -2843,7 +2843,7 @@ export function App() {
                 }}
               >
                 <div className="ask-toast-body">
-                  <div className="ask-toast-title">🔔 有会话在等你选择</div>
+                  <div className="ask-toast-title"><BellIcon /> 有会话在等你选择</div>
                   <div className="ask-toast-sub">
                     「{t.title}」需要确认，点此切换过去
                   </div>
@@ -3247,6 +3247,15 @@ function TrashIcon() {
     </svg>
   );
 }
+// 简洁铃铛(询问通知用)：线性描边，随文字色
+function BellIcon() {
+  return (
+    <svg className="ic-bell" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+    </svg>
+  );
+}
 function CheckIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -3415,11 +3424,51 @@ function AskModal({
   }, [anchor]);
   // 单个单选题靠点击即交，不显示按钮；多选题/多题分步/已附截图时显示「下一步/提交」
   const showPrimary = curMulti || qs.length > 1 || curImgs.length > 0;
+  // 折叠 + 拖动：不选择也能看后面的内容(折叠成小条 / 拖开)
+  const [collapsed, setCollapsed] = useState(false);
+  const [drag, setDrag] = useState({ x: 0, y: 0 });
+  const dragStart = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
+  function onDragDown(e: React.MouseEvent) {
+    e.preventDefault();
+    dragStart.current = { sx: e.clientX, sy: e.clientY, ox: drag.x, oy: drag.y };
+    const move = (ev: MouseEvent) => {
+      const st = dragStart.current;
+      if (!st) return;
+      setDrag({ x: st.ox + (ev.clientX - st.sx), y: st.oy + (ev.clientY - st.sy) });
+    };
+    const up = () => {
+      dragStart.current = null;
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  }
+  const dragStyle = { transform: `translate(${drag.x}px, ${drag.y}px)` };
+  // 折叠态：只剩一个可拖动的小条，点「展开」还原
+  if (box && collapsed) {
+    return (
+      <div className="ask ask-collapsed" style={{ left: box.left, bottom: box.bottom, ...dragStyle }}>
+        <span className="ask-drag" onMouseDown={onDragDown} title="拖动">⠿</span>
+        <span className="ask-collapsed-title"><BellIcon /> 有个选择待处理</span>
+        <button type="button" className="ask-expand" onClick={() => setCollapsed(false)}>
+          展开
+        </button>
+      </div>
+    );
+  }
   return (
     <div
       className="ask"
-      style={box ? { left: box.left, width: box.width, bottom: box.bottom } : { visibility: "hidden" }}
+      style={box ? { left: box.left, width: box.width, bottom: box.bottom, ...dragStyle } : { visibility: "hidden" }}
     >
+      <div className="ask-bar">
+        <span className="ask-drag" onMouseDown={onDragDown} title="拖动位置">⠿</span>
+        <span className="ask-bar-title">请选择（可折叠/拖动去看后面内容）</span>
+        <button type="button" className="ask-fold" title="折叠(先看后面的内容)" onClick={() => setCollapsed(true)}>
+          —
+        </button>
+      </div>
       <div className="ask-q">
         <div className="ask-qhead">
           {q.header && <span className="ask-tag">{q.header}</span>}
