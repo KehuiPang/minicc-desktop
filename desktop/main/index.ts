@@ -687,8 +687,8 @@ async function emitAccount() {
       avatar,
     });
     if (plan) {
-      const rl = loadRateLimits() || {};
-      send("evt:ratelimits", { ...rl, planType: plan }); // 套餐显示在订阅额度面板
+      const rl = (loadRateLimits(pid) as Record<string, unknown>) || {};
+      send("evt:ratelimits", { ...rl, planType: plan, providerId: pid }); // 套餐显示在订阅额度面板
     }
     return;
   }
@@ -708,8 +708,8 @@ async function emitAccount() {
       expired,
     });
     if (u?.rateLimits) {
-      saveRateLimits(u.rateLimits); // 记住，下次打开直接显示
-      send("evt:ratelimits", u.rateLimits);
+      saveRateLimits(pid, u.rateLimits); // 记住，下次打开直接显示(按平台分开存)
+      send("evt:ratelimits", { ...(u.rateLimits as Record<string, unknown>), providerId: pid });
     }
     return;
   }
@@ -1233,8 +1233,9 @@ function bootstrapSessions() {
   send("evt:trash", listTrash());
   send("evt:session-loaded", { id: currentId, messages: a ? a.getMessages() : [] });
   setRuntimeForSession(currentId); // 底栏平台/模型反映当前会话自己的(而非全局默认)
-  const rl = loadRateLimits(); // 上次的订阅额度快照（账号级），打开即显示
-  if (rl) send("evt:ratelimits", rl);
+  const bootPid = provForSession(currentId, loadSettings() || ({} as Settings)).providerId; // 按当前会话平台取额度快照
+  const rl = bootPid ? loadRateLimits(bootPid) : null; // 上次该平台的额度快照，打开即显示
+  if (rl) send("evt:ratelimits", { ...(rl as Record<string, unknown>), providerId: bootPid });
   sendUsageFor(currentId); // 当前会话自己的用量
 }
 
@@ -1568,9 +1569,12 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
           }),
         onUsage: (u) => send("evt:usage", { sid: useId, usage: u }),
         onRateLimits: (rl) => {
-          log("ratelimits", "5h=", rl.primaryUsedPercent, "% 周=", rl.secondaryUsedPercent, "%");
-          saveRateLimits(rl); // 记住，下次打开直接显示
-          send("evt:ratelimits", rl);
+          // 该会话自己的平台额度:按平台分开存;★只有当前会话才推给状态栏,后台别的会话(如 Claude)
+          // 不许覆盖当前窗口(否则切到 Kimi 后被后台 Claude 冲成 Claude 额度)。
+          const rlPid = provForSession(useId, loadSettings() || ({} as Settings)).providerId;
+          log("ratelimits", "会话=", useId.slice(0, 8), "平台=", rlPid, "5h=", rl.primaryUsedPercent, "% 周=", rl.secondaryUsedPercent, "%");
+          if (rlPid) saveRateLimits(rlPid, rl);
+          if (useId === currentId) send("evt:ratelimits", { ...rl, providerId: rlPid });
         },
         onCompact: (b, a) => send("evt:compact", { sid: useId, before: b, after: a }),
         onAssistantDone: () => send("evt:done", { sid: useId }),
@@ -1973,7 +1977,7 @@ ipcMain.handle("session:bootstrap", () => {
     currentId,
     messages: a ? a.getDisplayMessages() : [],
     usage: a ? a.getUsage() : EMPTY_USAGE,
-    rateLimits: loadRateLimits() || null,
+    rateLimits: loadRateLimits(provForSession(currentId, loadSettings() || ({} as Settings)).providerId) || null,
     interrupted: resumeOn
       ? listSessions()
           .filter((s) => s.interrupted)

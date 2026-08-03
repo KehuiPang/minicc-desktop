@@ -326,6 +326,8 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState("model"); // 统一设置页的初始/当前左侧菜单项
   const [curProviderId, setCurProviderId] = useState("");
+  const curProviderIdRef = useRef(""); // 事件回调里读最新平台(判额度是否属于当前会话平台)
+  curProviderIdRef.current = curProviderId;
   const [liveModels, setLiveModels] = useState<Record<string, string[]>>({}); // 各平台实时拉到的模型
   const [stations, setStations] = useState<Station[]>([]); // 自定义中转站
   const [providerOrder, setProviderOrder] = useState<string[]>([]); // 平台自定义顺序
@@ -860,6 +862,8 @@ export function App() {
           }
           break;
         case "evt:ratelimits":
+          // 只接受当前会话平台的额度;后台别的平台会话(如 Claude)的推送直接丢,状态栏完全独立
+          if (payload?.providerId && payload.providerId !== curProviderIdRef.current) break;
           setRate(payload);
           break;
         case "evt:suggest":

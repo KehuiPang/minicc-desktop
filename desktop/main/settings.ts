@@ -77,18 +77,32 @@ export function saveWindowBounds(b: WindowBounds) {
   }
 }
 
-// 订阅额度快照持久化（打开就显示上次，不必等发消息刷新）
-export function loadRateLimits(): unknown {
+// 订阅额度快照持久化（打开就显示上次，不必等发消息刷新）。
+// ★按平台分开存：{ [providerId]: rl }。不同平台(Claude/Kimi/Codex)额度互不覆盖，
+//   否则后台跑的别的平台会话会把当前平台的额度冲掉(张冠李戴)。
+function readRLMap(): Record<string, unknown> {
   try {
-    return JSON.parse(readFileSync(RL, "utf8"));
+    const j = JSON.parse(readFileSync(RL, "utf8"));
+    if (!j || typeof j !== "object") return {};
+    // 旧版是扁平单对象(带 primaryUsedPercent)→无平台归属,丢弃重新拉,避免串平台
+    if ("primaryUsedPercent" in j || "secondaryUsedPercent" in j) return {};
+    return j as Record<string, unknown>;
   } catch {
-    return null;
+    return {};
   }
 }
-export function saveRateLimits(rl: unknown) {
+export function loadRateLimits(providerId?: string): unknown {
+  const map = readRLMap();
+  if (!providerId) return null; // 必须指明平台,不给就不返回(防串号)
+  return map[providerId] ?? null;
+}
+export function saveRateLimits(providerId: string, rl: unknown) {
+  if (!providerId) return;
   try {
     mkdirSync(DIR, { recursive: true });
-    writeFileSync(RL, JSON.stringify(rl));
+    const map = readRLMap();
+    map[providerId] = rl;
+    writeFileSync(RL, JSON.stringify(map));
   } catch {
     /* ignore */
   }
