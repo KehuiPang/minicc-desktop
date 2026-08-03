@@ -479,6 +479,7 @@ export function App() {
   const [showConn, setShowConn] = useState(false); // 状态灯说明气泡
   const thinkStartRef = useRef<number | null>(null); // 本轮开始时间（思考计时）
   const charsRef = useRef(0); // 本轮已流式字符数（估算 token）
+  const turnTextRef = useRef(""); // 本轮已生成的正文(含 instant 模式还没揭示的),供状态栏悬停预览
   const [reasoning, setReasoning] = useState(""); // 本轮思考过程(reasoning_content)流式文本
   const reasoningRef = useRef(""); // 思考文本累积缓冲(节流 flush 到 state)
   const reasoningTimerRef = useRef<number | null>(null);
@@ -824,6 +825,7 @@ export function App() {
         case "evt:assistant-delta":
           if (payload.sid !== currentIdRef.current) break; // 只画当前可见会话
           charsRef.current += (payload.delta as string).length;
+          turnTextRef.current += payload.delta; // 本轮全量正文(供悬停预览,instant 模式也能看到)
           pendingDeltaRef.current += payload.delta; // 累积，节流 flush
           scheduleFlush();
           break;
@@ -1130,6 +1132,7 @@ export function App() {
     setRunningSet((s) => new Set(s).add(currentId)); // 乐观置为运行中(主进程随后 evt:tasks 校准)
     thinkStartRef.current = Date.now();
     charsRef.current = 0;
+    turnTextRef.current = ""; // 新一轮:清掉上轮预览缓冲
     window.minicc.send(currentId, text, imgs.length ? imgs : undefined);
   }
 
@@ -2110,6 +2113,7 @@ export function App() {
             <ThinkingBar
               startRef={thinkStartRef}
               charsRef={charsRef}
+              textRef={turnTextRef}
               items={items}
               reasoning={reasoning}
               open={reasoningOpen}
@@ -3045,17 +3049,21 @@ function runningTools(items: Item[]): Extract<Item, { type: "tool" }>[] {
 }
 
 // 实时状态短语：随执行内容动态变——并行多工具/单工具/思考/生成
-function liveStatus(items: Item[], chars: number, elapsed: number): string {
+// hasReasoning=模型真的在流式吐思考(reasoning_content/<think>)时才叫「思考中」;
+// 否则 0 token 只是模型还没吐首字(本地大模型 prefill 慢),别误导成「深度思考」。
+function liveStatus(items: Item[], chars: number, elapsed: number, hasReasoning = false): string {
   const running = runningTools(items);
   if (running.length > 1) return `正在并行执行 ${running.length} 个操作`;
   if (running.length === 1) return "正在" + toolMeta(running[0]).label;
-  if (chars === 0) return elapsed > 20 ? "深度思考中" : "思考中";
+  if (hasReasoning) return "深度思考中";
+  if (chars === 0) return elapsed > 6 ? "等待模型首字(较慢)" : "等待模型响应";
   return "生成回复";
 }
 
 function ThinkingBar({
   startRef,
   charsRef,
+  textRef,
   items,
   reasoning,
   open,
@@ -3063,12 +3071,14 @@ function ThinkingBar({
 }: {
   startRef: React.MutableRefObject<number | null>;
   charsRef: React.MutableRefObject<number>;
+  textRef?: React.MutableRefObject<string>;
   items: Item[];
   reasoning?: string;
   open?: boolean;
   onToggle?: () => void;
 }) {
   const [, force] = useState(0);
+  const [previewOn, setPreviewOn] = useState(false); // 悬停 token 数→预览已生成正文
   useEffect(() => {
     const t = setInterval(() => force((x) => x + 1), 400);
     return () => clearInterval(t);
@@ -3086,16 +3096,29 @@ function ThinkingBar({
   const mm = Math.floor(elapsed / 60);
   const ss = elapsed % 60;
   const time = mm > 0 ? `${mm}m ${ss}s` : `${ss}s`;
-  const status = liveStatus(items, chars, elapsed);
-  const running = runningTools(items).length;
   const hasReasoning = !!(reasoning && reasoning.trim());
+  const status = liveStatus(items, chars, elapsed, hasReasoning);
+  const running = runningTools(items).length;
   return (
     <div className="thinking-wrap">
       <div className={"thinking" + (hasReasoning ? " has-reason" : "")}>
         <span className="tspark">✳</span>
         <span className="tstatus">{status}…</span>
-        <span className="tmeta">
+        <span
+          className="tmeta tmeta-hover"
+          onMouseEnter={() => setPreviewOn(true)}
+          onMouseLeave={() => setPreviewOn(false)}
+          title="悬停查看已生成的正文"
+        >
           {time} · {tokLabel} tokens · {running > 0 ? `${running} 个任务执行中` : "执行中"}
+          {previewOn && (() => {
+            const preview = (textRef?.current || "").slice(-2000);
+            return (
+              <div className="tpreview">
+                {preview ? preview : "（还没有已生成的正文；若一直 0 token，是模型还没吐出首字）"}
+              </div>
+            );
+          })()}
         </span>
         {hasReasoning && (
           <button className="treason-toggle" onClick={onToggle}>
