@@ -973,15 +973,26 @@ export function App() {
     requestAnimationFrame(() => {
       if (atBottomRef.current) toBottom();
     });
-    // 切换会话：内容(markdown/代码高亮/图片)会在随后几帧持续改变高度，多次兜底吸底，
-    // 保证一次点击就停在最新消息，而不用点两下。
+    // 切换会话：内容(markdown/代码高亮/图片)会在随后多帧持续改变高度，离散 setTimeout 兜底
+    // 常错过最后一次增高→要点两下。改用 rAF 循环持续吸底，直到高度连续几帧稳定或封顶 1.2s；
+    // 用户中途上滑(atBottom 变 false)则立即停，不打扰看历史。
     if (forceBottomRef.current) {
       forceBottomRef.current = false;
-      [50, 130, 260, 450].forEach((ms) =>
-        setTimeout(() => {
-          if (atBottomRef.current) toBottom();
-        }, ms),
-      );
+      let lastH = -1;
+      let stable = 0;
+      const t0 = Date.now();
+      const stick = () => {
+        if (!atBottomRef.current) return; // 用户上滑看历史→停止吸底
+        el.scrollTop = el.scrollHeight; // 直接置底(会触发 onScroll 把 atBottom 重新判为 true)
+        const h = el.scrollHeight;
+        if (h === lastH) stable++;
+        else {
+          stable = 0;
+          lastH = h;
+        }
+        if (stable < 4 && Date.now() - t0 < 1200) requestAnimationFrame(stick); // 高度稳定4帧或超时即收
+      };
+      requestAnimationFrame(stick);
     }
   }, [items, busy, pending]);
 
