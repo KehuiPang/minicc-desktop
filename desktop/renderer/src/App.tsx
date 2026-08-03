@@ -262,6 +262,7 @@ export function App() {
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [trash, setTrash] = useState<import("./env").TrashItem[]>([]); // 回收站:软删除的会话(7天自动清)
   const [showTrash, setShowTrash] = useState(false);
+  const [promptCfgSid, setPromptCfgSid] = useState<string | null>(null); // 「对话框配置」弹窗针对的会话
   const sessionsRef = useRef<SessionMeta[]>([]); // 事件回调里取会话标题(ask 通知文案)
   sessionsRef.current = sessions;
   const [groups, setGroups] = useState<string[]>([]); // 分组顺序(新组置顶)
@@ -1603,6 +1604,16 @@ export function App() {
                 />
                 <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
                   <button
+                    className="ctx-item"
+                    onClick={() => {
+                      setPromptCfgSid(ctxMenu.sid);
+                      close();
+                    }}
+                  >
+                    ⚙ 对话框配置
+                  </button>
+                  <div className="ctx-sep" />
+                  <button
                     className="ctx-item ctx-done"
                     onClick={() => {
                       window.minicc.setSessionDone(ctxMenu.sid, !s.done);
@@ -2756,6 +2767,13 @@ export function App() {
           }}
         />
       )}
+      {promptCfgSid && (
+        <PromptCfgModal
+          sid={promptCfgSid}
+          title={sessions.find((s) => s.id === promptCfgSid)?.title || "对话框"}
+          onClose={() => setPromptCfgSid(null)}
+        />
+      )}
       {showTrash && (
         <>
           <div className="mq-overlay" onClick={() => setShowTrash(false)} />
@@ -3069,6 +3087,175 @@ function liveStatus(items: Item[], chars: number, elapsed: number, hasReasoning 
   if (hasReasoning) return "深度思考中";
   if (chars === 0) return elapsed > 6 ? "等待模型首字(较慢)" : "等待模型响应";
   return "生成回复";
+}
+
+// 粗略 token 估算(与主进程 estTok 一致):CJK≈1、其余≈0.28。用于弹窗里实时显示各块占用。
+function estTokLocal(s: string): number {
+  let cjk = 0;
+  let other = 0;
+  for (const ch of s || "") {
+    if (/[㐀-鿿豈-﫿぀-ヿ가-힯]/.test(ch)) cjk++;
+    else other++;
+  }
+  return Math.ceil(cjk + other * 0.28);
+}
+// 单会话「对话框配置」弹窗：系统提示词/记忆可改可关、附加块开关、工具逐个开关、实时 token 统计
+function PromptCfgModal({ sid, title, onClose }: { sid: string; title: string; onClose: () => void }) {
+  const [data, setData] = useState<import("./env").PromptPreview | null>(null);
+  const [sysText, setSysText] = useState("");
+  const [memText, setMemText] = useState("");
+  const [memoryOff, setMemoryOff] = useState(false);
+  const [brainOff, setBrainOff] = useState(false);
+  const [secretsOff, setSecretsOff] = useState(false);
+  const [interactOff, setInteractOff] = useState(false);
+  const [disabled, setDisabled] = useState<Set<string>>(new Set());
+  const [toolQuery, setToolQuery] = useState("");
+  useEffect(() => {
+    let alive = true;
+    window.minicc.promptPreview(sid).then((d) => {
+      if (!alive || !d) return;
+      setData(d);
+      setSysText(d.systemText || "");
+      setMemText(d.memoryText || "");
+      setMemoryOff(!!d.cfg?.memoryOff);
+      setBrainOff(!!d.cfg?.brainOff);
+      setSecretsOff(!!d.cfg?.secretsOff);
+      setInteractOff(!!d.cfg?.interactOff);
+      setDisabled(new Set(d.cfg?.disabledTools || []));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [sid]);
+  if (!data) {
+    return (
+      <>
+        <div className="mq-overlay" onClick={onClose} />
+        <div className="pcfg-modal"><div className="pcfg-head"><span>⚙ 对话框配置</span></div><div className="empty" style={{ padding: 30 }}>加载中…</div></div>
+      </>
+    );
+  }
+  const secTok = (key: string) => data.sections.find((s) => s.key === key)?.tokens || 0;
+  const sysTok = estTokLocal(sysText);
+  const memTok = memoryOff ? 0 : estTokLocal(memText);
+  const brainTok = brainOff ? 0 : secTok("brain");
+  const secretsTok = secretsOff ? 0 : secTok("secrets");
+  const interactTok = interactOff ? 0 : secTok("interact");
+  const sysTotal = sysTok + memTok + brainTok + secretsTok + interactTok;
+  const toolTok = data.tools.filter((t) => !disabled.has(t.name)).reduce((a, t) => a + t.tokens, 0);
+  const grand = sysTotal + toolTok;
+  const save = () => {
+    // 系统提示词/记忆：只有相对「加载时的生效文本」改了才存为覆盖;没动就沿用原有覆盖状态(可能是无覆盖)。
+    // 「恢复默认」会把文本设成 systemDefault/memoryDefault——若原本就是默认则相当于没动(不产生覆盖)。
+    const cfg: import("./env").SessionPromptCfg = {
+      system: sysText !== data.systemText ? sysText : data.cfg?.system,
+      memory: memText !== data.memoryText ? memText : data.cfg?.memory,
+      memoryOff,
+      brainOff,
+      secretsOff,
+      interactOff,
+      disabledTools: [...disabled],
+    };
+    window.minicc.setPromptCfg(sid, cfg);
+    onClose();
+  };
+  const resetAll = () => {
+    if (!confirm("恢复该对话框的全部配置为默认？")) return;
+    window.minicc.setPromptCfg(sid, null);
+    onClose();
+  };
+  const toggleTool = (name: string) =>
+    setDisabled((s) => {
+      const n = new Set(s);
+      if (n.has(name)) n.delete(name);
+      else n.add(name);
+      return n;
+    });
+  const brainSec = data.sections.find((s) => s.key === "brain");
+  const toolsShown = data.tools.filter(
+    (t) => !toolQuery || t.name.toLowerCase().includes(toolQuery.toLowerCase()),
+  );
+  const offCount = data.tools.filter((t) => disabled.has(t.name)).length;
+  return (
+    <>
+      <div className="mq-overlay" onClick={onClose} />
+      <div className="pcfg-modal">
+        <div className="pcfg-head">
+          <span>⚙ 对话框配置</span>
+          <span className="pcfg-sub" title={title}>「{title}」· 只作用于这个对话框</span>
+          <span className="pcfg-total">系统提示词 ~{fmtTok(sysTotal)} + 工具 ~{fmtTok(toolTok)} = <b>~{fmtTok(grand)}</b> tokens/轮</span>
+          <button className="pcfg-x" onClick={onClose} title="关闭">×</button>
+        </div>
+        <div className="pcfg-body">
+          {/* 系统提示词 */}
+          <div className="pcfg-sec">
+            <div className="pcfg-sec-head">
+              <span className="pcfg-sec-title">系统提示词</span>
+              <span className="pcfg-tok">~{fmtTok(sysTok)} tokens</span>
+              <button className="pcfg-mini" onClick={() => setSysText(data.systemDefault)}>恢复默认</button>
+            </div>
+            <textarea className="pcfg-ta" value={sysText} onChange={(e) => setSysText(e.target.value)} rows={7} />
+          </div>
+          {/* 记忆 */}
+          <div className="pcfg-sec">
+            <div className="pcfg-sec-head">
+              <span className="pcfg-sec-title">长期记忆</span>
+              <span className="pcfg-tok">~{fmtTok(memTok)} tokens</span>
+              <label className="pcfg-sw">
+                <input type="checkbox" checked={!memoryOff} onChange={(e) => setMemoryOff(!e.target.checked)} />
+                注入
+              </label>
+              <button className="pcfg-mini" onClick={() => setMemText(data.memoryDefault)}>恢复默认</button>
+            </div>
+            <textarea className="pcfg-ta" value={memText} disabled={memoryOff} onChange={(e) => setMemText(e.target.value)} rows={5} />
+          </div>
+          {/* 附加块开关 */}
+          <div className="pcfg-sec">
+            <div className="pcfg-sec-title" style={{ marginBottom: 6 }}>附加说明块</div>
+            <div className="pcfg-blocks">
+              <label className="pcfg-blk">
+                <input type="checkbox" checked={!brainOff} disabled={!brainSec?.on && !brainOff} onChange={(e) => setBrainOff(!e.target.checked)} />
+                知识网络 <span className="pcfg-tok">~{fmtTok(secTok("brain"))}</span>
+              </label>
+              <label className="pcfg-blk">
+                <input type="checkbox" checked={!secretsOff} onChange={(e) => setSecretsOff(!e.target.checked)} />
+                密钥说明 <span className="pcfg-tok">~{fmtTok(secTok("secrets"))}</span>
+              </label>
+              <label className="pcfg-blk">
+                <input type="checkbox" checked={!interactOff} onChange={(e) => setInteractOff(!e.target.checked)} />
+                交互规则(ask_user) <span className="pcfg-tok">~{fmtTok(secTok("interact"))}</span>
+              </label>
+            </div>
+          </div>
+          {/* 工具开关 */}
+          <div className="pcfg-sec">
+            <div className="pcfg-sec-head">
+              <span className="pcfg-sec-title">工具（{data.tools.length - offCount}/{data.tools.length} 开启）</span>
+              <span className="pcfg-tok">~{fmtTok(toolTok)} tokens</span>
+              <input className="pcfg-search" placeholder="搜索工具…" value={toolQuery} onChange={(e) => setToolQuery(e.target.value)} />
+            </div>
+            <div className="pcfg-tools">
+              {toolsShown.map((t) => (
+                <label key={t.name} className={"pcfg-tool" + (disabled.has(t.name) ? " off" : "")}>
+                  <input type="checkbox" checked={!disabled.has(t.name)} onChange={() => toggleTool(t.name)} />
+                  <span className="pcfg-tool-name">{t.name}</span>
+                  <span className="pcfg-tok">~{fmtTok(t.tokens)}</span>
+                  <span className="pcfg-tool-desc" title={t.description}>{t.description}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="pcfg-foot">
+          <button className="pcfg-reset" onClick={resetAll}>全部恢复默认</button>
+          <div className="pcfg-foot-r">
+            <button className="pcfg-cancel" onClick={onClose}>取消</button>
+            <button className="pcfg-save" onClick={save}>保存并生效</button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
 }
 
 function ThinkingBar({

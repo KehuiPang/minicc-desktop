@@ -38,6 +38,18 @@ export interface SessionMeta {
   providerId?: string;
   providerKind?: "codex" | "anthropic-oauth" | "anthropic-apikey" | "openai";
   model?: string;
+  promptCfg?: SessionPromptCfg; // 本会话独立的提示词/工具配置(空=全用全局默认)
+}
+
+// 单会话的「对话框配置」：系统提示词/记忆覆盖 + 附加块开关 + 禁用的工具。均为可选,缺省=全局默认。
+export interface SessionPromptCfg {
+  system?: string; // 系统提示词整体覆盖(渲染前模板;含 {model}/{cwd});undefined=用全局/默认
+  memory?: string; // 记忆覆盖文本;undefined=用全局 MEMORY.md
+  memoryOff?: boolean; // 本会话不注入长期记忆
+  brainOff?: boolean; // 不注入知识网络说明
+  secretsOff?: boolean; // 不注入密钥说明
+  interactOff?: boolean; // 不注入「与用户交互(ask_user)」规则
+  disabledTools?: string[]; // 本会话禁用的工具名
 }
 
 function ensure() {
@@ -134,6 +146,25 @@ export function setSessionProject(id: string, project: string) {
   const s = l.find((x) => x.id === id);
   if (!s) return;
   s.project = (project || "").trim() || undefined;
+  saveList(l);
+}
+
+// 单会话「对话框配置」：整体覆盖(传 undefined 的字段=清除该项覆盖=回退默认)
+export function setSessionPromptCfg(id: string, cfg: SessionPromptCfg | null) {
+  const l = listSessions();
+  const s = l.find((x) => x.id === id);
+  if (!s) return;
+  // 全空对象/ null → 删掉配置(完全回退默认),避免留空壳
+  const clean: SessionPromptCfg = cfg || {};
+  const has =
+    clean.system !== undefined ||
+    clean.memory !== undefined ||
+    clean.memoryOff ||
+    clean.brainOff ||
+    clean.secretsOff ||
+    clean.interactOff ||
+    (clean.disabledTools && clean.disabledTools.length > 0);
+  s.promptCfg = has ? clean : undefined;
   saveList(l);
 }
 
@@ -369,6 +400,7 @@ export function saveSession(
     providerId: prev?.providerId, // 保留每会话独立平台/模型
     providerKind: prev?.providerKind,
     model: prev?.model,
+    promptCfg: prev?.promptCfg, // 保留每会话「对话框配置」，别被每轮落盘抹掉
   });
   saveList(l);
 }

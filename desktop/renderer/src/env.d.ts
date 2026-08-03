@@ -28,6 +28,27 @@ export interface TrashItem {
   group?: string;
 }
 
+export interface SessionPromptCfg {
+  system?: string;
+  memory?: string;
+  memoryOff?: boolean;
+  brainOff?: boolean;
+  secretsOff?: boolean;
+  interactOff?: boolean;
+  disabledTools?: string[];
+}
+export interface PromptPreview {
+  cfg: SessionPromptCfg;
+  systemText: string;
+  systemDefault: string;
+  memoryText: string;
+  memoryDefault: string;
+  sections: { key: string; label: string; tokens: number; on: boolean }[];
+  tools: { name: string; description: string; tokens: number; on: boolean }[];
+  total: number;
+  toolTotal: number;
+}
+
 export interface MiniccApi {
   send(sid: string, text: string, images?: string[]): void;
   inject(sid: string, text: string, images?: string[]): void;
@@ -46,6 +67,8 @@ export interface MiniccApi {
   restoreSession(id: string): void;
   purgeTrash(id: string): void;
   emptyTrash(): void;
+  promptPreview(sid: string): Promise<PromptPreview>;
+  setPromptCfg(sid: string, cfg: SessionPromptCfg | null): void;
   setSessionGroup(id: string, group?: string | null): void;
   setSessionPriority(id: string, priority: number, tag?: string): void;
   setSessionOrder(id: string, order: number): void;

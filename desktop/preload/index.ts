@@ -54,6 +54,9 @@ contextBridge.exposeInMainWorld("minicc", {
   restoreSession: (id: string) => ipcRenderer.send("session:restore", id),
   purgeTrash: (id: string) => ipcRenderer.send("session:purge", id),
   emptyTrash: () => ipcRenderer.send("session:empty-trash"),
+  // 单会话「对话框配置」:预览各块 token/工具开关；保存并热更该会话
+  promptPreview: (sid: string) => ipcRenderer.invoke("session:prompt-preview", sid) as Promise<any>,
+  setPromptCfg: (sid: string, cfg: any) => ipcRenderer.send("session:set-prompt-cfg", sid, cfg),
   setSessionGroup: (id: string, group?: string | null) =>
     ipcRenderer.send("session:set-group", id, group),
   setSessionPriority: (id: string, priority: number, tag?: string) =>

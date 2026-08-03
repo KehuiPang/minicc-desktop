@@ -61,7 +61,9 @@ import {
   purgeTrashItem,
   emptyTrash,
   autoPurgeTrash,
+  setSessionPromptCfg,
 } from "./sessions.js";
+import type { SessionPromptCfg } from "./sessions.js";
 import {
   loadSettings,
   saveSettings,
@@ -824,34 +826,55 @@ async function emitAccount() {
 export const DEFAULT_BRAIN_NOTE =
   `\n\n## 本地知识网络（Brain）\n你有一个本地概念知识网络，沉淀着项目/服务器/脚本/部署/注意事项等结构化知识。\n- 涉及具体项目或部署/环境的任务，**开工前先用 brain_recall 检索**，按返回的结构化子图行动，别每次全量翻文档、省 token。\n- 发现值得长期固化的高价值知识（项目背景、git路径、测试/线上环境、部署脚本位置、踩坑注意事项）时，用 brain_learn 记住、brain_link 串联关系；旧信息有误就用同名 brain_learn 覆盖纠正。\n- brain_recall 还会命中知识宫殿等文档库的原文片段（『相关文档』），只给摘要+路径；需要完整内容时用 brain_read_doc 按该路径读全文，不必全量翻。`;
 
-// 构造系统提示词：优先本平台专属覆盖(creds[pid].systemPrompt)，再全局(settings.systemPrompt)，都没有=默认模板；渲染 {model}/{cwd}
-function buildSysPrompt(cwd: string, model: string, providerId?: string): string {
+const INTERACT_NOTE =
+  `\n\n## 与用户交互（务必遵守）\n每当你要让用户在几个明确选项里做选择、确认或拍板——例如“走方案A还是B”“删哪个文件”“要不要继续”“选哪个分支”——你**必须调用 ask_user 工具**弹出可点击选择框，**禁止**在正文里用“方案A/方案B”“1. …2. …”这类文字罗列选项让用户打字。单选/多选/一次多问都支持。只有当答案是自由文本(不是从选项里挑)时，才在正文直接问。这条优先于你平时“用文字提问”的习惯。`;
+
+// 系统提示词分块：返回 {key,label,text,on} 数组(on=是否注入)。应用「本会话对话框配置」cfg 的覆盖/开关。
+// 供 buildSysPrompt 拼接、也供「对话框配置」弹窗预览各块 token。
+function sysSections(
+  cwd: string,
+  model: string,
+  providerId: string | undefined,
+  cfg?: import("./sessions.js").SessionPromptCfg,
+): { key: string; label: string; text: string; on: boolean }[] {
   const st = loadSettings();
-  const override = providerId ? st?.creds?.[providerId]?.systemPrompt : undefined;
-  const custom = typeof override === "string" ? override : st?.systemPrompt;
-  let base = typeof custom === "string" ? renderPrompt(custom, cwd, model) : systemPrompt(cwd, model);
-  // 记忆：始终告知可用 remember 工具，并附上已记住的内容(跨会话)
-  const mem = loadMemory().trim();
-  base +=
+  // 基础系统提示词：本会话覆盖 > 平台覆盖 > 全局 > 默认模板
+  const provOv = providerId ? st?.creds?.[providerId]?.systemPrompt : undefined;
+  const custom = typeof cfg?.system === "string" ? cfg.system : typeof provOv === "string" ? provOv : st?.systemPrompt;
+  const base = typeof custom === "string" ? renderPrompt(custom, cwd, model) : systemPrompt(cwd, model);
+  // 记忆块
+  const mem = (typeof cfg?.memory === "string" ? cfg.memory : loadMemory()).trim();
+  let memText =
     `\n\n## 长期记忆\n用户说“记住…/以后…/我喜欢…”或出现值得长期保留的信息(偏好、称呼、事实、项目背景)时，调用 remember 工具写入；它会在之后每次对话自动加载。`;
-  if (mem) base += `\n\n已记住（需主动遵守/参考）：\n${mem}`;
-  // 本地知识网络（Brain）：概念化的项目/部署知识，按需 recall；提示词可在设置里覆盖。
-  // 设置里关掉「知识网络」后：不注入说明、不追加概念目录(brain_* 工具也在别处一并停掉)。
+  if (mem) memText += `\n\n已记住（需主动遵守/参考）：\n${mem}`;
+  // 知识网络块
+  let brainText = "";
   if (brainEnabled(st)) {
-    base += typeof st?.brainPrompt === "string" ? st.brainPrompt : DEFAULT_BRAIN_NOTE;
+    brainText = typeof st?.brainPrompt === "string" ? st.brainPrompt : DEFAULT_BRAIN_NOTE;
     try {
       const idx = brain.conceptIndex(40);
-      if (idx.length) base += `\n已沉淀的概念（可 brain_recall 展开）：${idx.join("、")}`;
+      if (idx.length) brainText += `\n已沉淀的概念（可 brain_recall 展开）：${idx.join("、")}`;
     } catch {
       /* brain 不可用不影响主流程 */
     }
   }
-  // 密钥说明：告知模型密钥走本地保险箱/环境变量，无需明文；提示词可在设置里覆盖
-  base += typeof st?.secretsPrompt === "string" ? st.secretsPrompt : secrets.SECRETS_SYSTEM_NOTE;
-  // 与用户交互：需要用户拍板时必须弹选择框(强引导，否则模型习惯用文字罗列)
-  base +=
-    `\n\n## 与用户交互（务必遵守）\n每当你要让用户在几个明确选项里做选择、确认或拍板——例如“走方案A还是B”“删哪个文件”“要不要继续”“选哪个分支”——你**必须调用 ask_user 工具**弹出可点击选择框，**禁止**在正文里用“方案A/方案B”“1. …2. …”这类文字罗列选项让用户打字。单选/多选/一次多问都支持。只有当答案是自由文本(不是从选项里挑)时，才在正文直接问。这条优先于你平时“用文字提问”的习惯。`;
-  return base;
+  const secretsText = typeof st?.secretsPrompt === "string" ? st.secretsPrompt : secrets.SECRETS_SYSTEM_NOTE;
+  return [
+    { key: "system", label: "系统提示词", text: base, on: true },
+    { key: "memory", label: "长期记忆", text: memText, on: !cfg?.memoryOff },
+    { key: "brain", label: "知识网络", text: brainText, on: !!brainText && !cfg?.brainOff },
+    { key: "secrets", label: "密钥说明", text: secretsText, on: !cfg?.secretsOff },
+    { key: "interact", label: "交互规则(ask_user)", text: INTERACT_NOTE, on: !cfg?.interactOff },
+  ];
+}
+
+// 构造系统提示词：拼接所有「开启」的分块。sessionId 提供时应用该会话的「对话框配置」覆盖。
+function buildSysPrompt(cwd: string, model: string, providerId?: string, sessionId?: string): string {
+  const cfg = sessionId ? listSessions().find((s) => s.id === sessionId)?.promptCfg : undefined;
+  return sysSections(cwd, model, providerId, cfg)
+    .filter((s) => s.on && s.text)
+    .map((s) => s.text)
+    .join("");
 }
 
 // 把「扫描相关文档」开关同步到 brain 模块(recall 据此决定是否连带扫文档冷存储)
@@ -900,7 +923,7 @@ function applySettings(sIn: Settings) {
   // 系统提示词/记忆等可能变了：热更每个会话的系统提示(各用自己的模型名，别串)
   for (const [aid, a] of agents.entries()) {
     const m = agentMeta.get(aid);
-    a.setSystem(buildSysPrompt(cwd, m?.model || s.model || "", provForSession(aid, s).providerId));
+    a.setSystem(buildSysPrompt(cwd, m?.model || s.model || "", provForSession(aid, s).providerId, aid));
   }
   // 「保存并切换」：把当前会话切到所选平台/模型——只动当前会话，其它会话各自保留
   if (currentId) switchSessionProvider(currentId, s.providerId || "", s.kind, s.model || "");
@@ -932,7 +955,7 @@ function refreshAllAgentSystems() {
   const s = loadSettings() || ({} as Settings);
   for (const [aid, a] of agents.entries()) {
     const m = agentMeta.get(aid);
-    a.setSystem(buildSysPrompt(cwd, m?.model || modelLabel, provForSession(aid, s).providerId));
+    a.setSystem(buildSysPrompt(cwd, m?.model || modelLabel, provForSession(aid, s).providerId, aid));
   }
 }
 // 该会话应使用的平台/模型：会话自存优先，否则用全局默认(settings 顶层)
@@ -959,7 +982,7 @@ function setRuntimeForSession(id: string) {
   modelLabel = cfg.model;
   ctxWindow = cfg.contextWindow;
   subFlag = isSub(sp.providerId);
-  sysPrompt = buildSysPrompt(cwd, modelLabel, sp.providerId);
+  sysPrompt = buildSysPrompt(cwd, modelLabel, sp.providerId, id);
   send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow, providerId: sp.providerId });
 }
 
@@ -1158,19 +1181,27 @@ function wrapSecret(t: Tool): Tool {
 
 // 桌面版工具集 = 共享工具 + 浏览器工具 + 动态 MCP 工具(连上后加入)，全部过密钥安全包装。
 // 设置里关掉「知识网络」→ 一并摘掉 brain_* 工具，别再让模型调用(与系统提示注入的开关同源)。
-function desktopTools(): Tool[] {
+function desktopTools(sessionId?: string): Tool[] {
   const brainOn = brainEnabled(loadSettings());
   const base = brainOn ? ALL_TOOLS : ALL_TOOLS.filter((t) => !t.name.startsWith("brain_"));
-  return [...base, askUserTool, ...BROWSER_TOOLS, ...mcpTools()].map(wrapSecret);
+  let all = [...base, askUserTool, ...BROWSER_TOOLS, ...mcpTools()].map(wrapSecret);
+  // 本会话「对话框配置」禁用的工具→不发给模型(省 token / 收窄能力)
+  if (sessionId) {
+    const off = listSessions().find((s) => s.id === sessionId)?.promptCfg?.disabledTools;
+    if (off && off.length) all = all.filter((t) => !off.includes(t.name));
+  }
+  return all;
 }
-function desktopToolMap(): Map<string, Tool> {
-  return new Map(desktopTools().map((t) => [t.name, t]));
+function desktopToolMap(sessionId?: string): Map<string, Tool> {
+  return new Map(desktopTools(sessionId).map((t) => [t.name, t]));
 }
-// MCP 连接/变更后，热更所有会话 agent 的工具集
+// 列出全部可用工具(不过滤)——供「对话框配置」弹窗展示开关
+function allToolsForConfig(): { name: string; description: string }[] {
+  return desktopTools().map((t) => ({ name: t.name, description: t.description || "" }));
+}
+// MCP 连接/变更后，热更所有会话 agent 的工具集(各会话按自己的「对话框配置」禁用项过滤)
 function refreshAgentTools() {
-  const tools = desktopTools();
-  const map = desktopToolMap();
-  for (const a of agents.values()) a.setTools(tools, map);
+  for (const [aid, a] of agents.entries()) a.setTools(desktopTools(aid), desktopToolMap(aid));
 }
 
 // 取/建某会话的 Agent（懒加载并恢复其历史）；每会话用自己的平台/模型构造独立 provider
@@ -1182,8 +1213,8 @@ function getAgent(id: string): Agent | null {
     const sp = provForSession(id, s);
     const cfg = cfgForProvider(s, sp.providerId, sp.kind, sp.model);
     const p = makeProvider(cfg);
-    const sys = buildSysPrompt(cwd, cfg.model, sp.providerId);
-    a = new Agent(p, sys, desktopTools(), { cwd, sessionId: id }, desktopToolMap(),
+    const sys = buildSysPrompt(cwd, cfg.model, sp.providerId, id);
+    a = new Agent(p, sys, desktopTools(id), { cwd, sessionId: id }, desktopToolMap(id),
       { compactThreshold: cfg.compactThreshold, keepRecent: cfg.keepRecentTurns });
     a.setMessages(loadMessages(id));
     const meta = listSessions().find((s2) => s2.id === id); // 恢复该会话的用量
@@ -1205,7 +1236,7 @@ function switchSessionProvider(id: string, providerId: string, kind: Settings["k
   const a = getAgent(id);
   if (a) {
     a.setProvider(makeProvider(cfg));
-    a.setSystem(buildSysPrompt(cwd, cfg.model, providerId));
+    a.setSystem(buildSysPrompt(cwd, cfg.model, providerId, id));
     a.setCompactOpts({ compactThreshold: cfg.compactThreshold, keepRecent: cfg.keepRecentTurns });
   }
   agentMeta.set(id, { backend: labelFor(cfg, providerId), model: cfg.model, ctxWindow: cfg.contextWindow, sub: isSub(providerId) });
@@ -1538,7 +1569,7 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
   if (runs.has(useId)) return; // 该会话已在跑，忽略重复提交
   // 每轮开跑前刷新系统提示词，让上一轮 remember 写入的记忆立即生效(用【本会话】自己的模型/平台，别用全局串味)
   const am = agentMeta.get(useId);
-  agent.setSystem(sysOverride ?? buildSysPrompt(cwd, am?.model || modelLabel, provForSession(useId, loadSettings() || ({} as Settings)).providerId));
+  agent.setSystem(sysOverride ?? buildSysPrompt(cwd, am?.model || modelLabel, provForSession(useId, loadSettings() || ({} as Settings)).providerId, useId));
   const ac = new AbortController();
   runs.set(useId, ac);
   emitTasks();
@@ -1852,6 +1883,61 @@ ipcMain.on("session:purge", (_e, id: string) => {
 ipcMain.on("session:empty-trash", () => {
   emptyTrash();
   send("evt:trash", listTrash());
+});
+
+// 粗略 token 估算:中日韩字≈1 token、其余(英文/符号/空白)≈0.28 token。用于「对话框配置」显示各块占用。
+function estTok(s: string): number {
+  let cjk = 0;
+  let other = 0;
+  for (const ch of s) {
+    if (/[㐀-鿿豈-﫿぀-ヿ가-힯]/.test(ch)) cjk++;
+    else other++;
+  }
+  return Math.ceil(cjk + other * 0.28);
+}
+// 「对话框配置」预览：返回该会话当前生效的系统提示词各块(含 token)、工具开关、可编辑文本与默认值
+ipcMain.handle("session:prompt-preview", (_e, sid: string) => {
+  const s = loadSettings() || ({} as Settings);
+  const id = sid || currentId;
+  const sp = provForSession(id, s);
+  const model = agentMeta.get(id)?.model || sp.model || modelLabel;
+  const cfg = listSessions().find((x) => x.id === id)?.promptCfg || {};
+  const secs = sysSections(cwd, model, sp.providerId, cfg);
+  const sections = secs.map((x) => ({ key: x.key, label: x.label, tokens: estTok(x.text), on: x.on }));
+  const total = secs.filter((x) => x.on && x.text).reduce((a, x) => a + estTok(x.text), 0);
+  const disabled = new Set(cfg.disabledTools || []);
+  const tools = allToolsForConfig().map((t) => ({
+    name: t.name,
+    description: t.description,
+    tokens: estTok(t.name + "\n" + t.description),
+    on: !disabled.has(t.name),
+  }));
+  const toolTotal = tools.filter((t) => t.on).reduce((a, t) => a + t.tokens, 0);
+  return {
+    cfg,
+    systemText: secs[0].text, // 当前生效的系统提示词(可编辑)
+    systemDefault: systemPrompt(cwd, model), // 恢复默认用
+    memoryText: typeof cfg.memory === "string" ? cfg.memory : loadMemory(), // 记忆(可编辑)
+    memoryDefault: loadMemory(),
+    sections, // [{key,label,tokens,on}]
+    tools, // [{name,description,tokens,on}]
+    total, // 系统提示词总 token
+    toolTotal, // 工具说明总 token
+  };
+});
+// 「对话框配置」保存：写入该会话配置并热更其 agent 的系统提示词+工具集(立即生效,不影响别的会话)
+ipcMain.on("session:set-prompt-cfg", (_e, sid: string, cfg: SessionPromptCfg | null) => {
+  const id = sid || currentId;
+  setSessionPromptCfg(id, cfg);
+  const a = agents.get(id);
+  if (a) {
+    const s = loadSettings() || ({} as Settings);
+    const sp = provForSession(id, s);
+    const model = agentMeta.get(id)?.model || sp.model || modelLabel;
+    a.setSystem(buildSysPrompt(cwd, model, sp.providerId, id));
+    a.setTools(desktopTools(id), desktopToolMap(id));
+  }
+  send("evt:sessions", listSessions());
 });
 
 // 会话分组：移动到分组(group 空=移出)；新组自动创建并置顶
