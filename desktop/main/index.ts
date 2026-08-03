@@ -56,6 +56,11 @@ import {
   dismissResume,
   markInterruptedOnStartup,
   flushAllSessionsSync,
+  listTrash,
+  restoreSession,
+  purgeTrashItem,
+  emptyTrash,
+  autoPurgeTrash,
 } from "./sessions.js";
 import {
   loadSettings,
@@ -284,13 +289,13 @@ function parseKimiUsage(j: any): {
 // 主进程静默拉 Kimi Code 额度：分区 cookie + 已存 webToken(Bearer) POST GetUsages
 // token 存在 creds["kimi-sub"].webToken；同域 cookie 一般已够，Bearer 作兜底
 async function kimiUsage(): Promise<
-  { rateLimits?: ReturnType<typeof loadRateLimits>; expired?: boolean } | null
+  { rateLimits?: ReturnType<typeof loadRateLimits>; expired?: boolean; needLogin?: boolean } | null
 > {
   const cfg = CONSOLE["kimi-sub"];
   try {
     const ses = session.fromPartition("persist:login-kimi-sub");
     const cookies = await ses.cookies.get({ url: "https://www.kimi.com" });
-    if (!cookies.length) return null; // 从没登录过
+    if (!cookies.length) return { needLogin: true }; // 从没浏览器登录过→提示去登录取额度
     const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
     const st = loadSettings();
     const slot = st?.creds?.["kimi-sub"];
@@ -305,7 +310,7 @@ async function kimiUsage(): Promise<
       headers.Authorization = "Bearer " + slot.webToken;
     if (!headers.Authorization && !headers.authorization) {
       log("kimiUsage", "无鉴权头(未浏览器登录过)");
-      return null;
+      return { needLogin: true };
     }
     // 请求体必须带 scope(repeated,≥1项)，否则 400 invalid_argument
     const r = await fetch(cfg.api, { method: "POST", headers, body: JSON.stringify({ scope: ["FEATURE_CODING"] }) });
@@ -688,10 +693,11 @@ async function emitAccount() {
     const loggedIn = !!st?.apiKey; // 订阅 key 决定能否对话
     // 额度走 www.kimi.com 网页会话(浏览器登录后 cookie/webToken)，与订阅 key 相互独立
     const u = await kimiUsage();
-    const expired = u?.expired;
+    // 过期(401/403)或从没浏览器登录过→都提示去「浏览器登录」取额度;仅网络抖动(null)不打扰
+    const expired = !!(u?.expired || u?.needLogin);
     send("evt:account", {
       providerId: pid,
-      label: expired ? "Kimi Code 订阅 · 额度登录已过期" : "Kimi Code 订阅",
+      label: expired ? "Kimi Code 订阅 · 额度未登录" : "Kimi Code 订阅",
       loggedIn,
       email: null,
       nickname,
@@ -1213,10 +1219,12 @@ function sendUsageFor(id: string) {
 
 // 启动时：选最近会话或新建，推送列表与当前会话历史
 function bootstrapSessions() {
+  autoPurgeTrash(); // 启动先清掉回收站里超过 7 天的
   const list = listSessions();
   currentId = list[0]?.id ?? randomUUID();
   const a = getAgent(currentId);
   send("evt:sessions", listSessions());
+  send("evt:trash", listTrash());
   send("evt:session-loaded", { id: currentId, messages: a ? a.getMessages() : [] });
   setRuntimeForSession(currentId); // 底栏平台/模型反映当前会话自己的(而非全局默认)
   const rl = loadRateLimits(); // 上次的订阅额度快照（账号级），打开即显示
@@ -1809,6 +1817,30 @@ ipcMain.on("session:delete", (_e, id: string) => {
   }
   send("evt:sessions", listSessions());
   send("evt:groups", listGroups());
+  send("evt:trash", listTrash()); // 删除→进回收站,同步刷新回收站
+});
+
+// 回收站:列出(顺带清过期)
+ipcMain.handle("session:list-trash", () => listTrash());
+
+// 回收站:恢复某条→回到会话列表
+ipcMain.on("session:restore", (_e, id: string) => {
+  restoreSession(id);
+  send("evt:sessions", listSessions());
+  send("evt:groups", listGroups());
+  send("evt:trash", listTrash());
+});
+
+// 回收站:彻底删除某条(不可恢复)
+ipcMain.on("session:purge", (_e, id: string) => {
+  purgeTrashItem(id);
+  send("evt:trash", listTrash());
+});
+
+// 回收站:清空(全部彻底删除)
+ipcMain.on("session:empty-trash", () => {
+  emptyTrash();
+  send("evt:trash", listTrash());
 });
 
 // 会话分组：移动到分组(group 空=移出)；新组自动创建并置顶

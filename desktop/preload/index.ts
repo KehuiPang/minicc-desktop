@@ -27,6 +27,7 @@ const EVENTS = [
   "evt:assistant-replace",
   "evt:brain-docs",
   "evt:brain-concepts",
+  "evt:trash",
 ] as const;
 
 contextBridge.exposeInMainWorld("minicc", {
@@ -47,6 +48,11 @@ contextBridge.exposeInMainWorld("minicc", {
   resumeSession: (id: string) => ipcRenderer.send("session:resume", id), // 崩溃恢复:继续中断的任务
   dismissInterrupted: (id: string) => ipcRenderer.send("session:dismiss-interrupted", id), // 崩溃恢复:忽略
   deleteSession: (id: string) => ipcRenderer.send("session:delete", id),
+  // 回收站:软删除的会话可恢复,7 天后自动彻底清除
+  listTrash: () => ipcRenderer.invoke("session:list-trash") as Promise<any[]>,
+  restoreSession: (id: string) => ipcRenderer.send("session:restore", id),
+  purgeTrash: (id: string) => ipcRenderer.send("session:purge", id),
+  emptyTrash: () => ipcRenderer.send("session:empty-trash"),
   setSessionGroup: (id: string, group?: string | null) =>
     ipcRenderer.send("session:set-group", id, group),
   setSessionPriority: (id: string, priority: number, tag?: string) =>

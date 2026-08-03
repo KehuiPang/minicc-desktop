@@ -20,6 +20,14 @@ export interface BrainEdgeLite {
   weight: number;
   hits: number;
 }
+export interface TrashItem {
+  id: string;
+  title: string;
+  updatedAt: number;
+  deletedAt: number;
+  group?: string;
+}
+
 export interface MiniccApi {
   send(sid: string, text: string, images?: string[]): void;
   inject(sid: string, text: string, images?: string[]): void;
@@ -34,6 +42,10 @@ export interface MiniccApi {
   resumeSession(id: string): void;
   dismissInterrupted(id: string): void;
   deleteSession(id: string): void;
+  listTrash(): Promise<TrashItem[]>;
+  restoreSession(id: string): void;
+  purgeTrash(id: string): void;
+  emptyTrash(): void;
   setSessionGroup(id: string, group?: string | null): void;
   setSessionPriority(id: string, priority: number, tag?: string): void;
   setSessionOrder(id: string, order: number): void;

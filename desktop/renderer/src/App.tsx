@@ -260,6 +260,8 @@ export function App() {
   const [interruptedSessions, setInterruptedSessions] = useState<{ id: string; title: string }[]>([]); // 上次被强杀、待恢复的任务
   const [autoMode, setAutoMode] = useState(true);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
+  const [trash, setTrash] = useState<import("./env").TrashItem[]>([]); // 回收站:软删除的会话(7天自动清)
+  const [showTrash, setShowTrash] = useState(false);
   const sessionsRef = useRef<SessionMeta[]>([]); // 事件回调里取会话标题(ask 通知文案)
   sessionsRef.current = sessions;
   const [groups, setGroups] = useState<string[]>([]); // 分组顺序(新组置顶)
@@ -767,6 +769,9 @@ export function App() {
           break;
         case "evt:groups":
           setGroups(Array.isArray(payload) ? payload : []);
+          break;
+        case "evt:trash":
+          setTrash(Array.isArray(payload) ? payload : []);
           break;
         case "evt:account":
           setAccount(payload);
@@ -1660,6 +1665,15 @@ export function App() {
               </>
             );
           })()}
+        {trash.length > 0 && (
+          <button
+            className="trash-entry"
+            title="回收站:已删除的对话在这里，可恢复；7 天后自动清除"
+            onClick={() => setShowTrash(true)}
+          >
+            🗑 回收站 <span className="trash-count">{trash.length}</span>
+          </button>
+        )}
         {(() => {
           const name =
             account.nickname || account.email || account.label || (account.loggedIn ? "已登录" : "未登录");
@@ -1714,7 +1728,7 @@ export function App() {
                       <div className="acct-menu-note" style={{ color: "#e8a838" }}>
                         ⚠{" "}
                         {account.providerId === "kimi-sub"
-                          ? "Kimi 额度登录已过期，5小时/周额度无法显示。请点上方「浏览器登录」重新登录。"
+                          ? "Kimi 额度未获取到（未登录或已过期），5小时/周额度无法显示。请点上方「浏览器登录」获取。"
                           : "智谱登录已过期，余额无法显示。请点上方「浏览器登录」重新登录。"}
                       </div>
                     )}
@@ -2659,6 +2673,61 @@ export function App() {
             setShowBrowser(false);
           }}
         />
+      )}
+      {showTrash && (
+        <>
+          <div className="mq-overlay" onClick={() => setShowTrash(false)} />
+          <div className="trash-modal">
+            <div className="trash-head">
+              <span>🗑 回收站</span>
+              <span className="trash-sub">已删除的对话可恢复，7 天后自动清除</span>
+              <button className="trash-x" title="关闭" onClick={() => setShowTrash(false)}>×</button>
+            </div>
+            <div className="trash-list">
+              {trash.length === 0 && <div className="empty">回收站是空的</div>}
+              {trash.map((t) => {
+                const leftMs = t.deletedAt + 7 * 24 * 3600 * 1000 - Date.now();
+                const leftDays = Math.max(0, Math.ceil(leftMs / (24 * 3600 * 1000)));
+                return (
+                  <div key={t.id} className="trash-row">
+                    <div className="trash-info">
+                      <div className="trash-title" title={t.title}>{t.title || "新对话"}</div>
+                      <div className="trash-meta">
+                        {t.group ? `分组「${t.group}」· ` : ""}删除于 {relTime(t.deletedAt)} · {leftDays} 天后清除
+                      </div>
+                    </div>
+                    <button className="trash-restore" onClick={() => window.minicc.restoreSession(t.id)}>
+                      恢复
+                    </button>
+                    <button
+                      className="trash-purge"
+                      title="彻底删除,不可恢复"
+                      onClick={() => {
+                        if (confirm(`彻底删除「${t.title || "新对话"}」？此操作不可恢复。`))
+                          window.minicc.purgeTrash(t.id);
+                      }}
+                    >
+                      彻底删除
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            {trash.length > 0 && (
+              <div className="trash-foot">
+                <button
+                  className="trash-empty"
+                  onClick={() => {
+                    if (confirm(`清空回收站？将彻底删除 ${trash.length} 个对话，不可恢复。`))
+                      window.minicc.emptyTrash();
+                  }}
+                >
+                  清空回收站
+                </button>
+              </div>
+            )}
+          </div>
+        </>
       )}
       {showSettings && (
         <SettingsModal
