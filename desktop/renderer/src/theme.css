@@ -3905,3 +3905,19 @@ body {
   cursor: pointer;
 }
 .trash-empty:hover { color: #e0533d; border-color: #e0533d; }
+
+/* 额度弹窗里的「浏览器登录获取额度」提醒(订阅平台拿不到额度时) */
+.u-relogin {
+  display: block;
+  width: 100%;
+  margin: 2px 0 8px;
+  padding: 8px 10px;
+  border: 1px solid #e8a838;
+  border-radius: 8px;
+  background: color-mix(in srgb, #e8a838 12%, transparent);
+  color: #b8791a;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.u-relogin:hover { background: color-mix(in srgb, #e8a838 20%, transparent); }

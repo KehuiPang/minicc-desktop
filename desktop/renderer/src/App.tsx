@@ -986,6 +986,14 @@ export function App() {
     return () => clearTimeout(t);
   }, [curProviderId]);
 
+  // 换平台→清掉上一个平台的额度快照,等新平台的 evt:ratelimits 回填,避免张冠李戴(如切到 Kimi 仍显示 Claude 的额度)。
+  // 用 ref 只在「真正切换」时清,不误伤启动时的首次赋值。
+  const prevProvRef = useRef("");
+  useEffect(() => {
+    if (prevProvRef.current && prevProvRef.current !== curProviderId) setRate(null);
+    prevProvRef.current = curProviderId;
+  }, [curProviderId]);
+
   useEffect(() => {
     window.minicc.getAccount().then(setAccount);
     // 主动拉取当前后端/模型，避免 evt:ready 推送早于订阅被丢导致显示「…」
@@ -2644,6 +2652,21 @@ export function App() {
             ) : (
               // 无额度/无余额信息：显示 token 统计
               <>
+                {/* 订阅平台却拿不到额度(未浏览器登录/过期)：在这里直接给可点的登录入口,别只藏在账号菜单 */}
+                {meta.sub && (curProviderId === "kimi-sub" || curProviderId === "zhipu") && (
+                  <button
+                    className="u-relogin"
+                    onClick={() => {
+                      setShowUsage(false);
+                      setWebLoginBusy(true);
+                      window.minicc
+                        .webLogin(curProviderId)
+                        .finally(() => setWebLoginBusy(false));
+                    }}
+                  >
+                    ⚠ {curProviderId === "kimi-sub" ? "Kimi" : "智谱"} 额度未获取到，点此浏览器登录获取
+                  </button>
+                )}
                 <div className="u-row">
                   <span>本会话累计输入</span>
                   <span>{usage.totalInput.toLocaleString()} tokens</span>

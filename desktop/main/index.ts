@@ -651,7 +651,10 @@ async function silentRefreshAccount(pid: string) {
 // 账号信息随当前平台变化：Codex→ChatGPT邮箱；DeepSeek→余额；其它→是否填了key
 async function emitAccount() {
   const st = loadSettings();
-  const pid = st?.providerId || (loadConfig().provider === "codex" ? "codex" : "");
+  // 账号面板/额度跟随「当前会话」的平台(与底栏一致),而非全局默认;否则按会话切平台后
+  // 账号显示错乱(如会话切 Kimi、账号面板仍是全局的 Claude),额度也张冠李戴。
+  const sp = currentId ? provForSession(currentId, st || ({} as Settings)) : null;
+  const pid = sp?.providerId || st?.providerId || (loadConfig().provider === "codex" ? "codex" : "");
   const nickname = st?.creds?.[pid]?.nickname || undefined;
   const avatar = st?.creds?.[pid]?.avatar || undefined;
   log("emitAccount", "平台=", pid, "昵称=", nickname || "无", "头像=", avatar ? "有" : "无");
@@ -1206,7 +1209,10 @@ function switchSessionProvider(id: string, providerId: string, kind: Settings["k
     a.setCompactOpts({ compactThreshold: cfg.compactThreshold, keepRecent: cfg.keepRecentTurns });
   }
   agentMeta.set(id, { backend: labelFor(cfg, providerId), model: cfg.model, ctxWindow: cfg.contextWindow, sub: isSub(providerId) });
-  if (id === currentId) setRuntimeForSession(id); // 当前会话→同步底栏/conn 状态
+  if (id === currentId) {
+    setRuntimeForSession(id); // 当前会话→同步底栏/conn 状态
+    void emitAccount(); // 并刷新账号面板+额度:跟新平台走(Kimi 会去拉自己的额度/触发浏览器登录提醒)
+  }
   send("evt:sessions", listSessions());
 }
 
