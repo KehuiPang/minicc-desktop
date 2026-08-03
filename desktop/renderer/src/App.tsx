@@ -3232,6 +3232,8 @@ function PromptCfgModal({ sid, title, onClose }: { sid: string; title: string; o
             <div className="pcfg-sec-head">
               <span className="pcfg-sec-title">工具（{data.tools.length - offCount}/{data.tools.length} 开启）</span>
               <span className="pcfg-tok">~{fmtTok(toolTok)} tokens</span>
+              <button className="pcfg-mini" onClick={() => setDisabled(new Set())}>全部开启</button>
+              <button className="pcfg-mini" onClick={() => setDisabled(new Set(data.tools.map((t) => t.name)))}>全部关闭</button>
               <input className="pcfg-search" placeholder="搜索工具…" value={toolQuery} onChange={(e) => setToolQuery(e.target.value)} />
             </div>
             <div className="pcfg-tools">

@@ -1854,7 +1854,7 @@ body {
 .pcfg-ta:disabled { opacity: 0.5; }
 .pcfg-blocks { display: flex; flex-wrap: wrap; gap: 8px 18px; }
 .pcfg-blk { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text); cursor: pointer; }
-.pcfg-search { margin-left: auto; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-input); color: var(--text); font-size: 12px; padding: 3px 8px; width: 150px; }
+.pcfg-search { border: 1px solid var(--border); border-radius: 7px; background: var(--bg-input); color: var(--text); font-size: 12px; padding: 3px 8px; width: 140px; }
 .pcfg-tools { display: flex; flex-direction: column; gap: 2px; max-height: 230px; overflow-y: auto; }
 .pcfg-tool { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
 .pcfg-tool:hover { background: var(--bg-soft); }
