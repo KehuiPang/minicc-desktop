@@ -1785,6 +1785,31 @@ body {
   font-family: var(--mono);
   font-size: 12px;
 }
+/* 思考流:展开/收起按钮 + 内容框 */
+.thinking .treason-toggle {
+  margin-left: 4px;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.thinking .treason-toggle:hover { text-decoration: underline; }
+.treason-body {
+  margin: 2px 0 10px;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow-y: auto;
+  border-left: 2px solid var(--border-strong, var(--border));
+  background: var(--bg-soft);
+  border-radius: 0 8px 8px 0;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 @keyframes tpulse {
   0%,
   100% {

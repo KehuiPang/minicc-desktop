@@ -479,6 +479,10 @@ export function App() {
   const [showConn, setShowConn] = useState(false); // 状态灯说明气泡
   const thinkStartRef = useRef<number | null>(null); // 本轮开始时间（思考计时）
   const charsRef = useRef(0); // 本轮已流式字符数（估算 token）
+  const [reasoning, setReasoning] = useState(""); // 本轮思考过程(reasoning_content)流式文本
+  const reasoningRef = useRef(""); // 思考文本累积缓冲(节流 flush 到 state)
+  const reasoningTimerRef = useRef<number | null>(null);
+  const [reasoningOpen, setReasoningOpen] = useState(true); // 思考面板展开/折叠
   // 已"总是允许"的工具（记住授权，跨重启，手动模式下不再提示）
   const alwaysAllowRef = useRef<Set<string>>(
     new Set((() => {
@@ -546,6 +550,26 @@ export function App() {
       return [...p, { type: "assistant", text: chunk, ts: Date.now() }];
     });
     if (pendingDeltaRef.current) scheduleFlush(); // 还有剩(typewriter)继续吐
+  }
+
+  // 思考流(reasoning)累积 + 节流渲染：思考期间实时显示，别让用户干等
+  function pushReasoning(delta: string) {
+    reasoningRef.current += delta;
+    if (thinkStartRef.current == null) thinkStartRef.current = Date.now();
+    if (reasoningTimerRef.current != null) return;
+    reasoningTimerRef.current = window.setTimeout(() => {
+      reasoningTimerRef.current = null;
+      setReasoning(reasoningRef.current);
+    }, 60);
+  }
+  function clearReasoning() {
+    reasoningRef.current = "";
+    if (reasoningTimerRef.current != null) {
+      clearTimeout(reasoningTimerRef.current);
+      reasoningTimerRef.current = null;
+    }
+    setReasoning("");
+    setReasoningOpen(true);
   }
 
   // 每 15s 刷新一次「多久之前」相对时间(实时递增)
@@ -792,6 +816,7 @@ export function App() {
           break;
         case "evt:session-loaded":
           setCurrentId(payload.id);
+          clearReasoning(); // 切换会话：清掉上个会话残留的思考
           atBottomRef.current = true; // 打开/切换会话：定位到最新(底部)，不用手滚
           forceBottomRef.current = true; // 切换会话：多帧兜底吸底，一次点击就到最新
           setItems(messagesToItems(payload.messages));
@@ -801,6 +826,10 @@ export function App() {
           charsRef.current += (payload.delta as string).length;
           pendingDeltaRef.current += payload.delta; // 累积，节流 flush
           scheduleFlush();
+          break;
+        case "evt:reasoning":
+          if (payload.sid !== currentIdRef.current) break; // 只显示当前会话的思考
+          pushReasoning(payload.delta as string);
           break;
         case "evt:tool-start":
           if (payload.sid !== currentIdRef.current) break;
@@ -890,13 +919,17 @@ export function App() {
           push({ type: "notice", text: `上下文已压缩：${payload.before} → ${payload.after} 条消息` });
           break;
         case "evt:done":
-          if (payload.sid === currentIdRef.current) thinkStartRef.current = null;
+          if (payload.sid === currentIdRef.current) {
+            thinkStartRef.current = null;
+            clearReasoning(); // 本轮结束：清掉思考流(答案已出)
+          }
           setNeedAuth(false); // 成功完成一轮=鉴权已通，收起授权条
           setConn({ status: "green", reason: "已连通，可随时使用。" }); // 成功=绿灯
           break;
         case "evt:stopped":
           if (payload.sid !== currentIdRef.current) break;
           thinkStartRef.current = null;
+          clearReasoning();
           push({ type: "notice", text: "已停止" });
           break;
         case "evt:error": {
@@ -2074,7 +2107,14 @@ export function App() {
             });
           })()}
           {busy && !pending && (
-            <ThinkingBar startRef={thinkStartRef} charsRef={charsRef} items={items} />
+            <ThinkingBar
+              startRef={thinkStartRef}
+              charsRef={charsRef}
+              items={items}
+              reasoning={reasoning}
+              open={reasoningOpen}
+              onToggle={() => setReasoningOpen((o) => !o)}
+            />
           )}
         </div>
 
@@ -3017,16 +3057,27 @@ function ThinkingBar({
   startRef,
   charsRef,
   items,
+  reasoning,
+  open,
+  onToggle,
 }: {
   startRef: React.MutableRefObject<number | null>;
   charsRef: React.MutableRefObject<number>;
   items: Item[];
+  reasoning?: string;
+  open?: boolean;
+  onToggle?: () => void;
 }) {
   const [, force] = useState(0);
   useEffect(() => {
     const t = setInterval(() => force((x) => x + 1), 400);
     return () => clearInterval(t);
   }, []);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  // 思考流实时增长时自动滚到底(展开时)
+  useEffect(() => {
+    if (open && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+  }, [reasoning, open]);
   const start = startRef.current;
   const elapsed = start ? Math.floor((Date.now() - start) / 1000) : 0;
   const chars = charsRef.current;
@@ -3037,13 +3088,26 @@ function ThinkingBar({
   const time = mm > 0 ? `${mm}m ${ss}s` : `${ss}s`;
   const status = liveStatus(items, chars, elapsed);
   const running = runningTools(items).length;
+  const hasReasoning = !!(reasoning && reasoning.trim());
   return (
-    <div className="thinking">
-      <span className="tspark">✳</span>
-      <span className="tstatus">{status}…</span>
-      <span className="tmeta">
-        {time} · {tokLabel} tokens · {running > 0 ? `${running} 个任务执行中` : "执行中"}
-      </span>
+    <div className="thinking-wrap">
+      <div className={"thinking" + (hasReasoning ? " has-reason" : "")}>
+        <span className="tspark">✳</span>
+        <span className="tstatus">{status}…</span>
+        <span className="tmeta">
+          {time} · {tokLabel} tokens · {running > 0 ? `${running} 个任务执行中` : "执行中"}
+        </span>
+        {hasReasoning && (
+          <button className="treason-toggle" onClick={onToggle}>
+            {open ? "隐藏思考" : "显示思考"}
+          </button>
+        )}
+      </div>
+      {hasReasoning && open && (
+        <div className="treason-body" ref={bodyRef}>
+          {reasoning}
+        </div>
+      )}
     </div>
   );
 }

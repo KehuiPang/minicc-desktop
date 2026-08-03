@@ -158,6 +158,10 @@ class AnthropicProvider implements Provider {
     );
 
     stream.on("text", (delta) => handlers.onText?.(delta));
+    // 扩展思考(若开启)：thinking 增量推给前端做「思考中」展示；未开启则永不触发，无副作用
+    (stream as { on(ev: string, cb: (delta: string) => void): void }).on("thinking", (delta) =>
+      handlers.onReasoning?.(delta),
+    );
     const final = await stream.finalMessage();
 
     const content: ContentBlock[] = [];
@@ -336,6 +340,11 @@ class OpenAIProvider implements Provider {
         const ch = j.choices?.[0];
         if (!ch) continue;
         const d = ch.delta ?? {};
+        // 思考流:Qwen3/Kimi/DeepSeek/GLM 等把推理过程放 reasoning_content(思考期间 content 为空,
+        // 否则界面只显示「深度思考中 0 tokens」半天没反应)。逐块推给前端做「思考中」流式展示。
+        const rc = (d as { reasoning_content?: unknown; reasoning?: unknown }).reasoning_content ??
+          (d as { reasoning?: unknown }).reasoning;
+        if (typeof rc === "string" && rc) handlers.onReasoning?.(rc);
         if (typeof d.content === "string" && d.content) {
           text += d.content;
           handlers.onText?.(d.content); // 逐块推给渲染进程

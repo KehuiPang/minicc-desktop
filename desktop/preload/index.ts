@@ -4,6 +4,7 @@ import { contextBridge, ipcRenderer } from "electron";
 const EVENTS = [
   "evt:ready",
   "evt:assistant-delta",
+  "evt:reasoning",
   "evt:tool-start",
   "evt:tool-end",
   "evt:permission-request",

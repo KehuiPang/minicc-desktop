@@ -40,6 +40,7 @@ export type UsageReport = SessionUsage & { round?: RoundUsage };
 
 export interface AgentHooks {
   onText?(delta: string): void;
+  onReasoning?(delta: string): void; // 思考过程流式(模型正式回答前的推理)
   requestPermission?(tool: Tool, input: Record<string, unknown>): Promise<PermissionDecision>;
   onToolStart?(id: string, name: string, input: Record<string, unknown>): void;
   onToolEnd?(id: string, result: string, isError: boolean): void;
@@ -245,6 +246,7 @@ export class Agent {
 
       const result = await this.provider.complete(this.system, this.messages, this.tools, {
         onText: hooks.onText,
+        onReasoning: hooks.onReasoning,
         signal,
       });
 

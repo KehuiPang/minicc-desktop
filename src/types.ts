@@ -64,6 +64,7 @@ export interface Tool extends ToolSpec {
 // Provider 抽象：一次"请求模型 → 拿到助手回复（文本增量 + 可能的 tool_use）"
 export interface ProviderStreamHandlers {
   onText?: (delta: string) => void; // 文本流式增量
+  onReasoning?: (delta: string) => void; // 思考(reasoning_content)流式增量：模型正式回答前的推理过程
   signal?: AbortSignal; // 中断信号：用户点停止时 abort，provider 传给 fetch/stream
 }
 

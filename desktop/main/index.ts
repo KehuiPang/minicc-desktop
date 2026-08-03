@@ -1551,6 +1551,7 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
           streamDrafts.set(useId, (streamDrafts.get(useId) || "") + delta); // 累积半截
           saveDraftThrottled(useId); // 节流落盘：重启不丢正在生成的内容
         },
+        onReasoning: (delta) => send("evt:reasoning", { sid: useId, delta }), // 思考过程流式(不落盘,仅实时展示)
         onStep: () => {
           streamDrafts.delete(useId); // 该段已进历史，清草稿
           persistQuiet(useId); // 即时落盘真实消息(每段/每工具轮)
