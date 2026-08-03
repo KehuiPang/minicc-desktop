@@ -4532,6 +4532,9 @@ function ConceptGraph({
   const [hover, setHover] = useState<{ kind: "node" | "edge"; id: string } | null>(null);
   const [pinInfo, setPinInfo] = useState<{ kind: "node" | "edge"; id: string } | null>(null);
   const [, forceRender] = useState(0);
+  const runningRef = useRef(false); // 力学循环是否在跑(收敛后停帧,不再抖)
+  const settleRef = useRef(0); // 连续低速帧计数,累够就判定稳定并停
+  const wakeRef = useRef<() => void>(() => {}); // 拖拽/缩放/数据变化时唤醒力学循环
   const seedRef = useRef(12345);
   const rnd = () => {
     seedRef.current = (seedRef.current * 1103515245 + 12345) & 0x7fffffff;
@@ -4611,11 +4614,36 @@ function ConceptGraph({
         p.y = Math.max(24, Math.min(H - 24, p.y));
       }
       forceRender((t) => (t + 1) & 0xffff);
-      if (alive) raf = requestAnimationFrame(tick);
+      // 收敛判定:统计当前最大速度,连续多帧都很慢(且没在拖)就停帧,布局定住不再抖
+      let maxV = 0;
+      for (const n of nodes) {
+        const p = pos.get(n.id);
+        if (p) maxV = Math.max(maxV, Math.abs(p.vx), Math.abs(p.vy));
+      }
+      const dragging = !!dragRef.current;
+      if (dragging || maxV > 0.15) settleRef.current = 0;
+      else settleRef.current++;
+      if (alive && (dragging || settleRef.current < 30)) {
+        raf = requestAnimationFrame(tick);
+      } else {
+        runningRef.current = false; // 稳定:停止排帧,等下次交互再唤醒
+      }
     };
+    // 唤醒:拖拽/缩放/展开新数据时调用,重新开始跑力学(若已停)
+    const wake = () => {
+      settleRef.current = 0;
+      if (!runningRef.current && alive) {
+        runningRef.current = true;
+        raf = requestAnimationFrame(tick);
+      }
+    };
+    wakeRef.current = wake;
+    runningRef.current = true;
     raf = requestAnimationFrame(tick);
     return () => {
       alive = false;
+      runningRef.current = false;
+      wakeRef.current = () => {};
       cancelAnimationFrame(raf);
     };
   }, [nodes, edges]);
@@ -4628,6 +4656,7 @@ function ConceptGraph({
     const move = (e: MouseEvent) => {
       const d = dragRef.current;
       if (!d) return;
+      wakeRef.current(); // 停帧后拖动/平移需唤醒,否则画面不跟手
       const vb = toVB(e.clientX, e.clientY);
       if (d.kind === "node") {
         // 越过 3px 才算拖动，避免手抖把点击误判成拖拽(否则点不动就选不中)
@@ -4682,6 +4711,7 @@ function ConceptGraph({
       v.k = k;
       v.x = vb.x - wx * k;
       v.y = vb.y - wy * k;
+      wakeRef.current(); // 缩放后需重绘一帧
     };
     svg.addEventListener("wheel", onWheel, { passive: false });
     return () => svg.removeEventListener("wheel", onWheel);
@@ -4693,6 +4723,7 @@ function ConceptGraph({
     const v = viewRef.current;
     dragRef.current = { kind: "pan", sx: vb.x, sy: vb.y, ox: v.x, oy: v.y };
     setPinInfo(null);
+    wakeRef.current(); // 开始平移,唤醒渲染
   };
   const color = (type: string) => {
     let h = 0;
@@ -4807,11 +4838,13 @@ function ConceptGraph({
                   const ox = p.x - (vb.x - view.x) / view.k;
                   const oy = p.y - (vb.y - view.y) / view.k;
                   dragRef.current = { kind: "node", id: n.id, moved: false, ox, oy, cx: ev.clientX, cy: ev.clientY };
+                  wakeRef.current(); // 开始拖节点,唤醒力学
                 }}
                 onDoubleClick={(ev) => {
                   ev.stopPropagation();
                   pinnedRef.current.delete(n.id); // 双击解除固定，节点重回力学布局
                   forceRender((t) => (t + 1) & 0xffff);
+                  wakeRef.current(); // 重回布局需重新跑力学
                 }}
                 onMouseEnter={() => setHover({ kind: "node", id: n.id })}
                 onMouseLeave={() => setHover((h) => (h?.kind === "node" && h.id === n.id ? null : h))}
