@@ -1670,10 +1670,21 @@ ipcMain.handle("chat:recall-inject", (_e, sid: string, text: string) => {
 
 ipcMain.on("chat:stop", (_e, sid?: string) => {
   const id = sid || currentId;
+  const ac = runs.get(id);
+  const agent = agents.get(id);
+  // 两段式停止:
+  //  第一次点 → 温和收尾:不切断当前输出，让模型把这轮自然吐完、完整落历史后在下个边界停。
+  //    历史尾部是完整的助手消息(非截断)，下次发消息无缝接续，不再产生 (已停止) 截断疤。
+  //  第二次点(或已在收尾/卡权限)→ 强制中断(abort)，兜底救卡死的工具/流。
+  if (ac && agent && !ac.signal.aborted && !agent.isSoftStopping() && pendingPerm.size === 0 && pendingAsk.size === 0) {
+    agent.requestSoftStop();
+    log("softStop", id.slice(0, 8), "温和收尾中(再点一次强制停止)");
+    return;
+  }
   // 只 abort，不立即删 runs——留给 agent.send 的 finally 结算后清理。
   // 否则会话仍在跑就被移出 runs，紧接着的新消息不再被拦→并发跑同一 agent→历史错乱(连续user/悬空tool_use)致 400。
   // loop 已在中断后尽快收尾(补齐 tool_result 并 return)，所以很快结算、UI 随即解锁。
-  runs.get(id)?.abort();
+  ac?.abort();
   // 若正卡在权限确认，一并取消(否则中断信号也叫不醒它)
   for (const [pid, r] of pendingPerm) {
     r("deny");

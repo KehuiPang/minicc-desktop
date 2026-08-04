@@ -134,6 +134,7 @@ export class Agent {
   private keepRecent: number;
   private pendingInject: { text: string; images: string[] }[] = []; // 运行中注入的新需求，循环边界取用
   private round: RoundUsage = { input: 0, output: 0, cacheHit: 0, cacheMiss: 0, steps: 0, lastInput: 0 }; // 本轮自足用量
+  private softStop = false; // 温和停止:不切断当前输出，让本轮自然吐完并干净落历史后，在下个边界停
 
   constructor(
     private provider: Provider,
@@ -145,6 +146,43 @@ export class Agent {
   ) {
     this.compactThreshold = opts.compactThreshold ?? 60000;
     this.keepRecent = opts.keepRecent ?? 6;
+  }
+
+  // 温和停止:不 abort 当前模型流，让它把这轮自然吐完、完整落历史后，在下个循环边界干净停下。
+  // 与 abort(硬中断)分开:硬中断会截断输出、留悬空 tool_use 需事后补 (已停止) 补丁；软停止不会。
+  requestSoftStop() {
+    this.softStop = true;
+  }
+  isSoftStopping(): boolean {
+    return this.softStop;
+  }
+
+  // 收尾:把当前(已完整生成的)助手消息里想调的工具剥掉，只保留已写完的正文，
+  // 让历史干净停在一条「完整的助手消息」上——不切断、不留截断疤，下次发消息无缝接续。
+  private finishSoftStop(hooks: AgentHooks): void {
+    this.pendingInject = []; // 停止即停干净:丢掉还没并入的注入消息，避免下一轮乱序冒出来
+    const last = this.messages[this.messages.length - 1];
+    if (last && last.role === "assistant") {
+      const kept = last.content.filter((b) => b.type !== "tool_use");
+      const hadToolUse = kept.length !== last.content.length;
+      const hasText = kept.some((b) => b.type === "text" && ((b as any).text || "").trim());
+      this.messages[this.messages.length - 1] = {
+        role: "assistant",
+        content: hasText ? kept : [{ type: "text", text: "（已停止）" }], // 极少数「纯工具无正文」才占位，但这是完整边界非截断
+        ts: last.ts,
+        usage: last.usage,
+      };
+      // 刚剥掉半截工具调用 → 通知前端把它从屏上抹掉，只留正文
+      if (hadToolUse) {
+        const t = (hasText ? kept : [])
+          .filter((b) => b.type === "text")
+          .map((b: any) => b.text)
+          .join("");
+        hooks.onRecover?.(t);
+      }
+    }
+    hooks.onStep?.();
+    hooks.onAssistantDone?.();
   }
 
   // 运行中注入新需求：不打断当前步，在下一个循环边界并入历史，让模型综合权衡/优先处理
@@ -248,9 +286,22 @@ export class Agent {
     this.ensureCanAcceptUser(); // 上一轮若被中断,先修好历史尾部,避免连续user/悬空tool_use致API 400
     this.messages.push({ role: "user", content: userContent, ts: Date.now() });
     this.round = { input: 0, output: 0, cacheHit: 0, cacheMiss: 0, steps: 0, lastInput: 0 }; // 本轮清零重记
+    this.softStop = false; // 新一轮开始，清掉上一轮可能残留的软停止标志
 
     while (true) {
-      if (signal?.aborted) return; // 已被用户中断
+      if (signal?.aborted) return; // 已被用户硬中断(abort)
+      // 温和停止:上一步(工具结果/助手)已干净入历史。若尾部是 user(tool_result)，补一条完整助手收尾，
+      // 让历史停在助手消息上(完整边界，非截断)，下次发消息无缝接续，且不再触发新的模型请求。
+      if (this.softStop) {
+        this.pendingInject = []; // 停止即停干净:丢掉还没并入的注入消息
+        const last = this.messages[this.messages.length - 1];
+        if (last && last.role === "user") {
+          this.messages.push({ role: "assistant", content: [{ type: "text", text: "（已停止）" }], ts: Date.now() });
+          hooks.onStep?.();
+        }
+        hooks.onAssistantDone?.();
+        return;
+      }
       // 上下文过长则先压缩，再请求模型（省 token / 防撑爆）
       await this.maybeCompact(hooks);
 
@@ -329,6 +380,14 @@ export class Agent {
           .map((b: any) => b.text)
           .join("");
         hooks.onRecover?.(t);
+      }
+
+      // 温和停止检查点:此刻这轮模型已「完整」生成并入历史(不是被截断的半截)。
+      // 剥掉它接下来想调的工具、保留已写完的正文，干净停在一条完整助手消息上就返回——
+      // 既让 AI 把话说完，又不再执行新动作/发新请求，历史尾部合法，下次无缝接续。
+      if (this.softStop) {
+        this.finishSoftStop(hooks);
+        return;
       }
 
       if (toolUses.length === 0) {
