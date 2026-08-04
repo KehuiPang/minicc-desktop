@@ -57,6 +57,7 @@ export interface MiniccApi {
   reset(): void;
   undoLast(): void;
   newSession(): void;
+  handoffSession(sid: string): Promise<{ ok: boolean; newId?: string }>; // 一键总结→开新会话接着做
   switchSession(id: string): void;
   setSessionModel(sid: string, model: string): void;
   setSessionProvider(sid: string, providerId: string, kind: string, model: string): void;

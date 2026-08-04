@@ -476,6 +476,55 @@ export class Agent {
     }
   }
 
+  // 生成「工作交接文档」：把本会话历史里真正有价值的内容(目标/决策/涉及的文件命令参数机器/
+  // 已完成/当前进展/未完成/下一步/坑)提炼成一份结构化中文文档，明确剔除跑题与噪音。
+  // 用途：老对话上下文被污染/太长时，一键交接到一个干净的新对话接着做。用本会话自己的模型来总结。
+  async makeHandoff(): Promise<string> {
+    const msgs = [...this.messages]; // 快照:即使源会话还在跑，也按当下这份历史来总结，不受后续 mutate 影响
+    let transcript = msgs
+      .map((m) => {
+        const parts = (m.content || [])
+          .map((b: any) => {
+            if (b.type === "text") return b.text;
+            if (b.type === "tool_use") return `[调用 ${b.name}: ${JSON.stringify(b.input).slice(0, 300)}]`;
+            if (b.type === "tool_result") return `[结果: ${String(b.content).slice(0, 500)}]`;
+            if (b.type === "image") return "[图片]";
+            return "";
+          })
+          .filter(Boolean)
+          .join("\n");
+        return parts ? `${m.role === "user" ? "用户" : "助手"}：${parts}` : "";
+      })
+      .filter((s) => s.length > 3)
+      .join("\n\n");
+    if (!transcript.trim()) return "";
+    // 太长则掐头留尾(目标通常在开头、最新进展在结尾)，防喂给模型时超上下文
+    const MAX = 80000;
+    if (transcript.length > MAX) {
+      transcript = transcript.slice(0, 6000) + "\n\n…(中间大段略去)…\n\n" + transcript.slice(-(MAX - 6000));
+    }
+    const res = await this.provider.complete(
+      "你是「工作交接文档」整理器。下面是一段可能很长、甚至跑题或被无关内容污染的工作对话。" +
+        "请只抽取真正有价值的信息，产出一份结构清晰的中文交接文档，让接手者(另一个 AI 助手)不看原对话也能直接继续干活。" +
+        "务必分节输出：\n" +
+        "1) 目标/任务：用户到底要做什么；\n" +
+        "2) 关键背景与决策：涉及的项目/仓库/机器/服务/文件路径/命令/参数/配置，已敲定的方案及理由；\n" +
+        "3) 已完成：具体做了什么、改了哪些文件、验证结果；\n" +
+        "4) 当前进展 / 未完成：正卡在哪、还差什么；\n" +
+        "5) 下一步：接手者应立刻执行的具体动作(有序列出)；\n" +
+        "6) 坑与注意事项：踩过的坑、红线、易错点。\n" +
+        "要求：条目式、带具体名字(别泛泛而谈)、剔除跑题闲聊与噪音、不要复述无关内容。只输出交接文档本身。",
+      [{ role: "user", content: [{ type: "text", text: `工作对话原文：\n${transcript}\n\n请输出交接文档：` }] }],
+      [],
+      {},
+    );
+    return res.content
+      .filter((b) => b.type === "text")
+      .map((b) => (b as { text: string }).text)
+      .join("")
+      .trim();
+  }
+
   // 让历史能安全接受新的 user 消息：修好上一轮中断残留的尾部，避免连续 user / 悬空 tool_use 致 API 400
   private ensureCanAcceptUser(): void {
     const last = this.messages[this.messages.length - 1];

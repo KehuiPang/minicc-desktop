@@ -282,6 +282,7 @@ export function App() {
   streamSpeedRef.current = streamSpeed;
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [ctxMenu, setCtxMenu] = useState<{ sid: string; x: number; y: number } | null>(null); // 会话右键菜单
+  const [handoffBusy, setHandoffBusy] = useState(false); // 正在生成交接文档(总结→开新会话)
   const [groupCtx, setGroupCtx] = useState<{ name: string; x: number; y: number } | null>(null); // 分组右键菜单
   const [dragId, setDragId] = useState<string | null>(null); // 正在拖拽的会话 id
   const [dragOverId, setDragOverId] = useState<string | null>(null); // 拖到哪个会话上(高亮)
@@ -934,6 +935,11 @@ export function App() {
           thinkStartRef.current = null;
           clearReasoning();
           push({ type: "notice", text: "已停止" });
+          break;
+        case "evt:handoff":
+          // 交接进度反馈:总结中(在源会话提示)/完成(已切到新会话)/失败
+          if (payload.phase === "summarizing") push({ type: "notice", text: "正在总结有价值内容、生成交接文档…" });
+          else if (payload.phase === "done") push({ type: "notice", text: "交接文档已生成，已开新对话接着做 →" });
           break;
         case "evt:error": {
           if (payload.sid && payload.sid !== currentIdRef.current) break;
@@ -1611,6 +1617,25 @@ export function App() {
                     }}
                   >
                     ⚙ 对话框配置
+                  </button>
+                  <div className="ctx-sep" />
+                  <button
+                    className="ctx-item"
+                    disabled={handoffBusy}
+                    onClick={async () => {
+                      const sid = ctxMenu.sid;
+                      close();
+                      setHandoffBusy(true);
+                      try {
+                        const r = await window.minicc.handoffSession(sid);
+                        if (!r?.ok) push({ type: "notice", text: "交接失败：该会话暂无可提炼的内容" });
+                      } finally {
+                        setHandoffBusy(false);
+                      }
+                    }}
+                    title="总结本对话有价值的内容，生成交接文档，并开一个干净的新对话接着做(解决上下文被污染)"
+                  >
+                    🔀 总结并交接到新对话
                   </button>
                   <div className="ctx-sep" />
                   <button

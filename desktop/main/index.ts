@@ -1814,6 +1814,50 @@ ipcMain.on("report:generate", (_e, group: string, sessionIds: string[]) => {
   void startTurn(sid, `请生成「${group}」今天的工作日报。`, undefined, sys);
 });
 
+// 一键工作交接:把某会话有价值的内容总结成交接文档 → 开一个干净的新会话(继承源会话平台/模型)
+// → 把文档喂进去让 AI 接着把没做完的事做完。解决老对话上下文被污染后，还在原地续跑越跑越乱的问题。
+ipcMain.handle("session:handoff", async (_e, sid: string) => {
+  const srcId = sid || currentId;
+  const srcAgent = getAgent(srcId);
+  if (!srcAgent) {
+    send("evt:error", { sid: srcId, message: "交接失败：源会话未初始化。" });
+    return { ok: false };
+  }
+  send("evt:handoff", { sid: srcId, phase: "summarizing" }); // UI 提示"正在生成交接文档…"
+  let doc = "";
+  try {
+    doc = await srcAgent.makeHandoff();
+  } catch (e: any) {
+    log("handoffError", srcId.slice(0, 8), String(e?.message || e).slice(0, 300));
+    send("evt:handoff", { sid: srcId, phase: "error" });
+    send("evt:error", { sid: srcId, message: "生成交接文档失败：" + String(e?.message || e).slice(0, 200) });
+    return { ok: false };
+  }
+  if (!doc.trim()) {
+    send("evt:handoff", { sid: srcId, phase: "error" });
+    send("evt:error", { sid: srcId, message: "交接文档为空(该会话暂无可提炼的内容)。" });
+    return { ok: false };
+  }
+  // 新会话：继承源会话的平台/模型，让续跑用同一套模型
+  const s = loadSettings() || ({} as Settings);
+  const sp = provForSession(srcId, s);
+  const newId = randomUUID();
+  currentId = newId;
+  getAgent(newId);
+  switchSessionProvider(newId, sp.providerId, sp.kind, sp.model); // 继承平台/模型(内部会 setRuntime+刷底栏)
+  send("evt:session-loaded", { id: newId, messages: [] });
+  sendUsageFor(newId);
+  send("evt:handoff", { sid: newId, phase: "done" });
+  const firstMsg =
+    "【工作交接（来自上一个对话）】\n" +
+    "上一个对话的上下文比较杂乱/过长，以下是从中整理出的有价值内容与当前进展。" +
+    "请先理解交接内容，然后**接着把未完成的部分继续做完**；有不确定处再问我。\n\n" +
+    "----\n" +
+    doc;
+  void startTurn(newId, firstMsg);
+  return { ok: true, newId };
+});
+
 ipcMain.on("session:switch", (_e, id: string) => {
   currentId = id;
   const a = getAgent(id);

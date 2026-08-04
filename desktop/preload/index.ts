@@ -29,6 +29,7 @@ const EVENTS = [
   "evt:brain-docs",
   "evt:brain-concepts",
   "evt:trash",
+  "evt:handoff",
 ] as const;
 
 contextBridge.exposeInMainWorld("minicc", {
@@ -42,6 +43,9 @@ contextBridge.exposeInMainWorld("minicc", {
   reset: () => ipcRenderer.send("chat:reset"),
   undoLast: () => ipcRenderer.send("chat:undo-last"),
   newSession: () => ipcRenderer.send("session:new"),
+  handoffSession: (sid: string) =>
+    ipcRenderer.invoke("session:handoff", sid) as Promise<{ ok: boolean; newId?: string }>, // 一键总结→开新会话接着做
+
   switchSession: (id: string) => ipcRenderer.send("session:switch", id),
   setSessionModel: (sid: string, model: string) => ipcRenderer.send("session:set-model", sid, model), // 每会话独立:只改本会话模型
   setSessionProvider: (sid: string, providerId: string, kind: string, model: string) =>
