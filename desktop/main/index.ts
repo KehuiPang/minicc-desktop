@@ -48,6 +48,7 @@ import {
   setSessionPriority,
   setSessionOrder,
   setSessionProject,
+  setSessionTitle,
   setGroupsOrder,
   setSessionDone,
   setSessionProvider,
@@ -1331,6 +1332,7 @@ function msgTextTail(m: any, n: number): string {
 }
 async function maybeSmartTitle(id: string) {
   if (titleInFlight.has(id) || !provider) return;
+  if (listSessions().find((s) => s.id === id)?.titleLocked) return; // 用户手动锁过标题→不再自动改
   const a0 = agents.get(id);
   if (!a0) return;
   const msgs = a0.getMessages();
@@ -1765,6 +1767,12 @@ ipcMain.handle("codex:consume-reset", async (_e, creditId: string) => {
 });
 
 // —— 会话管理 IPC ——
+// 用户手动重命名会话标题 → 设定并锁定，此后不再被自动/智能标题覆盖(传空=清空解锁)
+ipcMain.on("session:rename", (_e, id: string, title: string) => {
+  setSessionTitle(id || currentId, title);
+  send("evt:sessions", listSessions());
+});
+
 ipcMain.on("session:new", () => {
   currentId = randomUUID();
   const a = getAgent(currentId);

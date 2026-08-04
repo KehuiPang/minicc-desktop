@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld("minicc", {
   reset: () => ipcRenderer.send("chat:reset"),
   undoLast: () => ipcRenderer.send("chat:undo-last"),
   newSession: () => ipcRenderer.send("session:new"),
+  renameSession: (id: string, title: string) => ipcRenderer.send("session:rename", id, title), // 手动重命名并锁定标题
   handoffSession: (sid: string) =>
     ipcRenderer.invoke("session:handoff", sid) as Promise<{ ok: boolean; newId?: string }>, // 一键总结→开新会话接着做
 

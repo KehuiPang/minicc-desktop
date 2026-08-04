@@ -23,6 +23,7 @@ const TRASH_TTL = 7 * 24 * 3600 * 1000; // 回收站保留 7 天,过期自动彻
 export interface SessionMeta {
   id: string;
   title: string;
+  titleLocked?: boolean; // 用户手动改过标题→锁定,不再被自动派生/智能标题覆盖
   updatedAt: number;
   usage?: { totalInput: number; totalOutput: number; lastInput: number };
   group?: string; // 所属分组名；空=未分组
@@ -165,6 +166,22 @@ export function setSessionPromptCfg(id: string, cfg: SessionPromptCfg | null) {
     clean.interactOff ||
     (clean.disabledTools && clean.disabledTools.length > 0);
   s.promptCfg = has ? clean : undefined;
+  saveList(l);
+}
+
+// 用户手动重命名标题：设定并「锁定」，此后任何自动派生/智能标题都不再覆盖它。
+// 传空字符串=清空并解锁，标题回到自动派生。
+export function setSessionTitle(id: string, title: string) {
+  const l = listSessions();
+  const s = l.find((x) => x.id === id);
+  if (!s) return;
+  const t = (title || "").trim();
+  if (t) {
+    s.title = t.slice(0, 40); // 手动标题放宽到 40 字
+    s.titleLocked = true;
+  } else {
+    s.titleLocked = undefined; // 清空=解锁，下次落盘重新自动派生
+  }
   saveList(l);
 }
 
@@ -385,7 +402,9 @@ export function saveSession(
   const l = all.filter((s) => s.id !== id);
   l.unshift({
     id,
-    title,
+    // 已锁定(用户手动改过)→ 永远保留原标题，任何落盘/智能标题都不许覆盖
+    title: prev?.titleLocked ? prev.title || title : title,
+    titleLocked: prev?.titleLocked,
     updatedAt: now,
     usage,
     group: prev?.group,

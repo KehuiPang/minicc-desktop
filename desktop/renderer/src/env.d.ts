@@ -57,6 +57,7 @@ export interface MiniccApi {
   reset(): void;
   undoLast(): void;
   newSession(): void;
+  renameSession(id: string, title: string): void; // 手动重命名并锁定标题(传空=解锁)
   handoffSession(sid: string): Promise<{ ok: boolean; newId?: string }>; // 一键总结→开新会话接着做
   switchSession(id: string): void;
   setSessionModel(sid: string, model: string): void;

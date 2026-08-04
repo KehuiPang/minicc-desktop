@@ -48,6 +48,7 @@ interface Pending {
 interface SessionMeta {
   id: string;
   title: string;
+  titleLocked?: boolean; // 用户手动改过标题→固定,不再自动变
   updatedAt: number;
   group?: string;
   priority?: number;
@@ -283,6 +284,8 @@ export function App() {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [ctxMenu, setCtxMenu] = useState<{ sid: string; x: number; y: number } | null>(null); // 会话右键菜单
   const [handoffBusy, setHandoffBusy] = useState(false); // 正在生成交接文档(总结→开新会话)
+  const [renameSid, setRenameSid] = useState<string | null>(null); // 正在重命名的会话 id
+  const [renameText, setRenameText] = useState(""); // 重命名输入框内容
   const [groupCtx, setGroupCtx] = useState<{ name: string; x: number; y: number } | null>(null); // 分组右键菜单
   const [dragId, setDragId] = useState<string | null>(null); // 正在拖拽的会话 id
   const [dragOverId, setDragOverId] = useState<string | null>(null); // 拖到哪个会话上(高亮)
@@ -1593,6 +1596,12 @@ export function App() {
               setCtxMenu(null);
               setGroupInputSid(null);
               setNewGroupName("");
+              setRenameSid(null);
+              setRenameText("");
+            };
+            const submitRename = () => {
+              window.minicc.renameSession(ctxMenu.sid, renameText.trim()); // 空=解锁回到自动标题
+              close();
             };
             const move = (g: string | null) => {
               window.minicc.setSessionGroup(ctxMenu.sid, g);
@@ -1609,6 +1618,34 @@ export function App() {
                   }}
                 />
                 <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
+                  {renameSid === ctxMenu.sid ? (
+                    <input
+                      className="ctx-input"
+                      autoFocus
+                      placeholder="输入新标题，回车保存"
+                      value={renameText}
+                      onChange={(e) => setRenameText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") submitRename();
+                        if (e.key === "Escape") {
+                          setRenameSid(null);
+                          setRenameText("");
+                        }
+                      }}
+                    />
+                  ) : (
+                    <button
+                      className="ctx-item"
+                      onClick={() => {
+                        setRenameSid(ctxMenu.sid);
+                        setRenameText(s.title || "");
+                      }}
+                      title="重命名标题；改后永久固定，不再随对话自动变化(清空则恢复自动标题)"
+                    >
+                      ✎ 重命名标题{s.titleLocked ? "（已固定）" : ""}
+                    </button>
+                  )}
+                  <div className="ctx-sep" />
                   <button
                     className="ctx-item"
                     onClick={() => {
