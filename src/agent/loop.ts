@@ -52,13 +52,23 @@ export interface AgentHooks {
   onRecover?(cleanedText: string): void; // 模型把工具调用当文本吐出→兜底解析后，回传清理后的正文供前端修正显示
 }
 
-// 去掉落单的短英文噪音文本块(如 "count")：模型偶发把杂词和工具调用一起吐出。
-// 只删「纯 1-15 个英文字母、无空格无标点无中文」的独立文本块，正常正文(含中文/标点/空格)不动。
+// 去掉落单的杂字文本块(模型偶发把杂词/单字跟正文或工具调用一起吐出，如 "count"/"course"/"课")。
+// 铁律：仅当本轮还有其它内容块时才清——绝不删「唯一的那条正文」(短回复如"好的""对"原样保留)。
+// 只删「落单的噪音块」：纯 1-15 个英文字母、或纯 1-3 个汉字、或纯 1-4 个标点/符号，且不含空格/换行(带空格=正常正文)。
 function stripStrayText(content: ContentBlock[]): ContentBlock[] {
-  const kept = content.filter(
-    (b) => !(b.type === "text" && /^[A-Za-z]{1,15}$/.test(((b as any).text || "").trim())),
-  );
-  return kept.length === content.length ? content : kept;
+  if (content.length <= 1) return content; // 只有一块=真正的回答，绝不动
+  const isNoise = (raw: string): boolean => {
+    const t = raw.trim();
+    if (!t || /\s/.test(t)) return false; // 空/含空格换行=正常正文，放过
+    return (
+      /^[A-Za-z]{1,15}$/.test(t) || // 落单短英文(count/course…)
+      /^[一-龥]{1,3}$/.test(t) || // 落单 1-3 个汉字(课…)
+      /^[\p{P}\p{S}]{1,4}$/u.test(t) // 落单标点/符号
+    );
+  };
+  const kept = content.filter((b) => !(b.type === "text" && isNoise((b as any).text || "")));
+  if (kept.length === content.length) return content; // 没删任何东西，原样返回(保持引用不变)
+  return kept.length ? kept : content; // 万一全被判噪音，宁可不动也不返回空
 }
 
 // 兜底：模型偶尔把工具调用写成文本(<invoke name="x"><parameter name="y">…</parameter></invoke>)，
@@ -303,8 +313,9 @@ export class Agent {
           finalContent = recovered.newContent;
         }
       }
-      // 兜底2：有工具调用时，去掉像 "count" 这种落单短英文噪音文本块(模型偶发把杂词跟工具调用一起吐出)
-      if (toolUses.length > 0) finalContent = stripStrayText(finalContent);
+      // 兜底2：去掉像 "count"/"课" 这种落单杂字块——不再要求必须有工具调用，纯文字轮也清；
+      // 中/英/符号一起认。防止杂字漏进历史被下一轮模型学去、越滚越乱。
+      finalContent = stripStrayText(finalContent);
 
       // 内容被清理过 → 替换历史里那条 + 通知前端修正屏上显示
       if (finalContent !== result.content) {
