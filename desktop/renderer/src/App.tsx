@@ -477,14 +477,23 @@ export function App() {
   const [apiKeyBusy, setApiKeyBusy] = useState(false); // 正在验证 key
   const lastClipRef = useRef(""); // 上次检测过的剪贴板内容(去重)
   const keyTestingRef = useRef(false); // 防并发验证
-  const [conn, setConn] = useState<{ status: "green" | "yellow" | "red" | "checking"; reason: string }>({
-    status: "checking",
-    reason: "检测连通状态…",
-  });
+  // 连通状态灯按会话 id 独立：每个对话框反映自己所用平台/模型的连通性，别的会话跑完/报错不会改这个灯。
+  type ConnState = { status: "green" | "yellow" | "red" | "checking"; reason: string };
+  const [connMap, setConnMap] = useState<Record<string, ConnState>>({});
+  const setConnFor = (sid: string, v: ConnState) => setConnMap((m) => ({ ...m, [sid]: v }));
+  const conn: ConnState = connMap[currentId] ?? { status: "checking", reason: "检测连通状态…" }; // 当前可见会话的灯
   const [showConn, setShowConn] = useState(false); // 状态灯说明气泡
-  const thinkStartRef = useRef<number | null>(null); // 本轮开始时间（思考计时）
-  const charsRef = useRef(0); // 本轮已流式字符数（估算 token）
-  const turnTextRef = useRef(""); // 本轮已生成的正文(含 instant 模式还没揭示的),供状态栏悬停预览
+  // 本轮流式状态（开始时间/已流式字符数/已生成正文）按会话 id 独立存储：
+  // 多会话并发时各算各的，切会话/后台会话都不会串到当前对话框的计时、tokens、悬停预览。
+  const turnStreamRef = useRef<Map<string, { start: number | null; chars: number; text: string }>>(new Map());
+  const turnStream = (sid: string) => {
+    let s = turnStreamRef.current.get(sid);
+    if (!s) {
+      s = { start: null, chars: 0, text: "" };
+      turnStreamRef.current.set(sid, s);
+    }
+    return s;
+  };
   const [reasoning, setReasoning] = useState(""); // 本轮思考过程(reasoning_content)流式文本
   const reasoningRef = useRef(""); // 思考文本累积缓冲(节流 flush 到 state)
   const reasoningTimerRef = useRef<number | null>(null);
@@ -561,7 +570,8 @@ export function App() {
   // 思考流(reasoning)累积 + 节流渲染：思考期间实时显示，别让用户干等
   function pushReasoning(delta: string) {
     reasoningRef.current += delta;
-    if (thinkStartRef.current == null) thinkStartRef.current = Date.now();
+    const s = turnStream(currentIdRef.current);
+    if (s.start == null) s.start = Date.now();
     if (reasoningTimerRef.current != null) return;
     reasoningTimerRef.current = window.setTimeout(() => {
       reasoningTimerRef.current = null;
@@ -638,12 +648,13 @@ export function App() {
 
   // 连通状态检测：更新状态灯（红/黄/绿）
   async function runConnCheck() {
-    setConn({ status: "checking", reason: "检测连通状态…" });
+    const sid = currentIdRef.current; // 捕获发起时的会话：异步返回时若已切走，也只写回原会话的灯
+    setConnFor(sid, { status: "checking", reason: "检测连通状态…" });
     try {
       const r = await window.minicc.checkConn();
-      setConn(r);
+      setConnFor(sid, r);
     } catch {
-      setConn({ status: "yellow", reason: "检测失败，请重试。" });
+      setConnFor(sid, { status: "yellow", reason: "检测失败，请重试。" });
     }
   }
 
@@ -673,7 +684,7 @@ export function App() {
         setAuthDismissed(false);
         setApiKeyStep("idle");
         setApiKeyInput("");
-        setConn({ status: "green", reason: "已连通，可随时使用。" });
+        setConnFor(currentIdRef.current, { status: "green", reason: "已连通，可随时使用。" });
         return true;
       }
       if (keyRejected(res.reason)) {
@@ -691,7 +702,7 @@ export function App() {
       setAuthDismissed(false);
       setApiKeyStep("idle");
       setApiKeyInput("");
-      setConn({ status: "yellow", reason: res.reason });
+      setConnFor(currentIdRef.current, { status: "yellow", reason: res.reason });
       return true;
     } finally {
       keyTestingRef.current = false;
@@ -829,8 +840,11 @@ export function App() {
           break;
         case "evt:assistant-delta":
           if (payload.sid !== currentIdRef.current) break; // 只画当前可见会话
-          charsRef.current += (payload.delta as string).length;
-          turnTextRef.current += payload.delta; // 本轮全量正文(供悬停预览,instant 模式也能看到)
+          {
+            const s = turnStream(payload.sid);
+            s.chars += (payload.delta as string).length;
+            s.text += payload.delta; // 本轮全量正文(供悬停预览,instant 模式也能看到)
+          }
           pendingDeltaRef.current += payload.delta; // 累积，节流 flush
           scheduleFlush();
           break;
@@ -926,16 +940,16 @@ export function App() {
           push({ type: "notice", text: `上下文已压缩：${payload.before} → ${payload.after} 条消息` });
           break;
         case "evt:done":
+          turnStreamRef.current.delete(payload.sid); // 本轮结束：清掉该会话的计时/tokens/预览缓冲
+          setConnFor(payload.sid, { status: "green", reason: "已连通，可随时使用。" }); // 成功=绿灯(只点亮发起会话自己的灯)
           if (payload.sid === currentIdRef.current) {
-            thinkStartRef.current = null;
             clearReasoning(); // 本轮结束：清掉思考流(答案已出)
+            setNeedAuth(false); // 成功完成一轮=鉴权已通，收起授权条(仅当前会话)
           }
-          setNeedAuth(false); // 成功完成一轮=鉴权已通，收起授权条
-          setConn({ status: "green", reason: "已连通，可随时使用。" }); // 成功=绿灯
           break;
         case "evt:stopped":
+          turnStreamRef.current.delete(payload.sid); // 停止：清掉该会话的计时/tokens 缓冲(后台会话也清)
           if (payload.sid !== currentIdRef.current) break;
-          thinkStartRef.current = null;
           clearReasoning();
           push({ type: "notice", text: "已停止" });
           break;
@@ -945,8 +959,9 @@ export function App() {
           else if (payload.phase === "done") push({ type: "notice", text: "交接文档已生成，已开新对话接着做 →" });
           break;
         case "evt:error": {
+          const errSid = payload.sid || currentIdRef.current;
+          turnStreamRef.current.delete(errSid); // 出错：清掉该会话的计时/tokens 缓冲
           if (payload.sid && payload.sid !== currentIdRef.current) break;
-          thinkStartRef.current = null;
           const friendly = friendlyError(String(payload.message ?? payload));
           // 去重：与上一条完全相同的出错提示不重复堆叠
           setItems((p) => {
@@ -958,9 +973,9 @@ export function App() {
           if (isAuthErrorText(friendly)) {
             setNeedAuth(true);
             setAuthDismissed(false);
-            setConn({ status: "red", reason: friendly });
+            setConnFor(errSid, { status: "red", reason: friendly });
           } else {
-            setConn({ status: "yellow", reason: friendly }); // 已配置但报错
+            setConnFor(errSid, { status: "yellow", reason: friendly }); // 已配置但报错
           }
           break;
         }
@@ -1151,9 +1166,7 @@ export function App() {
     push({ type: "user", text, images: imgs.length ? imgs : undefined, ts: Date.now() });
     atBottomRef.current = true; // 发新消息=想看这轮回复：重新贴底,后续流式自动吸底(哪怕刚才滚上去看历史)
     setRunningSet((s) => new Set(s).add(currentId)); // 乐观置为运行中(主进程随后 evt:tasks 校准)
-    thinkStartRef.current = Date.now();
-    charsRef.current = 0;
-    turnTextRef.current = ""; // 新一轮:清掉上轮预览缓冲
+    turnStreamRef.current.set(currentId, { start: Date.now(), chars: 0, text: "" }); // 新一轮:该会话计时/tokens/预览归零
     window.minicc.send(currentId, text, imgs.length ? imgs : undefined);
   }
 
@@ -2195,9 +2208,8 @@ export function App() {
           })()}
           {busy && !pending && (
             <ThinkingBar
-              startRef={thinkStartRef}
-              charsRef={charsRef}
-              textRef={turnTextRef}
+              streamRef={turnStreamRef}
+              sid={currentId}
               items={items}
               reasoning={reasoning}
               open={reasoningOpen}
@@ -3323,17 +3335,15 @@ function PromptCfgModal({ sid, title, onClose }: { sid: string; title: string; o
 }
 
 function ThinkingBar({
-  startRef,
-  charsRef,
-  textRef,
+  streamRef,
+  sid,
   items,
   reasoning,
   open,
   onToggle,
 }: {
-  startRef: React.MutableRefObject<number | null>;
-  charsRef: React.MutableRefObject<number>;
-  textRef?: React.MutableRefObject<string>;
+  streamRef: React.MutableRefObject<Map<string, { start: number | null; chars: number; text: string }>>;
+  sid: string;
   items: Item[];
   reasoning?: string;
   open?: boolean;
@@ -3350,9 +3360,10 @@ function ThinkingBar({
   useEffect(() => {
     if (open && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
   }, [reasoning, open]);
-  const start = startRef.current;
+  const st = streamRef.current.get(sid); // 当前会话本轮的计时/字符/正文(按会话独立，不串)
+  const start = st?.start ?? null;
   const elapsed = start ? Math.floor((Date.now() - start) / 1000) : 0;
-  const chars = charsRef.current;
+  const chars = st?.chars ?? 0;
   const toks = Math.max(0, Math.round(chars / 3));
   const tokLabel = toks >= 1000 ? (toks / 1000).toFixed(1) + "k" : String(toks);
   const mm = Math.floor(elapsed / 60);
@@ -3374,7 +3385,7 @@ function ThinkingBar({
         >
           {time} · {tokLabel} tokens · {running > 0 ? `${running} 个任务执行中` : "执行中"}
           {previewOn && (() => {
-            const preview = (textRef?.current || "").slice(-2000);
+            const preview = (st?.text || "").slice(-2000);
             return (
               <div className="tpreview">
                 {preview ? preview : "（还没有已生成的正文；若一直 0 token，是模型还没吐出首字）"}
