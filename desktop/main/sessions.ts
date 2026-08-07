@@ -524,13 +524,31 @@ export function autoPurgeTrash(now = Date.now()) {
   purgeExpired(readTrash(), now);
 }
 
+// 交接会话的首条消息 = 固定套话前言 + "----" 分隔 + 真正的交接文档。
+// 派生/智能标题若直接吃首条文本，标题永远是"【工作交接（来自上一个对话）】…"这段套话。
+// 这里剥掉前言，只留分隔线之后的文档正文，让标题基于当下项目/内容来命名。
+export function stripHandoffWrapper(text: string): string {
+  const t = text || "";
+  if (t.startsWith("【工作交接")) {
+    const i = t.indexOf("\n----\n");
+    if (i >= 0) {
+      const body = t.slice(i + 6).trim();
+      if (body) return body;
+    }
+  }
+  return t;
+}
+
 // 从首条用户消息推导标题
 export function deriveTitle(messages: Message[]): string {
   for (const m of messages) {
     if (m.role === "user") {
       for (const b of m.content) {
         if (b.type === "text" && b.text.trim()) {
-          const t = b.text.trim().replace(/\s+/g, " ");
+          let t = stripHandoffWrapper(b.text).trim().replace(/\s+/g, " ");
+          // 去掉交接文档常见的分节前缀(如 "1) 目标/任务：")，让标题直奔主题
+          t = t.replace(/^\d+\s*[).、．]\s*[^：:]{0,12}[：:]\s*/, "").trim();
+          if (!t) t = b.text.trim().replace(/\s+/g, " ");
           return t.length > 24 ? t.slice(0, 24) + "…" : t;
         }
       }

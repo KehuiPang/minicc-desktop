@@ -43,6 +43,7 @@ import {
   saveSession,
   deleteSession,
   deriveTitle,
+  stripHandoffWrapper,
   listGroups,
   setSessionGroup,
   setSessionPriority,
@@ -1343,7 +1344,15 @@ async function maybeSmartTitle(id: string) {
   const recent = msgs.slice(-6);
   const picked = firstUser && !recent.includes(firstUser) ? [firstUser, ...recent] : recent;
   const convo = picked
-    .map((m: any) => `${m.role === "user" ? "用户" : "助手"}: ${msgText(m)}`)
+    .map((m: any) => {
+      // 剥掉交接前言只留正文；首条(定主题)多给点字数，确保覆盖到"目标+项目"这几节
+      const s = (m.content || [])
+        .filter((b: any) => b.type === "text")
+        .map((b: any) => b.text)
+        .join(" ");
+      const body = stripHandoffWrapper(s).trim().slice(0, m === firstUser ? 500 : 200);
+      return `${m.role === "user" ? "用户" : "助手"}: ${body}`;
+    })
     .filter((s: string) => s.length > 3)
     .join("\n");
   try {
