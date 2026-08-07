@@ -5,9 +5,40 @@ import type {
   ContentBlock,
   Message,
   Provider,
+  ProviderResult,
   Tool,
   ToolContext,
 } from "../types.js";
+
+// —— 上下文 token 粗估(发请求前判断该不该压缩;真实分词拿不到,宁可略高以尽早压缩) ——
+// 中文/日韩表意字 ≈0.6 token/字，其它(英文/代码/符号) ≈0.28 token/字。
+function estimateText(s: string): number {
+  if (!s) return 0;
+  const cjk = (s.match(/[　-鿿豈-﫿＀-￯]/g) || []).length;
+  return cjk * 0.6 + (s.length - cjk) * 0.28;
+}
+function estimateBlockTokens(b: ContentBlock): number {
+  if (b.type === "text") return estimateText(b.text);
+  if (b.type === "tool_use") return estimateText(b.name) + estimateText(JSON.stringify(b.input || {}));
+  if (b.type === "tool_result") return estimateText(String(b.content ?? ""));
+  if (b.type === "image") return 1500; // 图片按常见上限估(实际按尺寸,取偏高值防漏压)
+  return 0;
+}
+function estimateMsgTokens(m: Message): number {
+  let n = 4; // 每条消息的角色/包裹开销
+  for (const b of m.content || []) n += estimateBlockTokens(b);
+  return n;
+}
+
+// 识别"上下文撞上限"类错误(prompt too long / context length / 413)，与普通 400 区分开
+function isPromptTooLong(e: unknown): boolean {
+  const err = e as { status?: number; message?: string; error?: { message?: string } };
+  const msg = `${err?.message || ""} ${err?.error?.message || ""}`.toLowerCase();
+  return (
+    err?.status === 413 ||
+    /prompt is too long|too many tokens|context (length|window)|maximum.*token|exceed.*context/.test(msg)
+  );
+}
 
 export type PermissionDecision = "allow" | "deny";
 
@@ -287,6 +318,7 @@ export class Agent {
     this.messages.push({ role: "user", content: userContent, ts: Date.now() });
     this.round = { input: 0, output: 0, cacheHit: 0, cacheMiss: 0, steps: 0, lastInput: 0 }; // 本轮清零重记
     this.softStop = false; // 新一轮开始，清掉上一轮可能残留的软停止标志
+    let shrinkAttempts = 0; // 撞上下文上限后的紧急压缩重试计数(防死循环)
 
     while (true) {
       if (signal?.aborted) return; // 已被用户硬中断(abort)
@@ -305,11 +337,24 @@ export class Agent {
       // 上下文过长则先压缩，再请求模型（省 token / 防撑爆）
       await this.maybeCompact(hooks);
 
-      const result = await this.provider.complete(this.system, this.messages, this.tools, {
-        onText: hooks.onText,
-        onReasoning: hooks.onReasoning,
-        signal,
-      });
+      let result: ProviderResult;
+      try {
+        result = await this.provider.complete(this.system, this.messages, this.tools, {
+          onText: hooks.onText,
+          onReasoning: hooks.onReasoning,
+          signal,
+        });
+      } catch (e) {
+        // 撞上下文上限(prompt too long)→ 不把死错抛给用户:强制压缩后重试本轮。
+        // 根因:压缩阈值只看"上一轮成功的 input tokens",请求失败不返回 usage→它冻住→
+        // 自动压缩永远触发不了→每轮必挂。这里兜底强制瘦身再重发,打破死锁。
+        if (isPromptTooLong(e) && shrinkAttempts < 5 && (await this.emergencyShrink(hooks))) {
+          shrinkAttempts++;
+          continue;
+        }
+        throw e;
+      }
+      shrinkAttempts = 0; // 成功一次即重置,之后再撞再压
 
       this.usage.totalSteps += 1; // 每次模型请求算一步(不管有没有返回 usage)
       this.round.steps += 1;
@@ -546,13 +591,32 @@ export class Agent {
   }
 
   // —— 上下文压缩 ——
+  // 粗估"当前若立刻发请求"的输入 token(system + tools + 全部历史)。
+  // ★关键:发请求前用它判断该不该压缩,而不是只信"上一轮成功返回的 input tokens"——
+  // 后者在请求失败(如 prompt too long)时不更新,会把压缩逻辑永久冻住导致死锁。
+  private estimateContextTokens(): number {
+    let n = estimateText(this.system);
+    for (const t of this.tools)
+      n += estimateText(t.name) + estimateText(t.description) + estimateText(JSON.stringify(t.inputSchema || {}));
+    for (const m of this.messages) n += estimateMsgTokens(m);
+    return Math.round(n);
+  }
+
   private async maybeCompact(hooks: AgentHooks): Promise<void> {
     if (this.compactThreshold <= 0) return;
-    if (this.usage.lastInput < this.compactThreshold) return;
-    if (this.messages.length <= this.keepRecent + 1) return;
+    // 取"上一轮成功值"与"当前实时估算"的较大者:成功值准但可能过时,估算值防它过时导致漏压。
+    const trigger = Math.max(this.usage.lastInput, this.estimateContextTokens());
+    if (trigger < this.compactThreshold) return;
+    await this.compactOnce(hooks, this.keepRecent);
+  }
 
-    const cut = this.findCutIndex();
-    if (cut <= 0) return; // 找不到安全切点则不压
+  // 执行一次压缩:把安全切点之前的旧历史摘要成一条 user 消息,保留最近 keepN 条原始消息。
+  // 返回是否真的压了(找不到切点/摘要失败→false,绝不丢历史)。
+  private async compactOnce(hooks: AgentHooks, keepN: number): Promise<boolean> {
+    if (this.messages.length <= keepN + 1) return false;
+
+    const cut = this.findCutIndex(keepN);
+    if (cut <= 0) return false; // 找不到安全切点则不压
 
     const older = this.messages.slice(0, cut);
     const recent = this.messages.slice(cut);
@@ -560,7 +624,7 @@ export class Agent {
 
     // 把旧历史摊平成文本摘录(含工具调用/结果的要点)，作为单条 user 消息去总结——
     // 比直接把原始消息(可能含未配对工具块)喂给模型稳得多，也更信息量足。
-    const transcript = older
+    let transcript = older
       .map((m) => {
         const parts = (m.content || [])
           .map((b: any) => {
@@ -576,6 +640,10 @@ export class Agent {
       })
       .filter((s) => s.length > 3)
       .join("\n\n");
+    // 历史特别大时,摘要请求本身也可能撑爆→掐头留尾(目标在开头、最新进展在结尾)
+    const MAX = 120000;
+    if (transcript.length > MAX)
+      transcript = transcript.slice(0, 18000) + "\n\n…(中间大段略去)…\n\n" + transcript.slice(-(MAX - 18000));
 
     let summaryText = "";
     try {
@@ -605,7 +673,7 @@ export class Agent {
     }
 
     // ⚠ 摘要为空/失败：宁可不压、也不能把历史丢成空摘要(否则 AI 直接失忆)
-    if (!summaryText) return;
+    if (!summaryText) return false;
 
     this.messages = [
       { role: "user", content: [{ type: "text", text: `【之前对话摘要】\n${summaryText}` }] },
@@ -614,12 +682,54 @@ export class Agent {
     // 压缩后当前上下文变小，重置 lastInput 让下轮重新度量
     this.usage.lastInput = 0;
     hooks.onCompact?.(before, this.messages.length);
+    return true;
   }
 
-  // 找安全切点：从"倒数第 keepRecent 条"往前找最近的"真正用户输入"边界，
-  // 保证保留 >= keepRecent 条最近消息(不会像以前往后找越留越少)，且不拆散 tool_use/tool_result。
-  private findCutIndex(): number {
-    const target = Math.min(this.messages.length - this.keepRecent, this.messages.length - 1);
+  // 撞上下文上限后的紧急瘦身:普通压缩(阈值触发)已经不够了,这里更激进——
+  // ①逐级调小保留条数强制摘要;②仍超则硬砍保留区里的巨型 tool_result / 丢图片 / 截超长文本。
+  // 返回是否真的变小了(变小才允许重试;砍无可砍→false→把原始错误抛给用户)。
+  private async emergencyShrink(hooks: AgentHooks): Promise<boolean> {
+    const before = this.estimateContextTokens();
+    for (const keepN of [this.keepRecent, 6, 3, 1]) {
+      if (await this.compactOnce(hooks, keepN)) {
+        if (this.estimateContextTokens() < this.compactThreshold) return true;
+      }
+    }
+    // 摘要已到极限仍超(通常是保留区里单条巨物:大文件读取结果/图片/超长粘贴)→ 硬砍
+    const shrank = this.shrinkOversized();
+    return shrank || this.estimateContextTokens() < before;
+  }
+
+  // 硬砍历史里的巨型内容块(仅在紧急瘦身时用):截断超长 tool_result / 文本,丢弃图片。
+  // 不动最后一条消息里的文字(可能是用户本轮刚输入的);tool_use/tool_result 配对不受影响(只改内容长度)。
+  private shrinkOversized(): boolean {
+    const TOOL_CAP = 8000; // 单条工具结果保留字符上限
+    const TEXT_CAP = 40000; // 单条历史文本保留字符上限(兜底,极少触发)
+    const lastIdx = this.messages.length - 1;
+    let changed = false;
+    for (let i = 0; i < this.messages.length; i++) {
+      const content = this.messages[i].content as ContentBlock[];
+      for (let j = 0; j < content.length; j++) {
+        const b = content[j];
+        if (b.type === "tool_result" && typeof b.content === "string" && b.content.length > TOOL_CAP) {
+          b.content = b.content.slice(0, TOOL_CAP) + "\n…(结果过长，为控制上下文已截断)…";
+          changed = true;
+        } else if (b.type === "image") {
+          content[j] = { type: "text", text: "[图片已省略以控制上下文]" };
+          changed = true;
+        } else if (b.type === "text" && i !== lastIdx && b.text.length > TEXT_CAP) {
+          b.text = b.text.slice(0, TEXT_CAP) + "\n…(内容过长，为控制上下文已截断)…";
+          changed = true;
+        }
+      }
+    }
+    return changed;
+  }
+
+  // 找安全切点：从"倒数第 keepN 条"往前找最近的"真正用户输入"边界，
+  // 保证保留 >= keepN 条最近消息(不会像以前往后找越留越少)，且不拆散 tool_use/tool_result。
+  private findCutIndex(keepN: number = this.keepRecent): number {
+    const target = Math.min(this.messages.length - keepN, this.messages.length - 1);
     for (let i = target; i >= 1; i--) {
       const m = this.messages[i];
       if (m.role === "user" && m.content.every((b) => b.type === "text")) return i;
