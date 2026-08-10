@@ -69,6 +69,8 @@ contextBridge.exposeInMainWorld("minicc", {
   setSessionOrder: (id: string, order: number) =>
     ipcRenderer.send("session:set-order", id, order),
   setSessionDone: (id: string, done: boolean) => ipcRenderer.send("session:set-done", id, done),
+  setSessionDiscuss: (id: string, discuss: boolean) =>
+    ipcRenderer.send("session:set-discuss", id, discuss),
   reorderGroups: (names: string[]) => ipcRenderer.send("session:reorder-groups", names),
   generateReport: (group: string, sessionIds: string[]) =>
     ipcRenderer.send("report:generate", group, sessionIds),

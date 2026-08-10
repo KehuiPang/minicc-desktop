@@ -52,6 +52,7 @@ import {
   setSessionTitle,
   setGroupsOrder,
   setSessionDone,
+  setSessionDiscuss,
   setSessionProvider,
   setSessionRunning,
   clearInterrupted,
@@ -2040,6 +2041,12 @@ ipcMain.on("session:reorder-groups", (_e, names: string[]) => {
 // 标记已完成(排到最后、置灰)
 ipcMain.on("session:set-done", (_e, id: string, done: boolean) => {
   setSessionDone(id, done);
+  send("evt:sessions", listSessions());
+});
+
+// 标记待讨论(需过会议讨论)：仅列表徽标区分，不影响排序
+ipcMain.on("session:set-discuss", (_e, id: string, discuss: boolean) => {
+  setSessionDiscuss(id, discuss);
   send("evt:sessions", listSessions());
 });
 

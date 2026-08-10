@@ -75,6 +75,7 @@ export interface MiniccApi {
   setSessionPriority(id: string, priority: number, tag?: string): void;
   setSessionOrder(id: string, order: number): void;
   setSessionDone(id: string, done: boolean): void;
+  setSessionDiscuss(id: string, discuss: boolean): void;
   reorderGroups(names: string[]): void;
   generateReport(group: string, sessionIds: string[]): void;
   setGroupMode(mode: "manual" | "date" | "project"): void;

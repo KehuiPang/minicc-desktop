@@ -56,6 +56,7 @@ interface SessionMeta {
   order?: number;
   project?: string;
   done?: boolean;
+  discuss?: boolean;
 }
 
 // 优先级方案：高/中/低 + 艾森豪威尔四象限。weight 用于排序(大在前)，tag=徽标短标签，label=全称
@@ -1519,6 +1520,7 @@ export function App() {
                     {s.priorityTag}
                   </span>
                 )}
+                {s.discuss && <span className="s-discuss" title="待讨论：需过会议讨论">议</span>}
                 {s.done && <span className="s-done" title="已完成">✓</span>}
                 <span className="s-title">{s.title}</span>
                 <span className="s-time" title={new Date(s.updatedAt).toLocaleString()}>
@@ -1706,6 +1708,15 @@ export function App() {
                     }}
                   >
                     {s.done ? "↩ 取消完成" : "✓ 标记完成"}
+                  </button>
+                  <button
+                    className="ctx-item ctx-discuss"
+                    onClick={() => {
+                      window.minicc.setSessionDiscuss(ctxMenu.sid, !s.discuss);
+                      close();
+                    }}
+                  >
+                    {s.discuss ? "↩ 取消待讨论" : "🗣 标记待讨论"}
                   </button>
                   <div className="ctx-sep" />
                   <div className="ctx-head">移动到分组</div>
