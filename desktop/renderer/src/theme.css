@@ -2061,6 +2061,8 @@ body {
   margin: -4px -4px 8px;
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
+  position: relative; /* 抬高层级，保证折叠/恢复按钮点击不被右上角尺寸手柄挡住 */
+  z-index: 2;
 }
 .ask-drag {
   cursor: grab;
@@ -2086,6 +2088,21 @@ body {
 }
 .ask-fold:hover { color: var(--text); background: var(--bg-soft); }
 .ask-fold:hover { border-color: var(--accent); color: var(--accent); }
+/* 右上角尺寸手柄：拖动放大/缩小弹窗(底边锚定，向上/向右生长) */
+.ask-resize {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 15px;
+  height: 15px;
+  cursor: nesw-resize;
+  border-top: 2px solid var(--border-strong);
+  border-right: 2px solid var(--border-strong);
+  border-top-right-radius: 6px;
+  opacity: 0.5;
+  z-index: 1;
+}
+.ask-resize:hover { opacity: 1; border-color: var(--accent); }
 /* 折叠态小条 */
 .ask-collapsed {
   position: fixed;

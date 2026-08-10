@@ -513,6 +513,7 @@ export function App() {
   const streamRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true); // 用户是否贴着底部：滚上去看历史时暂停自动吸底，滚回底部再恢复
   const forceBottomRef = useRef(false); // 切换会话:内容异步改高，需多帧兜底吸底(否则要点两下)
+  const stickingRef = useRef(false); // 强制吸底窗口内:抑制 onScroll 把 atBottom 误判为 false
   const taRef = useRef<HTMLTextAreaElement>(null);
   const history = useRef<string[]>([]);
   const histIdx = useRef<number>(-1);
@@ -988,27 +989,23 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    // 只有用户本来就贴着底部时才自动吸底；往上滚看历史时不打扰
-    if (!atBottomRef.current) return;
     const el = streamRef.current;
     if (!el) return;
     const toBottom = () => el.scrollTo({ top: el.scrollHeight });
-    toBottom();
-    // 二次校正：长会话/代码高亮/图片会在下一帧改变高度，再吸一次确保真到底
-    requestAnimationFrame(() => {
-      if (atBottomRef.current) toBottom();
-    });
-    // 切换会话：内容(markdown/代码高亮/图片)会在随后多帧持续改变高度，离散 setTimeout 兜底
-    // 常错过最后一次增高→要点两下。改用 rAF 循环持续吸底，直到高度连续几帧稳定或封顶 1.2s；
-    // 用户中途上滑(atBottom 变 false)则立即停，不打扰看历史。
+    // 切换/打开会话：必须无条件强制吸底，忽略 atBottomRef。
+    // 因为 setItems 替换内容的瞬间，浏览器夹取旧 scrollTop 会触发 onScroll 把 atBottom 误判为 false，
+    // 若该事件先于本 effect 跑，旧写法会在下面的 atBottom 守卫处提前 return，导致停在开头(要点两下)。
+    // 内容(markdown/代码高亮/图片)随后多帧持续改高，用 rAF 循环持续吸底，直到高度连续几帧稳定或封顶 1.2s。
     if (forceBottomRef.current) {
       forceBottomRef.current = false;
+      atBottomRef.current = true;
+      stickingRef.current = true; // 抑制 onScroll 在此窗口内改判 atBottom
+      toBottom();
       let lastH = -1;
       let stable = 0;
       const t0 = Date.now();
       const stick = () => {
-        if (!atBottomRef.current) return; // 用户上滑看历史→停止吸底
-        el.scrollTop = el.scrollHeight; // 直接置底(会触发 onScroll 把 atBottom 重新判为 true)
+        el.scrollTop = el.scrollHeight; // 直接置底
         const h = el.scrollHeight;
         if (h === lastH) stable++;
         else {
@@ -1016,9 +1013,21 @@ export function App() {
           lastH = h;
         }
         if (stable < 4 && Date.now() - t0 < 1200) requestAnimationFrame(stick); // 高度稳定4帧或超时即收
+        else {
+          stickingRef.current = false;
+          atBottomRef.current = true; // 收尾:确保停在底部态
+        }
       };
       requestAnimationFrame(stick);
+      return;
     }
+    // 常规流式：只有用户本来就贴着底部时才自动吸底；往上滚看历史时不打扰
+    if (!atBottomRef.current) return;
+    toBottom();
+    // 二次校正：长会话/代码高亮/图片会在下一帧改变高度，再吸一次确保真到底
+    requestAnimationFrame(() => {
+      if (atBottomRef.current) toBottom();
+    });
   }, [items, busy, pending]);
 
   useEffect(() => {
@@ -1082,6 +1091,7 @@ export function App() {
       setGroups(r.groups || []);
       if (r.currentId) setCurrentId(r.currentId);
       atBottomRef.current = true; // 初次打开：定位到最新(底部)
+      forceBottomRef.current = true; // 多帧兜底吸底，同切换会话
       setItems(messagesToItems(r.messages || []));
       if (r.usage) setUsage(r.usage);
       if (r.rateLimits) setRate(r.rateLimits);
@@ -2019,6 +2029,7 @@ export function App() {
           className="stream"
           ref={streamRef}
           onScroll={(e) => {
+            if (stickingRef.current) return; // 强制吸底窗口内:内容替换/夹取引发的 scroll 不算用户上滑,别误判
             const el = e.currentTarget;
             // 距底 ≤40px 视为"贴底"→继续自动吸底；否则用户在往上看→暂停
             atBottomRef.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
@@ -3727,6 +3738,14 @@ function CheckIcon() {
     </svg>
   );
 }
+// 恢复默认宽高图标：缩小回中心的四角箭头，语义=尺寸复位
+function RestoreSizeIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
+    </svg>
+  );
+}
 // 重发图标(循环箭头)
 function ResendIcon() {
   return (
@@ -3871,9 +3890,9 @@ function AskModal({
   // 对齐到输入框：同左、同宽、贴其正上方 8px
   const [box, setBox] = useState<{ left: number; width: number; bottom: number } | null>(null);
   useLayoutEffect(() => {
+    const el = anchor.current;
+    if (!el) return;
     const upd = () => {
-      const el = anchor.current;
-      if (!el) return;
       const r = el.getBoundingClientRect();
       const cs = getComputedStyle(el); // composer 有左右 padding，对齐到内容区(真正的输入条)
       const padL = parseFloat(cs.paddingLeft) || 0;
@@ -3883,13 +3902,46 @@ function AskModal({
     };
     upd();
     window.addEventListener("resize", upd);
-    return () => window.removeEventListener("resize", upd);
+    // 直接观察输入框尺寸：浏览器面板开合会挤压/还原输入框宽度，
+    // window resize 监听不到这种布局变化，用 ResizeObserver 才能让弹窗自动跟着复原
+    const ro = new ResizeObserver(upd);
+    ro.observe(el);
+    return () => {
+      window.removeEventListener("resize", upd);
+      ro.disconnect();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anchor]);
   // 单个单选题靠点击即交，不显示按钮；多选题/多题分步/已附截图时显示「下一步/提交」
   const showPrimary = curMulti || qs.length > 1 || curImgs.length > 0;
   // 折叠 + 拖动：不选择也能看后面的内容(折叠成小条 / 拖开)
   const [collapsed, setCollapsed] = useState(false);
+  // 手动尺寸覆盖：用户拖右上角手柄放大后记住宽/高；null=跟随输入框自动尺寸
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [userSize, setUserSize] = useState<{ w: number; h: number } | null>(null);
+  function onResizeDown(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const sx = e.clientX;
+    const sy = e.clientY;
+    const startW = userSize?.w ?? panelRef.current?.offsetWidth ?? box?.width ?? 360;
+    const startH = userSize?.h ?? panelRef.current?.offsetHeight ?? 240;
+    const leftEdge = box?.left ?? 0;
+    const move = (ev: MouseEvent) => {
+      const maxW = Math.max(260, window.innerWidth - leftEdge - 12);
+      const maxH = Math.round(window.innerHeight * 0.9);
+      // 右上角手柄：右移加宽；因为底边锚定，上移(clientY 变小)即向上长高
+      const w = Math.min(maxW, Math.max(260, startW + (ev.clientX - sx)));
+      const h = Math.min(maxH, Math.max(120, startH + (sy - ev.clientY)));
+      setUserSize({ w, h });
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  }
   const [drag, setDrag] = useState({ x: 0, y: 0 });
   const dragStart = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
   function onDragDown(e: React.MouseEvent) {
@@ -3923,16 +3975,38 @@ function AskModal({
   }
   return (
     <div
+      ref={panelRef}
       className="ask"
-      style={box ? { left: box.left, width: box.width, bottom: box.bottom, ...dragStyle } : { visibility: "hidden" }}
+      style={
+        box
+          ? {
+              left: box.left,
+              width: userSize ? userSize.w : box.width,
+              bottom: box.bottom,
+              ...(userSize ? { height: userSize.h, maxHeight: "none" } : null),
+              ...dragStyle,
+            }
+          : { visibility: "hidden" }
+      }
     >
       <div className="ask-bar">
         <span className="ask-drag" onMouseDown={onDragDown} title="拖动位置">⠿</span>
         <span className="ask-bar-title">请选择（可折叠/拖动去看后面内容）</span>
+        {userSize && (
+          <button
+            type="button"
+            className="ask-fold"
+            title="恢复默认宽高(跟随输入框)"
+            onClick={() => setUserSize(null)}
+          >
+            <RestoreSizeIcon />
+          </button>
+        )}
         <button type="button" className="ask-fold" title="折叠(先看后面的内容)" onClick={() => setCollapsed(true)}>
           <FoldIcon />
         </button>
       </div>
+      <span className="ask-resize" onMouseDown={onResizeDown} title="拖动调整大小" />
       <div className="ask-q">
         <div className="ask-qhead">
           {q.header && <span className="ask-tag">{q.header}</span>}
