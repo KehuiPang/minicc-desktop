@@ -342,6 +342,7 @@ export function App() {
   const [babyChatLog, setBabyChatLog] = useState<{ role: "you" | "baby"; text: string }[]>([]);
   const [babyChatInput, setBabyChatInput] = useState("");
   const [babyBusy, setBabyBusy] = useState<string>(""); // 正在执行的操作描述(禁用按钮)
+  const [babyLiveN, setBabyLiveN] = useState(5); // 自定义"活N个循环"的次数
   useEffect(() => {
     const onToggle = (e: any) => setAgiEnabled(!!e.detail);
     window.addEventListener("minicc-agi-toggle", onToggle);
@@ -2019,6 +2020,12 @@ export function App() {
                     <button disabled={!!babyBusy} onClick={() => babyLive(3)}>🍼 活3个循环</button>
                     <button disabled={!!babyBusy} onClick={() => babyLive(8)}>🍼 活8个循环</button>
                     <button disabled={!!babyBusy} onClick={babyRefresh}>🔄 刷新</button>
+                  </div>
+                  <div className="baby-actions baby-live-custom">
+                    <span className="baby-live-label">自定义循环</span>
+                    <input type="number" min={1} max={100} value={babyLiveN} disabled={!!babyBusy}
+                      onChange={(e) => setBabyLiveN(Math.max(1, Math.min(100, parseInt(e.target.value) || 1)))} />
+                    <button disabled={!!babyBusy} onClick={() => babyLive(babyLiveN)}>🍼 活{babyLiveN}个循环</button>
                   </div>
                   <div className="baby-actions">
                     <button disabled={!!babyBusy} onClick={babySeed}>🌱 种好奇</button>
