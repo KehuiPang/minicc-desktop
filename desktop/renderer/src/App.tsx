@@ -690,7 +690,10 @@ export function App() {
   }
   async function babyLive(n: number) {
     setBabyBusy(`让它自己活 ${n} 个循环中(自主学习,需要一会儿)...`);
-    try { await w.minicc.babyLive(n); await babyRefresh(); } finally { setBabyBusy(""); }
+    // 循环期间每 2 秒轮询刷新，状态/成长日志/好奇实时更新，不用等整轮结束
+    const timer = setInterval(() => { babyRefresh(); }, 2000);
+    try { await w.minicc.babyLive(n); await babyRefresh(); }
+    finally { clearInterval(timer); setBabyBusy(""); }
   }
   async function babyDoChat() {
     const msg = babyChatInput.trim(); if (!msg || babyBusy) return;
@@ -699,6 +702,7 @@ export function App() {
     try {
       const ans = await w.minicc.babyChat(msg);
       setBabyChatLog((l) => [...l, { role: "baby", text: ans || "(没说话)" }]);
+      await babyRefresh(); // 聊天可能上网学到新东西(进记忆/日志)，刷新状态区
     } finally { setBabyBusy(""); }
   }
   async function babyPraise() { setBabyBusy("夸它中..."); try { await w.minicc.babyPraise(); await babyRefresh(); } finally { setBabyBusy(""); } }
@@ -2045,11 +2049,11 @@ export function App() {
                 </div>
                 <div className="baby-card">
                   <div className="baby-card-title">🌱 它好奇的</div>
-                  <pre className="baby-pre baby-scroll">{babyCurious || "(暂无)"}</pre>
+                  <AutoStickPre className="baby-pre baby-scroll" text={babyCurious || "(暂无)"} />
                 </div>
                 <div className="baby-card">
                   <div className="baby-card-title">📔 成长日志</div>
-                  <pre className="baby-pre baby-scroll">{babyDiary || "(暂无)"}</pre>
+                  <AutoStickPre className="baby-pre baby-scroll" text={babyDiary || "(暂无)"} />
                 </div>
               </div>
               <div className="baby-right">
@@ -4295,6 +4299,26 @@ function CopyBtn({ text }: { text: string }) {
 // 流式中「按段提交」：以最后一个空行(\n\n)为界，前面已完成的段落即时渲染 Markdown
 // (MarkdownView 有 memo，committed 不变就不重解析→只在跨段时解析一次)，最后没写完的一段用纯文本。
 // 流完(streaming=false)整体走完整 Markdown + 代码高亮。
+// 自动吸底的滚动区：内容更新后滚到最新(底部)，但用户主动上滚超过 40px 时不打断
+function AutoStickPre({ text, className }: { text: string; className?: string }) {
+  const ref = useRef<HTMLPreElement>(null);
+  const stick = useRef(true);
+  useEffect(() => {
+    const el = ref.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [text]);
+  return (
+    <pre
+      ref={ref}
+      className={className}
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+      }}
+    >{text}</pre>
+  );
+}
+
 const AssistantMsg = React.memo(function AssistantMsg({
   text,
   streaming,
