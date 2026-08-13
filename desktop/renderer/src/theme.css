@@ -4073,6 +4073,9 @@ body {
 .u-relogin:hover { background: color-mix(in srgb, #e8a838 20%, transparent); }
 
 /* ==================== AGI 板块 + 数字婴儿面板 ==================== */
+/* 种好奇输入(Electron 禁用 prompt，用输入框) */
+.baby-seed-row { align-items: center; gap: 6px; }
+.baby-seed-input { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid var(--border-strong, #ccc); border-radius: 6px; background: var(--bg, #fff); color: var(--text); font-size: 13px; -webkit-app-region: no-drag; }
 /* 自定义"活N个循环" */
 .baby-live-custom { align-items: center; gap: 6px; }
 .baby-live-custom .baby-live-label { font-size: 12px; color: var(--text-dim, #888); }

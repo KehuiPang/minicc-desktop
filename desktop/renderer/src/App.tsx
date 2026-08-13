@@ -343,6 +343,7 @@ export function App() {
   const [babyChatInput, setBabyChatInput] = useState("");
   const [babyBusy, setBabyBusy] = useState<string>(""); // 正在执行的操作描述(禁用按钮)
   const [babyLiveN, setBabyLiveN] = useState(5); // 自定义"活N个循环"的次数
+  const [babySeedInput, setBabySeedInput] = useState(""); // 种好奇输入(Electron禁用prompt,用输入框)
   useEffect(() => {
     const onToggle = (e: any) => setAgiEnabled(!!e.detail);
     window.addEventListener("minicc-agi-toggle", onToggle);
@@ -703,8 +704,10 @@ export function App() {
   async function babyPraise() { setBabyBusy("夸它中..."); try { await w.minicc.babyPraise(); await babyRefresh(); } finally { setBabyBusy(""); } }
   async function babyScold() { setBabyBusy("..."); try { await w.minicc.babyScold(); await babyRefresh(); } finally { setBabyBusy(""); } }
   async function babySeed() {
-    const c = prompt("给数字婴儿种一颗好奇的种子(它会去学这个):"); if (!c) return;
-    setBabyBusy("种下好奇..."); try { await w.minicc.babySeed(c); await babyRefresh(); } finally { setBabyBusy(""); }
+    // 注意：Electron 打包版禁用 window.prompt()，改用面板内输入框
+    const c = babySeedInput.trim(); if (!c || babyBusy) return;
+    setBabyBusy("种下好奇...");
+    try { await w.minicc.babySeed(c); setBabySeedInput(""); await babyRefresh(); } finally { setBabyBusy(""); }
   }
   function createBaby() {
     setBabyExists(true); localStorage.setItem("minicc-baby-exists", "1");
@@ -2027,8 +2030,14 @@ export function App() {
                       onChange={(e) => setBabyLiveN(Math.max(1, Math.min(100, parseInt(e.target.value) || 1)))} />
                     <button disabled={!!babyBusy} onClick={() => babyLive(babyLiveN)}>🍼 活{babyLiveN}个循环</button>
                   </div>
+                  <div className="baby-actions baby-seed-row">
+                    <input className="baby-seed-input" placeholder="想让它学什么？输入概念，如「注意力机制」"
+                      value={babySeedInput} disabled={!!babyBusy}
+                      onChange={(e) => setBabySeedInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") babySeed(); }} />
+                    <button disabled={!!babyBusy || !babySeedInput.trim()} onClick={babySeed}>🌱 种好奇</button>
+                  </div>
                   <div className="baby-actions">
-                    <button disabled={!!babyBusy} onClick={babySeed}>🌱 种好奇</button>
                     <button disabled={!!babyBusy} onClick={babyPraise}>🥰 夸它</button>
                     <button disabled={!!babyBusy} onClick={babyScold}>😔 说它</button>
                   </div>
