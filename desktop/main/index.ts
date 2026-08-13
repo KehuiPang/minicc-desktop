@@ -1566,6 +1566,11 @@ app.on("before-quit", () => {
   } catch {
     /* ignore */
   }
+  try {
+    stopBabyServer(); // 关掉数字婴儿常驻服务子进程
+  } catch {
+    /* ignore */
+  }
 });
 
 // —— IPC：渲染 → 主 ——
@@ -2860,21 +2865,118 @@ function agiCfg() {
   };
 }
 
-// 跑 baby.py 一个子命令,返回 stdout(文本)。isChat 时把用户输入喂 stdin。
-function runBaby(args: string[], stdin?: string, timeoutMs = 600000): Promise<{ ok: boolean; out: string }> {
-  return new Promise(async (resolve) => {
-    const cfg = agiCfg();
-    const { execFile } = await import("node:child_process");
-    // HF_HUB_OFFLINE: bge-small-zh 模型已缓存到 ~/.cache/huggingface，强制离线加载避免每次联网检查卡顿；
-    // HF_ENDPOINT: 万一需联网也走国内镜像。二者均可被外部 env 覆盖。
-    const env = { HF_HUB_OFFLINE: "1", HF_ENDPOINT: "https://hf-mirror.com", ...process.env, PYTHONIOENCODING: "utf-8", LLM_BASE: cfg.llmBase, LLM_MODEL: cfg.llmModel };
-    const child = execFile(cfg.python, ["baby.py", ...args], { cwd: cfg.babyDir, env, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },
-      (err, stdout, stderr) => {
-        const out = (stdout || "") + (err ? "\n" + (stderr || String(err)) : "");
-        resolve({ ok: !err, out: out.trim() });
-      });
-    if (stdin && child.stdin) { try { child.stdin.write(stdin); child.stdin.end(); } catch {} }
+// ——— 数字婴儿常驻服务 ———
+// 旧版每次 execFile 冷启动 python，光 import sentence_transformers+加载句向量模型就 ~11s。
+// 改成常驻 HTTP 服务(baby_server.py)：模型只加载一次，之后每次请求秒回。
+let babyProc: any = null;
+let babyPort = 0;
+let babyReady = false;
+let babyStarting: Promise<void> | null = null;
+
+const _sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// 找一个空闲端口
+function pickPort(): Promise<number> {
+  return new Promise(async (resolve, reject) => {
+    const netmod = await import("node:net");
+    const srv = netmod.createServer();
+    srv.on("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const p = (srv.address() as any).port;
+      srv.close(() => resolve(p));
+    });
   });
+}
+
+// 探活 /health
+function pingHealth(port: number): Promise<boolean> {
+  return new Promise(async (resolve) => {
+    const http = await import("node:http");
+    const req = http.request({ host: "127.0.0.1", port, path: "/health", method: "GET", timeout: 1500 }, (res) => {
+      res.resume();
+      resolve(res.statusCode === 200);
+    });
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => { req.destroy(); resolve(false); });
+    req.end();
+  });
+}
+
+// 确保常驻服务在跑(懒启动+并发合流)。首次要等模型加载 ~11s。
+function ensureBabyServer(): Promise<void> {
+  if (babyReady && babyProc && !babyProc.killed) return Promise.resolve();
+  if (babyStarting) return babyStarting;
+  const p = (async () => {
+    const cfg = agiCfg();
+    if (!existsSync(join(cfg.babyDir, "baby_server.py"))) throw new Error("找不到 baby_server.py");
+    babyPort = await pickPort();
+    const { spawn } = await import("node:child_process");
+    const env = { HF_HUB_OFFLINE: "1", HF_ENDPOINT: "https://hf-mirror.com", ...process.env, PYTHONIOENCODING: "utf-8", LLM_BASE: cfg.llmBase, LLM_MODEL: cfg.llmModel };
+    babyProc = spawn(cfg.python, ["baby_server.py", "--port", String(babyPort)], { cwd: cfg.babyDir, env });
+    babyProc.stderr?.on("data", (d: any) => log("[baby_server] " + String(d).trim()));
+    babyProc.on("exit", () => { babyReady = false; babyProc = null; });
+    const deadline = Date.now() + 45000; // 给模型加载留足时间
+    while (Date.now() < deadline) {
+      if (babyProc && await pingHealth(babyPort)) { babyReady = true; return; }
+      if (!babyProc) throw new Error("baby_server 进程已退出");
+      await _sleep(500);
+    }
+    throw new Error("baby_server 启动超时");
+  })();
+  babyStarting = p.finally(() => { babyStarting = null; });
+  return babyStarting;
+}
+
+// 向常驻服务发一个请求。body===undefined 走 GET，否则 POST(JSON)。
+function babyHttp(path: string, body: any, timeoutMs: number): Promise<{ ok: boolean; text: string }> {
+  return new Promise(async (resolve) => {
+    const http = await import("node:http");
+    const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body), "utf-8");
+    const req = http.request({
+      host: "127.0.0.1", port: babyPort, path, method: body === undefined ? "GET" : "POST",
+      timeout: timeoutMs,
+      headers: payload ? { "Content-Type": "application/json; charset=utf-8", "Content-Length": String(payload.length) } : {},
+    }, (res) => {
+      let buf = "";
+      res.setEncoding("utf-8");
+      res.on("data", (c) => (buf += c));
+      res.on("end", () => {
+        try { const j = JSON.parse(buf); resolve({ ok: !!j.ok, text: String(j.text ?? "") }); }
+        catch { resolve({ ok: false, text: buf || "空响应" }); }
+      });
+    });
+    req.on("error", (e) => resolve({ ok: false, text: "出错:" + String(e) }));
+    req.on("timeout", () => { req.destroy(); resolve({ ok: false, text: "出错:请求超时" }); });
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+// 停止常驻服务(app 退出时调用)
+function stopBabyServer() {
+  try { babyProc?.kill(); } catch { /* ignore */ }
+  babyProc = null; babyReady = false;
+}
+
+// 兼容旧签名：把 (args, stdin) 映射到常驻服务的 HTTP 接口，IPC handler 无需改动。
+function runBaby(args: string[], stdin?: string, timeoutMs = 600000): Promise<{ ok: boolean; out: string }> {
+  return (async () => {
+    const cmd = args[0];
+    let path: string; let body: any;
+    if (cmd === "status" || cmd === "diary" || cmd === "curious") { path = "/" + cmd; body = undefined; }
+    else if (cmd === "praise" || cmd === "scold") { path = "/" + cmd; body = {}; }
+    else if (cmd === "live") { path = "/live"; body = { n: parseInt(args[1] || "3", 10) || 3 }; }
+    else if (cmd === "seed") { path = "/seed"; body = { concept: args.slice(1).join(" ") }; }
+    else if (cmd === "chat") { path = "/chat"; body = { msg: (stdin || "").replace(/\n?退出\n?$/, "").trim() }; }
+    else return { ok: false, out: "未知命令:" + cmd };
+    try {
+      await ensureBabyServer();
+    } catch (e) {
+      return { ok: false, out: "数字婴儿服务启动失败:" + String(e) };
+    }
+    const r = await babyHttp(path, body, timeoutMs);
+    return { ok: r.ok, out: r.text };
+  })();
 }
 
 ipcMain.handle("agi:cfg", () => agiCfg());
