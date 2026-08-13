@@ -344,11 +344,28 @@ export function App() {
   const [babyBusy, setBabyBusy] = useState<string>(""); // 正在执行的操作描述(禁用按钮)
   const [babyLiveN, setBabyLiveN] = useState(5); // 自定义"活N个循环"的次数
   const [babySeedInput, setBabySeedInput] = useState(""); // 种好奇输入(Electron禁用prompt,用输入框)
+  const [babyAlive, setBabyAlive] = useState(false); // 无限生命循环开关(它持续自主活着)
+  const [babyAliveInfo, setBabyAliveInfo] = useState(""); // 活着时的实时进度展示
   useEffect(() => {
     const onToggle = (e: any) => setAgiEnabled(!!e.detail);
     window.addEventListener("minicc-agi-toggle", onToggle);
     return () => window.removeEventListener("minicc-agi-toggle", onToggle);
   }, []);
+  // 无限循环开启时：每 2 秒轮询刷新状态区 + 拉实时进度(年龄/精力/心情)
+  useEffect(() => {
+    if (!babyAlive) return;
+    const tick = async () => {
+      babyRefresh();
+      try {
+        const j = JSON.parse(await window.minicc.babyAliveStatus());
+        setBabyAliveInfo(`年龄${j.age}·精力${j.energy}·${j.mood}·已学${j.concepts}·好奇${j.curiosity}`);
+        if (j.alive === false) setBabyAlive(false); // 服务端已停→同步
+      } catch { /* ignore */ }
+    };
+    tick();
+    const t = setInterval(tick, 2000);
+    return () => clearInterval(t);
+  }, [babyAlive]);
   const [curProviderId, setCurProviderId] = useState("");
   const curProviderIdRef = useRef(""); // 事件回调里读最新平台(判额度是否属于当前会话平台)
   curProviderIdRef.current = curProviderId;
@@ -695,6 +712,10 @@ export function App() {
     try { await w.minicc.babyLive(n); await babyRefresh(); }
     finally { clearInterval(timer); setBabyBusy(""); }
   }
+  async function toggleBabyAlive() {
+    if (babyAlive) { setBabyAlive(false); setBabyAliveInfo(""); try { await w.minicc.babyAliveStop(); } catch {} }
+    else { setBabyAlive(true); try { await w.minicc.babyAliveStart(); } catch {} }
+  }
   async function babyDoChat() {
     const msg = babyChatInput.trim(); if (!msg || babyBusy) return;
     setBabyChatInput(""); setBabyChatLog((l) => [...l, { role: "you", text: msg }]);
@@ -722,7 +743,11 @@ export function App() {
     setBabyExists(false); localStorage.setItem("minicc-baby-exists", "0");
     if (agiView === "baby") setAgiView(null);
   }
-  function openBaby() { setAgiView("baby"); babyRefresh(); }
+  function openBaby() {
+    setAgiView("baby"); babyRefresh();
+    // 同步"是否正在持续活着"(重开面板/重启后恢复开关状态)
+    w.minicc.babyAliveStatus().then((s: string) => { try { setBabyAlive(!!JSON.parse(s).alive); } catch {} }).catch(() => {});
+  }
 
   // ——— API Key 平台：一键获取 → 复制自动检测 → 通了自动设置 ———
   // 把验证过的 key 存进当前平台槽并切换生效
@@ -2033,6 +2058,12 @@ export function App() {
                     <input type="number" min={1} max={100} value={babyLiveN} disabled={!!babyBusy}
                       onChange={(e) => setBabyLiveN(Math.max(1, Math.min(100, parseInt(e.target.value) || 1)))} />
                     <button disabled={!!babyBusy} onClick={() => babyLive(babyLiveN)}>🍼 活{babyLiveN}个循环</button>
+                  </div>
+                  <div className="baby-actions baby-alive-row">
+                    <button className={"baby-alive-toggle" + (babyAlive ? " on" : "")} onClick={toggleBabyAlive}>
+                      {babyAlive ? "⏸ 停止" : "♾️ 让它一直活着"}
+                    </button>
+                    {babyAlive && <span className="baby-alive-info">🟢 活着 · {babyAliveInfo || "…"}</span>}
                   </div>
                   <div className="baby-actions baby-seed-row">
                     <input className="baby-seed-input" placeholder="想让它学什么？输入概念，如「注意力机制」"

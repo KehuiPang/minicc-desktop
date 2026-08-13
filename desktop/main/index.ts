@@ -2968,6 +2968,9 @@ function runBaby(args: string[], stdin?: string, timeoutMs = 600000): Promise<{ 
     else if (cmd === "live") { path = "/live"; body = { n: parseInt(args[1] || "3", 10) || 3 }; }
     else if (cmd === "seed") { path = "/seed"; body = { concept: args.slice(1).join(" ") }; }
     else if (cmd === "chat") { path = "/chat"; body = { msg: (stdin || "").replace(/\n?退出\n?$/, "").trim() }; }
+    else if (cmd === "alivestart") { path = "/alive/start"; body = {}; }
+    else if (cmd === "alivestop") { path = "/alive/stop"; body = {}; }
+    else if (cmd === "alivestatus") { path = "/alive/status"; body = undefined; }
     else return { ok: false, out: "未知命令:" + cmd };
     try {
       await ensureBabyServer();
@@ -2994,3 +2997,7 @@ ipcMain.handle("agi:baby:chat", async (_e, msg: string) => {
   const m = r.out.split("👶 >").slice(1).join("👶 >").trim();
   return m || r.out;
 });
+// 无限生命循环开关 + 状态
+ipcMain.handle("agi:baby:alivestart", async () => (await runBaby(["alivestart"], undefined, 30000)).out);
+ipcMain.handle("agi:baby:alivestop", async () => (await runBaby(["alivestop"], undefined, 30000)).out);
+ipcMain.handle("agi:baby:alivestatus", async () => (await runBaby(["alivestatus"], undefined, 30000)).out);

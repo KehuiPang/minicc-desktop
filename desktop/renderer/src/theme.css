@@ -4073,6 +4073,11 @@ body {
 .u-relogin:hover { background: color-mix(in srgb, #e8a838 20%, transparent); }
 
 /* ==================== AGI 板块 + 数字婴儿面板 ==================== */
+/* 无限生命循环开关 */
+.baby-alive-row { align-items: center; gap: 8px; flex-wrap: wrap; }
+.baby-alive-toggle { -webkit-app-region: no-drag; border: 1px solid var(--border-strong, #ccc); background: var(--bg, #fff); color: var(--text); border-radius: 8px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
+.baby-alive-toggle.on { background: #e5484d; border-color: #e5484d; color: #fff; }
+.baby-alive-info { font-size: 12px; color: #2a9d5c; }
 /* 种好奇输入(Electron 禁用 prompt，用输入框) */
 .baby-seed-row { align-items: center; gap: 6px; }
 .baby-seed-input { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid var(--border-strong, #ccc); border-radius: 6px; background: var(--bg, #fff); color: var(--text); font-size: 13px; -webkit-app-region: no-drag; }

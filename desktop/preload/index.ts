@@ -43,6 +43,9 @@ contextBridge.exposeInMainWorld("minicc", {
   babyScold: () => ipcRenderer.invoke("agi:baby:scold") as Promise<string>,
   babySeed: (concept: string) => ipcRenderer.invoke("agi:baby:seed", concept) as Promise<string>,
   babyChat: (msg: string) => ipcRenderer.invoke("agi:baby:chat", msg) as Promise<string>,
+  babyAliveStart: () => ipcRenderer.invoke("agi:baby:alivestart") as Promise<string>,
+  babyAliveStop: () => ipcRenderer.invoke("agi:baby:alivestop") as Promise<string>,
+  babyAliveStatus: () => ipcRenderer.invoke("agi:baby:alivestatus") as Promise<string>,
 
   send: (sid: string, text: string, images?: string[]) =>
     ipcRenderer.send("chat:send", sid, text, images),
