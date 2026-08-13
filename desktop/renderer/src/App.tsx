@@ -346,26 +346,35 @@ export function App() {
   const [babySeedInput, setBabySeedInput] = useState(""); // 种好奇输入(Electron禁用prompt,用输入框)
   const [babyAlive, setBabyAlive] = useState(false); // 无限生命循环开关(它持续自主活着)
   const [babyAliveInfo, setBabyAliveInfo] = useState(""); // 活着时的实时进度展示
+  const [babyActivity, setBabyActivity] = useState(""); // 它此刻正在干嘛(学习/搜索/睡觉/发呆/对话)
+  const babyChatRef = useRef<HTMLDivElement>(null); // 聊天区容器(自动吸底)
+  const babyChatStick = useRef(true); // 是否吸底(用户上滚>60px则暂不吸)
   useEffect(() => {
     const onToggle = (e: any) => setAgiEnabled(!!e.detail);
     window.addEventListener("minicc-agi-toggle", onToggle);
     return () => window.removeEventListener("minicc-agi-toggle", onToggle);
   }, []);
-  // 无限循环开启时：每 2 秒轮询刷新状态区 + 拉实时进度(年龄/精力/心情)
+  // 聊天区自动吸底(新消息/它在想时滚到最新)，用户主动上滚>60px 时不打断
   useEffect(() => {
-    if (!babyAlive) return;
+    const el = babyChatRef.current;
+    if (el && babyChatStick.current) el.scrollTop = el.scrollHeight;
+  }, [babyChatLog, babyBusy]);
+  // 面板打开就每 2 秒轮询：更新"它在干嘛"活动状态 + 进度；活着时还刷新状态区(日志/好奇实时)
+  useEffect(() => {
+    if (agiView !== "baby") return;
     const tick = async () => {
-      babyRefresh();
       try {
         const j = JSON.parse(await window.minicc.babyAliveStatus());
+        setBabyActivity(j.activity || "");
+        setBabyAlive(!!j.alive);
         setBabyAliveInfo(`年龄${j.age}·精力${j.energy}·${j.mood}·已学${j.concepts}·好奇${j.curiosity}`);
-        if (j.alive === false) setBabyAlive(false); // 服务端已停→同步
+        if (j.alive) babyRefresh(); // 活着时状态区实时更新
       } catch { /* ignore */ }
     };
     tick();
     const t = setInterval(tick, 2000);
     return () => clearInterval(t);
-  }, [babyAlive]);
+  }, [agiView]);
   const [curProviderId, setCurProviderId] = useState("");
   const curProviderIdRef = useRef(""); // 事件回调里读最新平台(判额度是否属于当前会话平台)
   curProviderIdRef.current = curProviderId;
@@ -2046,6 +2055,10 @@ export function App() {
             <div className="baby-body">
               <div className="baby-left">
                 <div className="baby-card">
+                  <div className="baby-activity-banner">
+                    <span className={"baby-activity-dot" + (babyAlive ? " live" : "")} />
+                    <span className="baby-activity-text">{babyActivity || (babyAlive ? "活着…" : "😌 歇着呢")}</span>
+                  </div>
                   <div className="baby-card-title">📊 状态</div>
                   <pre className="baby-pre">{babyStatus || "(点下方刷新)"}</pre>
                   <div className="baby-actions">
@@ -2089,7 +2102,8 @@ export function App() {
               </div>
               <div className="baby-right">
                 <div className="baby-card-title">💬 跟它聊天</div>
-                <div className="baby-chat">
+                <div className="baby-chat" ref={babyChatRef}
+                  onScroll={(e) => { const el = e.currentTarget; babyChatStick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; }}>
                   {babyChatLog.length === 0 && <div className="baby-chat-hint">问问它学了什么、它对什么好奇、它的心情~</div>}
                   {babyChatLog.map((m, i) => (
                     <div key={i} className={"baby-msg " + m.role}>
