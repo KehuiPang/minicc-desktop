@@ -2844,3 +2844,49 @@ ipcMain.handle("account:web-login", async (_e, pid: string) => {
   void emitAccount();
   return true;
 });
+
+// ==================== AGI 板块：数字婴儿对接 ====================
+// 用 child_process 调 Python 跑 d1_digital_baby/baby.py,把结果返回渲染进程。
+// 配置(python路径/baby目录/LLM地址)从 settings.agi 读,带默认值。
+function agiCfg() {
+  const s: any = loadSettings() || {};
+  const agi = s.agi || {};
+  return {
+    enabled: agi.enabled !== false, // 默认开
+    python: agi.python || "/Users/logic/anaconda3/bin/python3",
+    babyDir: agi.babyDir || "/Users/logic/Documents/tanxun/git/agi-lab/d1_digital_baby",
+    llmBase: agi.llmBase || "http://192.168.2.195:8002/v1",
+    llmModel: agi.llmModel || "qwen3.6-35b-a3b",
+  };
+}
+
+// 跑 baby.py 一个子命令,返回 stdout(文本)。isChat 时把用户输入喂 stdin。
+function runBaby(args: string[], stdin?: string, timeoutMs = 600000): Promise<{ ok: boolean; out: string }> {
+  return new Promise(async (resolve) => {
+    const cfg = agiCfg();
+    const { execFile } = await import("node:child_process");
+    const env = { ...process.env, PYTHONIOENCODING: "utf-8", LLM_BASE: cfg.llmBase, LLM_MODEL: cfg.llmModel };
+    const child = execFile(cfg.python, ["baby.py", ...args], { cwd: cfg.babyDir, env, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        const out = (stdout || "") + (err ? "\n" + (stderr || String(err)) : "");
+        resolve({ ok: !err, out: out.trim() });
+      });
+    if (stdin && child.stdin) { try { child.stdin.write(stdin); child.stdin.end(); } catch {} }
+  });
+}
+
+ipcMain.handle("agi:cfg", () => agiCfg());
+ipcMain.handle("agi:baby:status", async () => (await runBaby(["status"], undefined, 60000)).out);
+ipcMain.handle("agi:baby:diary", async () => (await runBaby(["diary"], undefined, 60000)).out);
+ipcMain.handle("agi:baby:curious", async () => (await runBaby(["curious"], undefined, 60000)).out);
+ipcMain.handle("agi:baby:live", async (_e, n: number) => (await runBaby(["live", String(n || 3)], undefined, 900000)).out);
+ipcMain.handle("agi:baby:praise", async () => (await runBaby(["praise"], undefined, 60000)).out);
+ipcMain.handle("agi:baby:scold", async () => (await runBaby(["scold"], undefined, 60000)).out);
+ipcMain.handle("agi:baby:seed", async (_e, concept: string) => (await runBaby(["seed", String(concept || "")], undefined, 60000)).out);
+// 聊天:baby.py chat 走 stdin 交互,喂"问题\n退出\n"拿回答
+ipcMain.handle("agi:baby:chat", async (_e, msg: string) => {
+  const r = await runBaby(["chat"], String(msg || "") + "\n退出\n", 300000);
+  // 提取 "👶 >" 后的回答
+  const m = r.out.split("👶 >").slice(1).join("👶 >").trim();
+  return m || r.out;
+});

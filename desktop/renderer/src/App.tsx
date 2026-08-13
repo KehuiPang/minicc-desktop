@@ -331,6 +331,22 @@ export function App() {
   }>({});
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState("model"); // 统一设置页的初始/当前左侧菜单项
+  // ——— AGI 板块:数字婴儿 ———
+  const [agiEnabled, setAgiEnabled] = useState(() => localStorage.getItem("minicc-agi-enabled") !== "0"); // 默认开
+  const [agiExpanded, setAgiExpanded] = useState(() => localStorage.getItem("minicc-agi-expanded") !== "0");
+  const [agiView, setAgiView] = useState<null | "baby">(null); // 主区是否显示数字婴儿面板
+  const [babyExists, setBabyExists] = useState(() => localStorage.getItem("minicc-baby-exists") === "1");
+  const [babyStatus, setBabyStatusState] = useState("");
+  const [babyDiary, setBabyDiaryState] = useState("");
+  const [babyCurious, setBabyCuriousState] = useState("");
+  const [babyChatLog, setBabyChatLog] = useState<{ role: "you" | "baby"; text: string }[]>([]);
+  const [babyChatInput, setBabyChatInput] = useState("");
+  const [babyBusy, setBabyBusy] = useState<string>(""); // 正在执行的操作描述(禁用按钮)
+  useEffect(() => {
+    const onToggle = (e: any) => setAgiEnabled(!!e.detail);
+    window.addEventListener("minicc-agi-toggle", onToggle);
+    return () => window.removeEventListener("minicc-agi-toggle", onToggle);
+  }, []);
   const [curProviderId, setCurProviderId] = useState("");
   const curProviderIdRef = useRef(""); // 事件回调里读最新平台(判额度是否属于当前会话平台)
   curProviderIdRef.current = curProviderId;
@@ -659,6 +675,46 @@ export function App() {
       setConnFor(sid, { status: "yellow", reason: "检测失败，请重试。" });
     }
   }
+
+  // ——— AGI 板块:数字婴儿 操作 ———
+  const w: any = window as any;
+  async function babyRefresh() {
+    try {
+      const [st, di, cu] = await Promise.all([
+        w.minicc.babyStatus(), w.minicc.babyDiary(), w.minicc.babyCurious(),
+      ]);
+      setBabyStatusState(st || ""); setBabyDiaryState(di || ""); setBabyCuriousState(cu || "");
+    } catch (e) { setBabyStatusState("读取状态失败:" + String(e)); }
+  }
+  async function babyLive(n: number) {
+    setBabyBusy(`让它自己活 ${n} 个循环中(自主学习,需要一会儿)...`);
+    try { await w.minicc.babyLive(n); await babyRefresh(); } finally { setBabyBusy(""); }
+  }
+  async function babyDoChat() {
+    const msg = babyChatInput.trim(); if (!msg || babyBusy) return;
+    setBabyChatInput(""); setBabyChatLog((l) => [...l, { role: "you", text: msg }]);
+    setBabyBusy("它在想...");
+    try {
+      const ans = await w.minicc.babyChat(msg);
+      setBabyChatLog((l) => [...l, { role: "baby", text: ans || "(没说话)" }]);
+    } finally { setBabyBusy(""); }
+  }
+  async function babyPraise() { setBabyBusy("夸它中..."); try { await w.minicc.babyPraise(); await babyRefresh(); } finally { setBabyBusy(""); } }
+  async function babyScold() { setBabyBusy("..."); try { await w.minicc.babyScold(); await babyRefresh(); } finally { setBabyBusy(""); } }
+  async function babySeed() {
+    const c = prompt("给数字婴儿种一颗好奇的种子(它会去学这个):"); if (!c) return;
+    setBabyBusy("种下好奇..."); try { await w.minicc.babySeed(c); await babyRefresh(); } finally { setBabyBusy(""); }
+  }
+  function createBaby() {
+    setBabyExists(true); localStorage.setItem("minicc-baby-exists", "1");
+    setAgiView("baby"); babyRefresh();
+  }
+  function deleteBaby() {
+    if (!confirm("确定删除这个数字婴儿的对接吗?(不会删它的记忆数据,只从界面移除)")) return;
+    setBabyExists(false); localStorage.setItem("minicc-baby-exists", "0");
+    if (agiView === "baby") setAgiView(null);
+  }
+  function openBaby() { setAgiView("baby"); babyRefresh(); }
 
   // ——— API Key 平台：一键获取 → 复制自动检测 → 通了自动设置 ———
   // 把验证过的 key 存进当前平台槽并切换生效
@@ -1444,7 +1500,27 @@ export function App() {
             «
           </button>
         </div>
-        <button className="new-session" onClick={() => window.minicc.newSession()}>
+        {agiEnabled && (
+          <div className="agi-panel">
+            <div className="agi-head" onClick={() => { const v = !agiExpanded; setAgiExpanded(v); localStorage.setItem("minicc-agi-expanded", v ? "1" : "0"); }}>
+              <span>🧠 AGI</span>
+              <span className="agi-caret">{agiExpanded ? "▾" : "▸"}</span>
+            </div>
+            {agiExpanded && (
+              <div className="agi-items">
+                {babyExists ? (
+                  <div className={"agi-item" + (agiView === "baby" ? " active" : "")}>
+                    <span className="agi-item-name" onClick={openBaby} title="点击进入数字婴儿">👶 数字婴儿</span>
+                    <span className="agi-item-del" title="删除对接" onClick={deleteBaby}>✕</span>
+                  </div>
+                ) : (
+                  <div className="agi-add" onClick={createBaby} title="新增并对接数字婴儿">＋ 新增数字婴儿</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        <button className="new-session" onClick={() => { setAgiView(null); window.minicc.newSession(); }}>
           ＋ 新对话
         </button>
         <div className="session-list">
@@ -1928,6 +2004,59 @@ export function App() {
 
       {/* 主区 */}
       <div className="main">
+        {agiView === "baby" && (
+          <div className="baby-panel">
+            <div className="baby-header">
+              <span className="baby-title">👶 数字婴儿</span>
+              <button className="baby-close" onClick={() => setAgiView(null)} title="返回对话">✕ 返回</button>
+            </div>
+            <div className="baby-body">
+              <div className="baby-left">
+                <div className="baby-card">
+                  <div className="baby-card-title">📊 状态</div>
+                  <pre className="baby-pre">{babyStatus || "(点下方刷新)"}</pre>
+                  <div className="baby-actions">
+                    <button disabled={!!babyBusy} onClick={() => babyLive(3)}>🍼 活3个循环</button>
+                    <button disabled={!!babyBusy} onClick={() => babyLive(8)}>🍼 活8个循环</button>
+                    <button disabled={!!babyBusy} onClick={babyRefresh}>🔄 刷新</button>
+                  </div>
+                  <div className="baby-actions">
+                    <button disabled={!!babyBusy} onClick={babySeed}>🌱 种好奇</button>
+                    <button disabled={!!babyBusy} onClick={babyPraise}>🥰 夸它</button>
+                    <button disabled={!!babyBusy} onClick={babyScold}>😔 说它</button>
+                  </div>
+                  {babyBusy && <div className="baby-busy">⏳ {babyBusy}</div>}
+                </div>
+                <div className="baby-card">
+                  <div className="baby-card-title">🌱 它好奇的</div>
+                  <pre className="baby-pre baby-scroll">{babyCurious || "(暂无)"}</pre>
+                </div>
+                <div className="baby-card">
+                  <div className="baby-card-title">📔 成长日志</div>
+                  <pre className="baby-pre baby-scroll">{babyDiary || "(暂无)"}</pre>
+                </div>
+              </div>
+              <div className="baby-right">
+                <div className="baby-card-title">💬 跟它聊天</div>
+                <div className="baby-chat">
+                  {babyChatLog.length === 0 && <div className="baby-chat-hint">问问它学了什么、它对什么好奇、它的心情~</div>}
+                  {babyChatLog.map((m, i) => (
+                    <div key={i} className={"baby-msg " + m.role}>
+                      <b>{m.role === "you" ? "你" : "👶"}</b>：{m.text}
+                    </div>
+                  ))}
+                </div>
+                <div className="baby-chat-input">
+                  <input value={babyChatInput} disabled={!!babyBusy}
+                    onChange={(e) => setBabyChatInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") babyDoChat(); }}
+                    placeholder="跟数字婴儿说点什么..." />
+                  <button disabled={!!babyBusy} onClick={babyDoChat}>发送</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         <div
           className={
             "titlebar" +
@@ -6555,6 +6684,22 @@ function SettingsModal({
           {/* ── 通用：会话分组 + 上下文压缩 + 账号读取 ── */}
           {tab === "general" && (
             <>
+              <div className="app-set-group">AGI 板块(实验性)</div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  defaultChecked={localStorage.getItem("minicc-agi-enabled") !== "0"}
+                  onChange={(e) => {
+                    localStorage.setItem("minicc-agi-enabled", e.target.checked ? "1" : "0");
+                    window.dispatchEvent(new CustomEvent("minicc-agi-toggle", { detail: e.target.checked }));
+                  }}
+                />
+                在侧边栏顶部显示 🧠 AGI 板块(数字婴儿:好奇心自主学习+成长+聊天)
+              </label>
+              <div style={{ fontSize: 11, opacity: .55, marginBottom: 14, lineHeight: 1.5 }}>
+                数字婴儿依赖本地 Python 与 gpu01 大模型。默认路径:python=/Users/logic/anaconda3/bin/python3,
+                目录=git/agi-lab/d1_digital_baby。如需改,编辑 ~/.minicc/config.json 的 agi 字段。
+              </div>
               <div className="app-set-group">会话分组</div>
               <div className="theme-pick" style={{ marginBottom: "6px" }}>
                 {[
