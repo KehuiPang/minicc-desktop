@@ -4073,7 +4073,8 @@ body {
 .u-relogin:hover { background: color-mix(in srgb, #e8a838 20%, transparent); }
 
 /* ==================== AGI 板块 + 数字婴儿面板 ==================== */
-.agi-panel { flex: 0 0 auto; margin: 6px 8px 4px; border: 1px solid var(--border, #e5e5e5); border-radius: 8px; overflow: hidden; }
+.agi-panel { flex: 0 0 auto; -webkit-app-region: no-drag; margin: 6px 8px 4px; border: 1px solid var(--border, #e5e5e5); border-radius: 8px; overflow: hidden; }
+.agi-panel * { -webkit-app-region: no-drag; }
 .agi-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; cursor: pointer; font-size: 12px; font-weight: 600; opacity: .85; user-select: none; }
 .agi-head:hover { background: rgba(127,127,127,.08); }
 .agi-caret { opacity: .6; }
