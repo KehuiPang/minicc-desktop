@@ -2853,7 +2853,7 @@ function agiCfg() {
   const agi = s.agi || {};
   return {
     enabled: agi.enabled !== false, // 默认开
-    python: agi.python || "/Users/logic/anaconda3/bin/python3",
+    python: agi.python || "/usr/local/bin/python3", // 3.10，已装 sentence_transformers/torch，baby 记忆检索依赖它
     babyDir: agi.babyDir || "/Users/logic/Documents/tanxun/git/agi-lab/d1_digital_baby",
     llmBase: agi.llmBase || "http://192.168.2.195:8002/v1",
     llmModel: agi.llmModel || "qwen3.6-35b-a3b",
@@ -2865,7 +2865,9 @@ function runBaby(args: string[], stdin?: string, timeoutMs = 600000): Promise<{ 
   return new Promise(async (resolve) => {
     const cfg = agiCfg();
     const { execFile } = await import("node:child_process");
-    const env = { ...process.env, PYTHONIOENCODING: "utf-8", LLM_BASE: cfg.llmBase, LLM_MODEL: cfg.llmModel };
+    // HF_HUB_OFFLINE: bge-small-zh 模型已缓存到 ~/.cache/huggingface，强制离线加载避免每次联网检查卡顿；
+    // HF_ENDPOINT: 万一需联网也走国内镜像。二者均可被外部 env 覆盖。
+    const env = { HF_HUB_OFFLINE: "1", HF_ENDPOINT: "https://hf-mirror.com", ...process.env, PYTHONIOENCODING: "utf-8", LLM_BASE: cfg.llmBase, LLM_MODEL: cfg.llmModel };
     const child = execFile(cfg.python, ["baby.py", ...args], { cwd: cfg.babyDir, env, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },
       (err, stdout, stderr) => {
         const out = (stdout || "") + (err ? "\n" + (stderr || String(err)) : "");

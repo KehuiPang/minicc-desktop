@@ -4088,7 +4088,8 @@ body {
 .agi-add { padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 12px; opacity: .7; border: 1px dashed var(--border, #ddd); text-align: center; }
 .agi-add:hover { opacity: 1; background: rgba(127,127,127,.08); }
 
-.baby-panel { position: absolute; inset: 0; z-index: 30; background: var(--bg, #fff); display: flex; flex-direction: column; }
+.baby-panel { position: absolute; inset: 0; z-index: 30; background: var(--bg, #fff); display: flex; flex-direction: column; -webkit-app-region: no-drag; }
+.baby-panel * { -webkit-app-region: no-drag; }
 .baby-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border, #eee); }
 .baby-title { font-size: 16px; font-weight: 700; }
 .baby-close { border: none; background: rgba(127,127,127,.12); border-radius: 6px; padding: 4px 12px; cursor: pointer; }

@@ -1580,7 +1580,7 @@ export function App() {
                   setDragId(null);
                   setDragOverId(null);
                 }}
-                onClick={() => window.minicc.switchSession(s.id)}
+                onClick={() => { setAgiView(null); window.minicc.switchSession(s.id); }}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setGroupInputSid(null);
