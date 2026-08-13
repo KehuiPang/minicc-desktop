@@ -4052,9 +4052,10 @@ function AskModal({
           </div>
         )}
         <div className="ask-other-row">
-          <input
+          <textarea
             className="ask-other"
-            placeholder="其它（手动输入或粘贴/添加截图，可选）"
+            rows={1}
+            placeholder="其它（手动输入或粘贴/添加截图，可选；Shift+Enter 换行）"
             value={other[step] || ""}
             onChange={(e) => setOther((o) => ({ ...o, [step]: e.target.value }))}
             onPaste={(e) => {
@@ -4072,7 +4073,10 @@ function AskModal({
               }
             }}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && curAnswered) advance();
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (curAnswered) advance();
+              }
             }}
           />
           <button
