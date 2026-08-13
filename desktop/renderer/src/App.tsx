@@ -2042,7 +2042,10 @@ export function App() {
                   {babyChatLog.length === 0 && <div className="baby-chat-hint">问问它学了什么、它对什么好奇、它的心情~</div>}
                   {babyChatLog.map((m, i) => (
                     <div key={i} className={"baby-msg " + m.role}>
-                      <b>{m.role === "you" ? "你" : "👶"}</b>：{m.text}
+                      <b>{m.role === "you" ? "你" : "👶"}</b>：
+                      {m.role === "baby"
+                        ? <div className="baby-md"><MarkdownView text={m.text} highlight={false} /></div>
+                        : <span>{m.text}</span>}
                     </div>
                   ))}
                 </div>
