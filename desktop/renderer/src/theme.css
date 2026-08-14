@@ -4073,6 +4073,17 @@ body {
 .u-relogin:hover { background: color-mix(in srgb, #e8a838 20%, transparent); }
 
 /* ==================== AGI 板块 + 数字婴儿面板 ==================== */
+/* 数字婴儿 tab 切换(主界面/记忆网络) */
+.baby-tabs { display: flex; gap: 4px; -webkit-app-region: no-drag; }
+.baby-tab { -webkit-app-region: no-drag; border: 1px solid var(--border, #ddd); background: var(--bg, #fff); color: var(--text-dim, #888); border-radius: 8px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
+.baby-tab.on { background: rgba(90,120,255,.14); border-color: #5a78ff; color: var(--text); font-weight: 600; }
+/* 记忆网络视图 */
+.baby-brain { flex: 1; display: flex; flex-direction: column; min-height: 0; -webkit-app-region: no-drag; }
+.baby-brain-bar { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; font-size: 13px; color: var(--text-dim); border-bottom: 1px solid var(--border, #eee); }
+.baby-brain-bar button { -webkit-app-region: no-drag; border: 1px solid var(--border, #ddd); background: var(--bg, #fff); color: var(--text); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+.baby-brain-canvas { flex: 1; position: relative; overflow: hidden; min-height: 0; }
+.baby-brain-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-dim, #999); font-size: 14px; pointer-events: none; text-align: center; padding: 0 40px; }
+.baby-brain-tip { padding: 6px 16px 8px; font-size: 11px; color: var(--text-dim, #999); border-top: 1px solid var(--border, #eee); }
 /* 无限生命循环开关 */
 .baby-alive-row { align-items: center; gap: 8px; flex-wrap: wrap; }
 .baby-alive-toggle { -webkit-app-region: no-drag; border: 1px solid var(--border-strong, #ccc); background: var(--bg, #fff); color: var(--text); border-radius: 8px; padding: 6px 14px; cursor: pointer; font-size: 13px; }

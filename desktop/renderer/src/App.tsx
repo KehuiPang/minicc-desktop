@@ -349,6 +349,9 @@ export function App() {
   const [babyActivity, setBabyActivity] = useState(""); // 它此刻正在干嘛(学习/搜索/睡觉/发呆/对话)
   const babyChatRef = useRef<HTMLDivElement>(null); // 聊天区容器(自动吸底)
   const babyChatStick = useRef(true); // 是否吸底(用户上滚>60px则暂不吸)
+  const [babyTab, setBabyTab] = useState<"home" | "brain">("home"); // 数字婴儿面板 tab
+  const [babyGraphData, setBabyGraphData] = useState<{ nodes: any[]; edges: any[] }>({ nodes: [], edges: [] });
+  const [babyGraphSel, setBabyGraphSel] = useState<string | null>(null);
   useEffect(() => {
     const onToggle = (e: any) => setAgiEnabled(!!e.detail);
     window.addEventListener("minicc-agi-toggle", onToggle);
@@ -720,6 +723,9 @@ export function App() {
     const timer = setInterval(() => { babyRefresh(); }, 2000);
     try { await w.minicc.babyLive(n); await babyRefresh(); }
     finally { clearInterval(timer); setBabyBusy(""); }
+  }
+  async function loadBabyGraph() {
+    try { const g = JSON.parse(await w.minicc.babyGraph()); setBabyGraphData({ nodes: g.nodes || [], edges: g.edges || [] }); } catch {}
   }
   async function toggleBabyAlive() {
     if (babyAlive) { setBabyAlive(false); setBabyAliveInfo(""); try { await w.minicc.babyAliveStop(); } catch {} }
@@ -2050,8 +2056,25 @@ export function App() {
           <div className="baby-panel">
             <div className="baby-header">
               <span className="baby-title">👶 数字婴儿</span>
+              <div className="baby-tabs">
+                <button className={"baby-tab" + (babyTab === "home" ? " on" : "")} onClick={() => setBabyTab("home")}>🏠 主界面</button>
+                <button className={"baby-tab" + (babyTab === "brain" ? " on" : "")} onClick={() => { setBabyTab("brain"); loadBabyGraph(); }}>🧠 记忆网络</button>
+              </div>
               <button className="baby-close" onClick={() => setAgiView(null)} title="返回对话">✕ 返回</button>
             </div>
+            {babyTab === "brain" ? (
+              <div className="baby-brain">
+                <div className="baby-brain-bar">
+                  <span>🧠 大脑记忆网络 · 共 {babyGraphData.nodes.length} 个节点、{babyGraphData.edges.length} 条关联</span>
+                  <button onClick={loadBabyGraph}>🔄 刷新网络</button>
+                </div>
+                <div className="baby-brain-canvas">
+                  <ConceptGraph nodes={babyGraphData.nodes as any} edges={babyGraphData.edges as any} selectedId={babyGraphSel} onSelect={setBabyGraphSel} />
+                  {babyGraphData.nodes.length === 0 && <div className="baby-brain-empty">它还没学到概念～让它「活几个循环」或跟它聊聊，这里就会长出知识网络</div>}
+                </div>
+                <div className="baby-brain-tip">💡 悬停节点/连线看详情 · 点击选中 · 拖动钉住 · 滚轮缩放 · 颜色=概念来源(网络学的/聊天学的/知识宫殿/天生好奇/好奇待学) · 连线=概念关联</div>
+              </div>
+            ) : (
             <div className="baby-body">
               <div className="baby-left">
                 <div className="baby-card">
@@ -2123,6 +2146,7 @@ export function App() {
                 </div>
               </div>
             </div>
+            )}
           </div>
         )}
         <div

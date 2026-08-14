@@ -2971,6 +2971,7 @@ function runBaby(args: string[], stdin?: string, timeoutMs = 600000): Promise<{ 
     else if (cmd === "alivestart") { path = "/alive/start"; body = {}; }
     else if (cmd === "alivestop") { path = "/alive/stop"; body = {}; }
     else if (cmd === "alivestatus") { path = "/alive/status"; body = undefined; }
+    else if (cmd === "graph") { path = "/graph"; body = undefined; }
     else return { ok: false, out: "未知命令:" + cmd };
     try {
       await ensureBabyServer();
@@ -3001,3 +3002,4 @@ ipcMain.handle("agi:baby:chat", async (_e, msg: string) => {
 ipcMain.handle("agi:baby:alivestart", async () => (await runBaby(["alivestart"], undefined, 30000)).out);
 ipcMain.handle("agi:baby:alivestop", async () => (await runBaby(["alivestop"], undefined, 30000)).out);
 ipcMain.handle("agi:baby:alivestatus", async () => (await runBaby(["alivestatus"], undefined, 30000)).out);
+ipcMain.handle("agi:baby:graph", async () => (await runBaby(["graph"], undefined, 30000)).out);
