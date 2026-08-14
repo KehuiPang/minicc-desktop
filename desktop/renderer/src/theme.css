@@ -1971,6 +1971,8 @@ body {
 }
 /* 设置页放到较低层：这样待确认的权限/询问弹窗能浮在设置页之上，不必先关设置才看得到 */
 .perm-overlay.settings-overlay { z-index: 100; }
+/* 但"任务被中断-恢复"提示不是关键交互，不该盖住设置页(挡住保存按钮)→降到设置之下 */
+.ask.resume-ask { z-index: 90; }
 .perm {
   background: var(--bg);
   border: 1px solid var(--border-strong);
