@@ -2069,7 +2069,7 @@ export function App() {
                   <button onClick={loadBabyGraph}>🔄 刷新网络</button>
                 </div>
                 <div className="baby-brain-canvas">
-                  <ConceptGraph nodes={babyGraphData.nodes as any} edges={babyGraphData.edges as any} selectedId={babyGraphSel} onSelect={setBabyGraphSel} />
+                  <BabyBrainGraph nodes={babyGraphData.nodes} edges={babyGraphData.edges} />
                   {babyGraphData.nodes.length === 0 && <div className="baby-brain-empty">它还没学到概念～让它「活几个循环」或跟它聊聊，这里就会长出知识网络</div>}
                 </div>
                 <div className="baby-brain-tip">💡 悬停节点/连线看详情 · 点击选中 · 拖动钉住 · 滚轮缩放 · 颜色=概念来源(网络学的/聊天学的/知识宫殿/天生好奇/好奇待学) · 连线=概念关联</div>
@@ -5291,6 +5291,113 @@ function textToAttrs(text: string): Record<string, string> {
     if (k) out[k] = v;
   }
   return out;
+}
+
+// 数字婴儿"记忆网络"静态图：打开时一次性把布局算好就【钉死不动】，只在 hover/点击/缩放/拖单点时响应。
+// (不像 ConceptGraph 那样持续跑力学动画——大图会一直抖、收敛不了)
+function BabyBrainGraph({ nodes, edges }: { nodes: any[]; edges: any[] }) {
+  const W = 1400, H = 900;
+  const color = (type: string) => { let h = 0; for (const c of type) h = (h * 31 + c.charCodeAt(0)) & 0xffff; return `hsl(${h % 360}, 62%, 52%)`; };
+  // 一次性预计算布局：同步跑固定次数力学迭代算好坐标，之后不再变(useMemo 缓存)
+  const layout = useMemo(() => {
+    const pos = new Map<string, { x: number; y: number }>();
+    const vel = new Map<string, { vx: number; vy: number }>();
+    let seed = 20240814;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    for (const n of nodes) { pos.set(n.id, { x: W / 2 + (rnd() - 0.5) * 700, y: H / 2 + (rnd() - 0.5) * 500 }); vel.set(n.id, { vx: 0, vy: 0 }); }
+    const ids = nodes.map((n) => n.id);
+    const ITER = ids.length > 120 ? 320 : 500;
+    for (let it = 0; it < ITER; it++) {
+      for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+        const a = pos.get(ids[i])!, b = pos.get(ids[j])!;
+        let dx = a.x - b.x, dy = a.y - b.y; const d2 = dx * dx + dy * dy || 0.01, d = Math.sqrt(d2);
+        const f = 6500 / d2, fx = (dx / d) * f, fy = (dy / d) * f;
+        const va = vel.get(ids[i])!, vb = vel.get(ids[j])!; va.vx += fx; va.vy += fy; vb.vx -= fx; vb.vy -= fy;
+      }
+      for (const e of edges) {
+        const a = pos.get(e.from), b = pos.get(e.to); if (!a || !b) continue;
+        const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 0.01, f = (d - 115) * 0.03;
+        const fx = (dx / d) * f, fy = (dy / d) * f;
+        const va = vel.get(e.from)!, vb = vel.get(e.to)!; va.vx += fx; va.vy += fy; vb.vx -= fx; vb.vy -= fy;
+      }
+      for (const id of ids) { const p = pos.get(id)!, v = vel.get(id)!; v.vx += (W / 2 - p.x) * 0.002; v.vy += (H / 2 - p.y) * 0.002; v.vx *= 0.85; v.vy *= 0.85; p.x += v.vx; p.y += v.vy; }
+    }
+    return pos;
+  }, [nodes, edges]);
+  const [override, setOverride] = useState<Map<string, { x: number; y: number }>>(new Map());
+  const gp = (id: string) => override.get(id) || layout.get(id) || { x: W / 2, y: H / 2 };
+  const [view, setView] = useState({ x: 0, y: 0, k: 1 });
+  const [hover, setHover] = useState<{ kind: "node" | "edge"; id: string; mx: number; my: number } | null>(null);
+  const [sel, setSel] = useState<string | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const dragRef = useRef<{ id?: string; kind: "node" | "pan"; sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(null);
+  const nodeById = useMemo(() => { const m = new Map<string, any>(); for (const n of nodes) m.set(n.id, n); return m; }, [nodes]);
+  const toWorld = (cx: number, cy: number) => {
+    const r = svgRef.current!.getBoundingClientRect();
+    const vx = ((cx - r.left) / r.width) * W, vy = ((cy - r.top) / r.height) * H;
+    return { x: (vx - view.x) / view.k, y: (vy - view.y) / view.k };
+  };
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      const d = dragRef.current; if (!d) return;
+      const w = toWorld(e.clientX, e.clientY);
+      if (d.kind === "node" && d.id) { d.moved = true; setOverride((m) => { const n = new Map(m); n.set(d.id!, { x: w.x, y: w.y }); return n; }); }
+      else { const r = svgRef.current!.getBoundingClientRect(); const scale = W / r.width; setView((v) => ({ ...v, x: d.ox + (e.clientX - d.sx) * scale, y: d.oy + (e.clientY - d.sy) * scale })); }
+    };
+    const up = (e: MouseEvent) => { const d = dragRef.current; if (d && d.kind === "node" && !d.moved && d.id) setSel(d.id); dragRef.current = null; };
+    window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
+    return () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
+  });
+  useEffect(() => {
+    const svg = svgRef.current; if (!svg) return;
+    const onWheel = (e: WheelEvent) => { e.preventDefault(); const r = svg.getBoundingClientRect(); const vx = ((e.clientX - r.left) / r.width) * W, vy = ((e.clientY - r.top) / r.height) * H; setView((v) => { const wx = (vx - v.x) / v.k, wy = (vy - v.y) / v.k; const k = Math.max(0.3, Math.min(4, v.k * (e.deltaY < 0 ? 1.12 : 1 / 1.12))); return { k, x: vx - wx * k, y: vy - wy * k }; }); };
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", onWheel);
+  }, []);
+  const selNode = sel ? nodeById.get(sel) : null;
+  const hoverNode = hover?.kind === "node" ? nodeById.get(hover.id) : null;
+  const hoverEdge = hover?.kind === "edge" ? edges.find((e) => e.id === hover.id) : null;
+  return (
+    <div className="bbg-wrap">
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="bbg-svg"
+        onMouseDown={(e) => { const w = toWorld(e.clientX, e.clientY); dragRef.current = { kind: "pan", sx: e.clientX, sy: e.clientY, ox: view.x, oy: view.y, moved: false }; setSel(null); }}>
+        <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
+          {edges.map((e) => { const a = gp(e.from), b = gp(e.to); if (!a || !b) return null; const on = sel && (e.from === sel || e.to === sel); return (
+            <line key={e.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={on ? "#5a78ff" : "#c9ccd6"} strokeWidth={on ? 1.6 : 0.7} strokeOpacity={sel && !on ? 0.25 : 0.7}
+              onMouseEnter={(ev) => setHover({ kind: "edge", id: e.id, mx: ev.clientX, my: ev.clientY })} onMouseLeave={() => setHover(null)} />
+          ); })}
+          {nodes.map((n) => { const p = gp(n.id); const r = 5 + Math.min(11, (n.weight || 1) * 1.4); const dim = sel && sel !== n.id && !edges.some((e) => (e.from === sel && e.to === n.id) || (e.to === sel && e.from === n.id)); return (
+            <g key={n.id} transform={`translate(${p.x},${p.y})`} style={{ cursor: "pointer", opacity: dim ? 0.3 : 1 }}
+              onMouseDown={(ev) => { ev.stopPropagation(); const w = toWorld(ev.clientX, ev.clientY); dragRef.current = { id: n.id, kind: "node", sx: ev.clientX, sy: ev.clientY, ox: 0, oy: 0, moved: false }; }}
+              onMouseEnter={(ev) => setHover({ kind: "node", id: n.id, mx: ev.clientX, my: ev.clientY })} onMouseLeave={() => setHover(null)}>
+              <circle r={r} fill={color(n.type)} stroke={sel === n.id ? "#111" : "#fff"} strokeWidth={sel === n.id ? 2 : 1} />
+              <text x={r + 2} y={4} fontSize={11} fill="var(--text)" style={{ pointerEvents: "none" }}>{n.name}</text>
+            </g>
+          ); })}
+        </g>
+      </svg>
+      {(hoverNode || hoverEdge) && (
+        <div className="bbg-tip" style={{ left: Math.min((hover!.mx - (svgRef.current?.getBoundingClientRect().left || 0)) + 14, W), top: (hover!.my - (svgRef.current?.getBoundingClientRect().top || 0)) + 14 }}>
+          {hoverNode ? (<>
+            <div className="bbg-tip-h"><span className="bbg-dot" style={{ background: color(hoverNode.type) }} />{hoverNode.name}</div>
+            <div className="bbg-tip-type">{hoverNode.type}</div>
+            {hoverNode.summary && <div className="bbg-tip-sum">{hoverNode.summary}</div>}
+          </>) : (<>
+            <div className="bbg-tip-h">🔗 {hoverEdge.relation}</div>
+            <div className="bbg-tip-sum">{hoverEdge.from} → {hoverEdge.to}</div>
+          </>)}
+        </div>
+      )}
+      {selNode && (
+        <div className="bbg-detail">
+          <div className="bbg-detail-h"><span className="bbg-dot" style={{ background: color(selNode.type) }} />{selNode.name}<button onClick={() => setSel(null)}>✕</button></div>
+          <div className="bbg-detail-type">类型：{selNode.type}</div>
+          {selNode.summary && <div className="bbg-detail-row"><b>它的理解</b><div>{selNode.summary}</div></div>}
+          {selNode.attrs && Object.entries(selNode.attrs).map(([k, v]) => (<div key={k} className="bbg-detail-row"><b>{k}</b><div>{String(v)}</div></div>))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // 概念网络力导向图：纯本地 SVG 简易力模拟(斥力+边弹簧+向心+阻尼)，无外部库(CSP 安全)。

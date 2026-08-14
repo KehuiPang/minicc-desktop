@@ -4075,6 +4075,22 @@ body {
 .u-relogin:hover { background: color-mix(in srgb, #e8a838 20%, transparent); }
 
 /* ==================== AGI 板块 + 数字婴儿面板 ==================== */
+/* 数字婴儿记忆网络·静态图 */
+.bbg-wrap { position: absolute; inset: 0; overflow: hidden; }
+.bbg-svg { width: 100%; height: 100%; display: block; cursor: grab; background: var(--bg, #fff); }
+.bbg-svg:active { cursor: grabbing; }
+.bbg-tip { position: absolute; z-index: 5; max-width: 300px; background: var(--bg-raised, #fff); border: 1px solid var(--border, #ddd); border-radius: 8px; padding: 8px 10px; box-shadow: 0 4px 16px rgba(0,0,0,.14); pointer-events: none; font-size: 12px; }
+.bbg-tip-h { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; color: var(--text); }
+.bbg-tip-type { color: var(--text-dim, #888); font-size: 11px; margin: 2px 0; }
+.bbg-tip-sum { color: var(--text); line-height: 1.5; margin-top: 3px; }
+.bbg-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.bbg-detail { position: absolute; top: 12px; right: 12px; z-index: 6; width: 280px; max-height: calc(100% - 24px); overflow-y: auto; background: var(--bg-raised, #fff); border: 1px solid var(--border, #ddd); border-radius: 10px; padding: 12px 14px; box-shadow: 0 6px 22px rgba(0,0,0,.16); }
+.bbg-detail-h { display: flex; align-items: center; gap: 7px; font-weight: 700; font-size: 15px; color: var(--text); }
+.bbg-detail-h button { margin-left: auto; border: none; background: transparent; cursor: pointer; color: var(--text-dim); font-size: 14px; }
+.bbg-detail-type { color: var(--text-dim, #888); font-size: 12px; margin: 4px 0 8px; }
+.bbg-detail-row { margin-bottom: 8px; font-size: 12px; }
+.bbg-detail-row b { color: var(--text-dim, #777); font-weight: 600; display: block; margin-bottom: 2px; }
+.bbg-detail-row div { color: var(--text); line-height: 1.5; }
 /* 数字婴儿 tab 切换(主界面/记忆网络) */
 .baby-tabs { display: flex; gap: 4px; -webkit-app-region: no-drag; }
 .baby-tab { -webkit-app-region: no-drag; border: 1px solid var(--border, #ddd); background: var(--bg, #fff); color: var(--text-dim, #888); border-radius: 8px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
