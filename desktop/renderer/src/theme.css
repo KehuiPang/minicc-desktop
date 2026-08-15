@@ -91,6 +91,9 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  /* 应用外壳本身永远不滚：各区域自己滚。少了这条，某条消息里的宽内容会把整扇窗口
+     撑出一道横向滚动条(滚过去还是空白) */
+  overflow: hidden;
 }
 body {
   background: var(--bg);

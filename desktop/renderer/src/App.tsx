@@ -1425,6 +1425,17 @@ export function App() {
     window.minicc.send(currentId, text, imgs.length ? imgs : undefined);
   }
 
+  // 直接把一句话发出去(建议条点一下就走这儿；Tab 走的是填进输入框的老路)
+  function sendText(t: string) {
+    const text = (t || "").trim();
+    if (!text) return;
+    setSuggestion("");
+    contBySid.current.set(currentId, 0); // 你自己点的，不算智能继续的连击
+    setContN(0);
+    lastSuggestRef.current = { text: "", canContinue: false, auto: false };
+    dispatchMessage(text, [], busy); // 跑动中就注入到当前回合
+  }
+
   function clearComposer() {
     setInput("");
     setPendingImages([]);
@@ -2889,16 +2900,12 @@ export function App() {
           {suggestion && input === "" && (
             <div
               className="suggest-bar"
-              title="点击或按 Tab 采纳"
-              onClick={() => {
-                setInput(suggestion);
-                setSuggestion("");
-                taRef.current?.focus();
-              }}
+              title="点一下直接发出去；想先改改就按 Tab 填进输入框"
+              onClick={() => sendText(suggestion)}
             >
               <span className="suggest-ico"><Ic.IcSparkle size={13} /></span>
               <span className="suggest-text">{suggestion}</span>
-              <span className="suggest-key">{autoCont ? "智能继续中" : "Tab 采纳"}</span>
+              <span className="suggest-key">{autoCont ? "智能继续中" : "点击发送 · Tab 编辑"}</span>
             </div>
           )}
           <div className="input-wrap">
