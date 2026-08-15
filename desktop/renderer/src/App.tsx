@@ -280,12 +280,22 @@ export function App() {
   const [suggestion, setSuggestion] = useState(""); // 输入框幽灵提示：下一步动作建议(Tab 补全)
   const [suggestBusy, setSuggestBusy] = useState(false); // 正在现算建议(点灯泡手动要)
   // 智能继续：AI 停下来只是问"要不要接着推进"时自动替你回一句，危险/需要你拿主意的一律停下
+  const [showManual, setShowManual] = useState(() => localStorage.getItem("minicc-show-manual") === "1");
   const [autoCont, setAutoCont] = useState(() => localStorage.getItem("minicc-auto-cont") === "1");
   const autoContRef = useRef(autoCont);
   autoContRef.current = autoCont;
   const [contN, setContN] = useState(0); // 已连续自动继续多少次
   const contNRef = useRef(0);
-  const CONT_MAX = 30; // 安全阀：连着推这么多轮还没结束就停下来等人
+  // 安全阀都可调(设置→运行模式)：最多连推几轮、发出前留多久反悔
+  const [contMax, setContMax] = useState(() => Number(localStorage.getItem("minicc-cont-max")) || 30);
+  const [contDelay, setContDelay] = useState(() => {
+    const v = localStorage.getItem("minicc-cont-delay");
+    return v === null ? 1200 : Number(v) || 0;
+  });
+  const contMaxRef = useRef(contMax);
+  contMaxRef.current = contMax;
+  const contDelayRef = useRef(contDelay);
+  contDelayRef.current = contDelay;
   const lastSuggestRef = useRef<{ text: string; canContinue: boolean; auto: boolean }>({
     text: "", canContinue: false, auto: false,
   });
@@ -347,6 +357,7 @@ export function App() {
   const [browserDetached, setBrowserDetached] = useState(false); // 是否弹成独立窗口
   const [browserWidth, setBrowserWidth] = useState(640); // 浏览器面板宽度(可拖动分隔条调)
   const [showBrowserMenu, setShowBrowserMenu] = useState(false); // 独立时顶栏浏览器图标的下拉
+  const [showMore, setShowMore] = useState(false); // 顶栏右上角「⋯」菜单(收不常用入口)
   const [footCompact, setFootCompact] = useState(false); // 底栏空间不够→收起次要信息
   const composerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -403,6 +414,24 @@ export function App() {
     const onToggle = (e: any) => setAgiEnabled(!!e.detail);
     window.addEventListener("minicc-agi-toggle", onToggle);
     return () => window.removeEventListener("minicc-agi-toggle", onToggle);
+  }, []);
+  // 手动模式默认藏起来(设置里开了才显示)；关掉时若正停在手动，自动切回自动
+  useEffect(() => {
+    const onManual = (e: any) => {
+      const on = !!e.detail;
+      setShowManual(on);
+      if (!on) setAutoMode(true);
+    };
+    const onCont = (e: any) => {
+      if (typeof e.detail?.max === "number") setContMax(e.detail.max);
+      if (typeof e.detail?.delay === "number") setContDelay(e.detail.delay);
+    };
+    window.addEventListener("minicc-show-manual", onManual);
+    window.addEventListener("minicc-cont-cfg", onCont);
+    return () => {
+      window.removeEventListener("minicc-show-manual", onManual);
+      window.removeEventListener("minicc-cont-cfg", onCont);
+    };
   }, []);
   // 聊天区自动吸底(新消息/它在想时滚到最新)，用户主动上滚>60px 时不打断
   useEffect(() => {
@@ -1087,18 +1116,18 @@ export function App() {
               autoContRef.current &&
               payload.canContinue &&
               (payload.text || "").trim() &&
-              contNRef.current < CONT_MAX
+              contNRef.current < contMaxRef.current
             ) {
               contNRef.current += 1;
               setContN(contNRef.current);
               lastSuggestRef.current.auto = true;
               const go = payload.text.trim();
               setTimeout(() => {
-                // 这 1.2 秒是留给你反悔的：期间打字或按停，就不自动发了
+                // 反悔窗口(设置里可调)：这期间你一打字或按停，就不自动发了
                 if (!autoContRef.current || busyRef.current || inputRef.current.trim()) return;
                 setSuggestion("");
                 dispatchMessage(go, [], false);
-              }, 1200);
+              }, Math.max(0, contDelayRef.current));
             }
           }
           break;
@@ -2455,6 +2484,29 @@ export function App() {
               )}
             </span>
           )}
+          {/* 右上角「⋯」：不常用的入口收在这儿，别占着底部工具条 */}
+          <span className="tb-more-wrap">
+            <button className="tb-more" title="更多" onClick={() => setShowMore((v) => !v)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="12" r="1.7" />
+                <circle cx="12" cy="12" r="1.7" />
+                <circle cx="19" cy="12" r="1.7" />
+              </svg>
+            </button>
+            {showMore && (
+              <>
+                <div className="mq-overlay" onClick={() => setShowMore(false)} />
+                <div className="tb-more-menu">
+                  <button
+                    onClick={() => { setShowBrowser((v) => !v); setShowMore(false); }}
+                  >
+                    {showBrowser ? "关闭内置浏览器" : "打开内置浏览器"}
+                  </button>
+                  <div className="tb-more-hint">看/控 AI 打开的网页；平时不用就收着</div>
+                </div>
+              </>
+            )}
+          </span>
           {window.minicc.platform !== "darwin" && (
             <span className="win-ctrl">
               <button className="wc-btn" title="最小化" onClick={() => window.minicc.winMinimize()}>
@@ -2928,13 +2980,15 @@ export function App() {
               )}
             </div>
             <div className="mode-mini">
-              <button
-                className={!autoMode ? "on" : ""}
-                title="每一步工具调用都要你确认"
-                onClick={() => { setAutoMode(false); setAutoCont(false); localStorage.setItem("minicc-auto-cont", "0"); }}
-              >
-                手动
-              </button>
+              {showManual && (
+                <button
+                  className={!autoMode ? "on" : ""}
+                  title="每一步工具调用都要你确认"
+                  onClick={() => { setAutoMode(false); setAutoCont(false); localStorage.setItem("minicc-auto-cont", "0"); }}
+                >
+                  手动
+                </button>
+              )}
               <button
                 className={autoMode && !autoCont ? "on" : ""}
                 title="工具自动放行，每轮回复完停下来等你"
@@ -2944,7 +2998,7 @@ export function App() {
               </button>
               <button
                 className={autoCont ? "on cont" : ""}
-                title={"智能继续：它只是问「要不要接着推进」时，自动替你回一句往下做；\n遇到删除/上线/花钱/发消息这类有风险的，或需要你拿主意的，仍会停下来等你。\n最多连推 " + CONT_MAX + " 轮；你一打字或按停就中断。"}
+                title={`智能继续：它只是问「要不要接着推进」时，自动替你回一句往下做；\n遇到删除/上线/花钱/发消息这类有风险的，或需要你拿主意的，仍会停下来等你。\n最多连推 ${contMax} 轮，发出前留 ${(contDelay / 1000).toFixed(1)} 秒反悔（设置→运行模式里可改）；你一打字或按停就中断。`}
                 onClick={() => {
                   const v = !autoCont;
                   setAutoMode(true); setAutoCont(v);
@@ -3062,35 +3116,6 @@ export function App() {
                 </>
               )}
             </div>
-
-            <button
-              className={"foot-browser" + (showBrowser ? " on" : "")}
-              title="内置浏览器（看/控 AI 打开的网页）"
-              onClick={() => setShowBrowser((v) => !v)}
-            >
-              <svg
-                className="fb-ico"
-                width="13"
-                height="13"
-                viewBox="0 0 16 16"
-                fill="none"
-                aria-hidden="true"
-              >
-                <rect
-                  x="1.6"
-                  y="2.6"
-                  width="12.8"
-                  height="10.8"
-                  rx="2"
-                  stroke="currentColor"
-                  strokeWidth="1.3"
-                />
-                <path d="M1.6 5.7h12.8" stroke="currentColor" strokeWidth="1.3" />
-                <circle cx="4" cy="4.15" r="0.62" fill="currentColor" />
-                <circle cx="6.1" cy="4.15" r="0.62" fill="currentColor" />
-              </svg>
-              <span className="fb-txt">浏览器</span>
-            </button>
 
             <span className="foot-spacer" />
 
@@ -4601,6 +4626,42 @@ function AskModal({
   );
 }
 // 复制按钮：点后短暂显示绿色勾 + "已复制"提示
+// 智能继续的两个安全阀：能连推几轮 / 发出前留多久反悔。改完立刻广播给主界面。
+function ContSettings() {
+  const [max, setMax] = useState(() => Number(localStorage.getItem("minicc-cont-max")) || 30);
+  const [delay, setDelay] = useState(() => {
+    const v = localStorage.getItem("minicc-cont-delay");
+    return v === null ? 1200 : Number(v) || 0;
+  });
+  const push = (m: number, d: number) => {
+    localStorage.setItem("minicc-cont-max", String(m));
+    localStorage.setItem("minicc-cont-delay", String(d));
+    window.dispatchEvent(new CustomEvent("minicc-cont-cfg", { detail: { max: m, delay: d } }));
+  };
+  return (
+    <>
+      <div className="app-set-row" style={{ cursor: "default", gap: "10px" }}>
+        <div className="app-set-label" style={{ whiteSpace: "nowrap" }}>智能继续最多连推</div>
+        <input
+          type="range" min={3} max={100} step={1} value={max} style={{ flex: 1 }}
+          onChange={(e) => { const v = Number(e.target.value); setMax(v); push(v, delay); }}
+        />
+        <div className="app-set-hint" style={{ minWidth: 44, textAlign: "right" }}>{max} 轮</div>
+      </div>
+      <div className="app-set-row" style={{ cursor: "default", gap: "10px" }}>
+        <div className="app-set-label" style={{ whiteSpace: "nowrap" }}>发出前反悔窗口</div>
+        <input
+          type="range" min={0} max={10000} step={100} value={delay} style={{ flex: 1 }}
+          onChange={(e) => { const v = Number(e.target.value); setDelay(v); push(max, v); }}
+        />
+        <div className="app-set-hint" style={{ minWidth: 44, textAlign: "right" }}>
+          {delay === 0 ? "立即" : (delay / 1000).toFixed(1) + " 秒"}
+        </div>
+      </div>
+    </>
+  );
+}
+
 function CopyBtn({ text }: { text: string }) {
   const [done, setDone] = useState(false);
   return (
@@ -7295,6 +7356,26 @@ function SettingsModal({
           {/* ── 通用：会话分组 + 上下文压缩 + 账号读取 ── */}
           {tab === "general" && (
             <>
+              <div className="app-set-group">运行模式</div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  defaultChecked={localStorage.getItem("minicc-show-manual") === "1"}
+                  onChange={(e) => {
+                    localStorage.setItem("minicc-show-manual", e.target.checked ? "1" : "0");
+                    window.dispatchEvent(new CustomEvent("minicc-show-manual", { detail: e.target.checked }));
+                  }}
+                />
+                显示「手动」模式（每一步工具调用都要确认）
+              </label>
+              <div style={{ fontSize: 11, opacity: .55, marginBottom: 12, lineHeight: 1.5 }}>
+                默认只留「自动」和「智能继续」两档。手动模式适合在陌生仓库里逐步盯着放行，平时用不到就藏起来。
+              </div>
+              <ContSettings />
+              <div style={{ fontSize: 11, opacity: .55, marginBottom: 14, lineHeight: 1.5 }}>
+                智能继续只在它「问你要不要接着推进」时替你回话；删除、上线、写生产、花钱、发消息、改权限这类，
+                以及需要你拿主意的，一律停下等你。反悔窗口设成 0 就是立刻发。
+              </div>
               <div className="app-set-group">AGI 板块(实验性)</div>
               <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 13 }}>
                 <input
