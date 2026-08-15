@@ -2145,6 +2145,12 @@ export function App() {
                     {brainFull ? <Ic.IcShrink size={14} /> : <Ic.IcExpand size={14} />}
                     {brainFull ? "退出全屏" : "全屏"}
                   </button>
+                  {brainFull && (
+                    <button className="by-tidy ghost" title="回到对话"
+                      onClick={() => { setBrainFull(false); setAgiView(null); }}>
+                      <Ic.IcBack size={14} />返回对话
+                    </button>
+                  )}
                   <button className="by-tidy ghost" disabled={babyTidy}
                     onClick={() => { loadBabyGraph(); loadBabyPyramid(); }} title="重新读一遍当前的网络/金字塔">
                     <Ic.IcRefresh size={14} />重新读取
@@ -5449,7 +5455,10 @@ function textToAttrs(text: string): Record<string, string> {
 // 数字婴儿"记忆网络"静态图：打开时一次性把布局算好就【钉死不动】，只在 hover/点击/缩放/拖单点时响应。
 // (不像 ConceptGraph 那样持续跑力学动画——大图会一直抖、收敛不了)
 function BabyBrainGraph({ nodes, edges }: { nodes: any[]; edges: any[] }) {
-  const W = 1400, H = 900;
+  // 画布随概念数放大：概念越多铺得越开，节点才不会挤成一坨(看全貌时整体缩放显示，
+  // 滚轮放大读细节)。固定 1400×900 装 200+ 概念必然重叠。
+  const spread = Math.min(3.4, Math.max(1, Math.sqrt(nodes.length / 55)));
+  const W = Math.round(1400 * spread), H = Math.round(900 * spread);
   // 概念来源 → 固定语义色(不再用哈希随机色)：一眼分清哪些是自己上网学的、哪些是睡梦里涌现的
   const TYPE_COLOR: Record<string, string> = {
     "网络学的": "#6f9fad",
@@ -5511,22 +5520,47 @@ function BabyBrainGraph({ nodes, edges }: { nodes: any[]; edges: any[] }) {
       }
     }
     const ids = nodes.map((n) => n.id);
-    const rad = new Map<string, number>(nodes.map((n) => [n.id, radiusOf(n)]));
-    const ANCHOR_K = hasSem ? 0.035 : 0.002; // 有语义坐标就以它为准，否则退回向心力
-    const ITER = ids.length > 200 ? 260 : 420;
-    for (let it = 0; it < ITER; it++) {
-      // 斥力只做防重叠(短程)，不破坏语义远近
+    // 每个节点的占位框 = 圆 + 右边那截标签(只算常显标签的)。
+    // 只按圆心距离防重叠是不够的——挤在一起的其实是文字，框算进标签才真的分得开。
+    const box = new Map<string, { w: number; h: number; ox: number }>();
+    for (const n of nodes) {
+      const r = radiusOf(n);
+      const abs = n.level === "abstract";
+      const showLabel = abs || r >= 8.5;
+      const fs = abs ? Math.min(17, 11 + (n.depth || 1) * 1.6) : 10.5;
+      const nm = String(n.name || "").slice(0, 22);
+      let lw = 0;
+      if (showLabel) for (const ch of nm) lw += /[⺀-鿿＀-￯]/.test(ch) ? fs : fs * 0.56;
+      box.set(n.id, {
+        w: 2 * r + (lw ? lw + 8 : 0),
+        h: Math.max(2 * r, showLabel ? fs * 1.35 : 2 * r),
+        ox: lw ? (lw + 8) / 2 : 0,
+      });
+    }
+    const PADX = 16, PADY = 9; // 框与框之间还要留的呼吸空间
+    const separate = (k: number) => {
       for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
-        const a = pos.get(ids[i])!, b = pos.get(ids[j])!;
-        const dx = a.x - b.x, dy = a.y - b.y;
-        const need = (rad.get(ids[i]) || 5) + (rad.get(ids[j]) || 5) + 16;
-        const d2 = dx * dx + dy * dy || 0.01;
-        if (d2 > need * need) continue;
-        const d = Math.sqrt(d2), f = (need - d) * 0.22;
-        const fx = (dx / d) * f, fy = (dy / d) * f;
+        const A = pos.get(ids[i])!, B = pos.get(ids[j])!;
+        const ba = box.get(ids[i])!, bb = box.get(ids[j])!;
+        const dx = A.x + ba.ox - (B.x + bb.ox), dy = A.y - B.y;
+        const ox = (ba.w + bb.w) / 2 + PADX - Math.abs(dx);
+        if (ox <= 0) continue;
+        const oy = (ba.h + bb.h) / 2 + PADY - Math.abs(dy);
+        if (oy <= 0) continue;
         const va = vel.get(ids[i])!, vb = vel.get(ids[j])!;
-        va.vx += fx; va.vy += fy; vb.vx -= fx; vb.vy -= fy;
+        if (ox < oy) { // 沿更省力的那个轴推开
+          const f = (dx >= 0 ? 1 : -1) * ox * k;
+          va.vx += f; vb.vx -= f;
+        } else {
+          const f = (dy >= 0 ? 1 : -1) * oy * k;
+          va.vy += f; vb.vy -= f;
+        }
       }
+    };
+    const ANCHOR_K = hasSem ? 0.026 : 0.002; // 有语义坐标就以它为准，否则退回向心力
+    const ITER = ids.length > 200 ? 220 : 380;
+    for (let it = 0; it < ITER; it++) {
+      separate(0.24);
       for (const e of edges) {
         const a = pos.get(e.from), b = pos.get(e.to); if (!a || !b) continue;
         // 层级边(抽象自)拉得紧→同一个上层认知的概念抱成一团；普通关联很松，只给一点点牵引
@@ -5543,6 +5577,16 @@ function BabyBrainGraph({ nodes, edges }: { nodes: any[]; edges: any[] }) {
         const ak = isAbs ? ANCHOR_K * 1.6 : ANCHOR_K; // 上层认知更贴紧它孩子的质心
         v.vx += (a.x - p.x) * ak; v.vy += (a.y - p.y) * ak;
         v.vx *= 0.84; v.vy *= 0.84; p.x += v.vx; p.y += v.vy;
+      }
+    }
+    // 收尾：只解重叠，不再拉锚点/弹簧——保证最后谁也不压着谁
+    for (let it = 0; it < 130; it++) {
+      separate(0.5);
+      for (const id of ids) {
+        const p = pos.get(id)!, v = vel.get(id)!, b = box.get(id)!;
+        v.vx *= 0.55; v.vy *= 0.55; p.x += v.vx; p.y += v.vy;
+        p.x = Math.max(b.w / 2 + 10, Math.min(W - b.w / 2 - 10, p.x)); // 别飘出画布
+        p.y = Math.max(b.h / 2 + 10, Math.min(H - b.h / 2 - 10, p.y));
       }
     }
     return pos;

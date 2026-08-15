@@ -632,6 +632,9 @@ body {
 .stream {
   flex: 1 1 auto;
   overflow-y: auto;
+  /* 兜底：任何一条消息里的宽内容(表格/代码/长串)都只在它自己的框里横滚，
+     对话区本身永远不出现横向滚动条(以前偶尔冒出来、滚过去还是空白) */
+  overflow-x: hidden;
   padding: 22px 48px 26px;
 }
 /* 全局细淡滚动条：默认几乎隐形，hover 才淡显 */
@@ -1044,6 +1047,13 @@ body {
 /* Markdown 渲染（有层次：标题/加粗/列表/代码/表格） */
 .md {
   line-height: 1.72;
+  /* 超长 URL / 无空格长串不许撑破正文宽度，否则整个对话区冒出横向滚动条 */
+  overflow-wrap: anywhere;
+}
+.md img,
+.md svg {
+  max-width: 100%;
+  height: auto;
 }
 .md > *:first-child {
   margin-top: 0;
@@ -1127,7 +1137,12 @@ body {
   border-left: 3px solid var(--border-strong);
   color: var(--text-dim);
 }
+/* 宽表格自己横滚，别把整个对话区撑出横向滚动条 */
 .md table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
   border-collapse: collapse;
   margin: 10px 0;
   font-size: 13px;

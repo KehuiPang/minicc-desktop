@@ -2,7 +2,7 @@
 // 后端睡觉时会把概念自组织成一座塔：底层是它一个个学来的具体概念，
 // 往上每层都是聚类涌现出来的抽象认知，塔尖是"道"。这里把整座塔摊开：
 // 谁抽象自谁一眼可见，还没被收编的碎知识用虚线单列出来。
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Ic from "./icons.js";
 
 type PNode = {
@@ -24,6 +24,9 @@ export function BabyPyramid({ data }: { data: Data | null }) {
     () => (localStorage.getItem("minicc-baby-pyr-zoom") as any) || "md",
   );
   const setZ = (z: "sm" | "md" | "lg") => { setZoom(z); localStorage.setItem("minicc-baby-pyr-zoom", z); };
+  const [q, setQ] = useState("");
+  const [hitIdx, setHitIdx] = useState(0);
+  const nodeRefs = useRef(new Map<string, HTMLButtonElement>());
 
   const layers = data?.layers || [];
   const stats = data?.stats || {};
@@ -32,6 +35,25 @@ export function BabyPyramid({ data }: { data: Data | null }) {
     for (const L of layers) for (const n of L.nodes) m.set(n.name, n);
     return m;
   }, [layers]);
+
+  // 搜索：名字或它的理解里包含关键词就算命中
+  const hits = useMemo(() => {
+    const k = q.trim().toLowerCase();
+    if (!k) return [] as string[];
+    const out: string[] = [];
+    for (const L of layers)
+      for (const n of L.nodes)
+        if (n.name.toLowerCase().includes(k) || (n.desc || "").toLowerCase().includes(k)) out.push(n.name);
+    return out;
+  }, [q, layers]);
+  const hitSet = useMemo(() => new Set(hits), [hits]);
+  // 命中后自动选中当前那个 → 它的整条脉络被点亮，并滚到眼前
+  const cur = hits.length ? hits[Math.min(hitIdx, hits.length - 1)] : null;
+  useEffect(() => {
+    if (!cur) return;
+    setSel(cur);
+    nodeRefs.current.get(cur)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [cur]);
 
   // 选中一个节点时，把它的整条血脉(祖先 + 所有后代)点亮，其余压暗
   const lit = useMemo(() => {
@@ -78,6 +100,30 @@ export function BabyPyramid({ data }: { data: Data | null }) {
           {stats.total != null && sum !== stats.total ? "（对不上）" : "（对得上）"}
         </span>
         <span className="byp-sum-loose">还没固化 <b>{stats.loose ?? 0}</b></span>
+        <div className="byp-find">
+          <Ic.IcSearch size={13} />
+          <input
+            value={q}
+            placeholder="搜一个概念，看它的整条脉络"
+            onChange={(e) => { setQ(e.target.value); setHitIdx(0); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && hits.length) setHitIdx((i) => (i + 1) % hits.length);
+              if (e.key === "Escape") { setQ(""); setSel(null); }
+            }}
+          />
+          {!!q && (
+            <>
+              <span className="byp-find-n">{hits.length ? `${Math.min(hitIdx, hits.length - 1) + 1}/${hits.length}` : "没找到"}</span>
+              {hits.length > 1 && (
+                <>
+                  <button onClick={() => setHitIdx((i) => (i - 1 + hits.length) % hits.length)} title="上一个">↑</button>
+                  <button onClick={() => setHitIdx((i) => (i + 1) % hits.length)} title="下一个 (Enter)">↓</button>
+                </>
+              )}
+              <button onClick={() => { setQ(""); setSel(null); }} title="清空">×</button>
+            </>
+          )}
+        </div>
         <div className="by-seg byp-zoom">
           {(["sm", "md", "lg"] as const).map((z) => (
             <button key={z} className={zoom === z ? "on" : ""} onClick={() => setZ(z)}>
@@ -121,16 +167,20 @@ export function BabyPyramid({ data }: { data: Data | null }) {
             <div className="byp-row">
               {shown.map((n, i) => {
                 const loose = isLeaf && !n.parent;
+                const isHit = hitSet.has(n.name);
                 const cls =
                   "byp-node" +
                   (n.isDao ? " dao" : "") +
                   (isLeaf ? " leaf" : L.depth === 1 ? " lv1" : "") +
                   (loose ? " loose" : "") +
                   (sel === n.name ? " on" : "") +
-                  (lit && !lit.has(n.name) ? " dim" : "");
+                  (isHit ? " hit" : "") +
+                  (cur === n.name ? " hit-cur" : "") +
+                  (lit && !lit.has(n.name) && !isHit ? " dim" : "");
                 return (
                   <button
                     key={n.name}
+                    ref={(el) => { if (el) nodeRefs.current.set(n.name, el); else nodeRefs.current.delete(n.name); }}
                     className={cls}
                     title={n.desc || n.name}
                     onClick={() => setSel(sel === n.name ? null : n.name)}
