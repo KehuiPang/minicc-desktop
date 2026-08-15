@@ -3057,6 +3057,13 @@ export function App() {
               ) : (
                 <span className="suggest-key">{curMode === "cont" ? "智能继续中" : "点击发送 · Tab 编辑"}</span>
               )}
+              <button
+                className="suggest-x"
+                title="不要这条建议"
+                onClick={(e) => { e.stopPropagation(); setSuggestWait(0); setSuggestion(""); }}
+              >
+                ✕
+              </button>
             </div>
           )}
           <div className="input-wrap">

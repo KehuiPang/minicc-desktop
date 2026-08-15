@@ -4288,3 +4288,8 @@ body {
 .goal-bar.done { border-color: var(--green); background: var(--green-bg); color: var(--text-dim); }
 .goal-bar.done .goal-ico { color: var(--green); }
 .goal-bar.done .goal-state { color: var(--green); }
+.suggest-x {
+  flex: 0 0 auto; border: none; background: transparent; color: var(--text-faint);
+  cursor: pointer; font-size: 12px; line-height: 1; padding: 3px 4px; border-radius: 6px;
+}
+.suggest-x:hover { color: var(--text); background: rgba(127,127,127,.16); }
