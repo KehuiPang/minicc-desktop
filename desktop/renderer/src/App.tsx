@@ -281,11 +281,24 @@ export function App() {
   const [suggestBusy, setSuggestBusy] = useState(false); // 正在现算建议(点灯泡手动要)
   // 智能继续：AI 停下来只是问"要不要接着推进"时自动替你回一句，危险/需要你拿主意的一律停下
   const [showManual, setShowManual] = useState(() => localStorage.getItem("minicc-show-manual") === "1");
-  const [autoCont, setAutoCont] = useState(() => localStorage.getItem("minicc-auto-cont") === "1");
-  const autoContRef = useRef(autoCont);
-  autoContRef.current = autoCont;
-  const [contN, setContN] = useState(0); // 已连续自动继续多少次
-  const contNRef = useRef(0);
+  // 运行模式按【会话】各记各的：这个对话开着智能继续，那个还停在自动，互不干扰
+  const [modeBySid, setModeBySid] = useState<Record<string, "manual" | "auto" | "cont">>(() => {
+    try { return JSON.parse(localStorage.getItem("minicc-mode-by-sid") || "{}"); } catch { return {}; }
+  });
+  const modeRef = useRef(modeBySid);
+  modeRef.current = modeBySid;
+  const modeOf = (sid: string) => modeRef.current[sid] || "auto";
+  const setMode = (sid: string, m: "manual" | "auto" | "cont") => {
+    setModeBySid((prev) => {
+      const next = { ...prev, [sid]: m };
+      localStorage.setItem("minicc-mode-by-sid", JSON.stringify(next));
+      return next;
+    });
+    contBySid.current.set(sid, 0);
+    setContN(0);
+  };
+  const [contN, setContN] = useState(0); // 当前会话已连续自动继续多少次
+  const contBySid = useRef(new Map<string, number>()); // 计数也按会话各算各的
   // 安全阀都可调(设置→运行模式)：最多连推几轮、发出前留多久反悔
   const [contMax, setContMax] = useState(() => Number(localStorage.getItem("minicc-cont-max")) || 30);
   const [contDelay, setContDelay] = useState(() => {
@@ -300,7 +313,6 @@ export function App() {
     text: "", canContinue: false, auto: false,
   });
   const [interruptedSessions, setInterruptedSessions] = useState<{ id: string; title: string }[]>([]); // 上次被强杀、待恢复的任务
-  const [autoMode, setAutoMode] = useState(true);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [trash, setTrash] = useState<import("./env").TrashItem[]>([]); // 回收站:软删除的会话(7天自动清)
   const [showTrash, setShowTrash] = useState(false);
@@ -335,6 +347,9 @@ export function App() {
   const [groupInputSid, setGroupInputSid] = useState<string | null>(null); // 正在为哪个会话输入新组名
   const [newGroupName, setNewGroupName] = useState("");
   const [currentId, setCurrentId] = useState("");
+  const curMode = modeBySid[currentId] || "auto"; // 当前会话的运行模式(默认自动)
+  const autoMode = curMode !== "manual";
+  const autoCont = curMode === "cont";
   const busy = runningSet.has(currentId); // 当前可见会话是否在跑(多任务:各会话独立)
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -420,7 +435,13 @@ export function App() {
     const onManual = (e: any) => {
       const on = !!e.detail;
       setShowManual(on);
-      if (!on) setAutoMode(true);
+      if (!on)
+        setModeBySid((prev) => {
+          const next: Record<string, "manual" | "auto" | "cont"> = {};
+          for (const [k, v] of Object.entries(prev)) next[k] = v === "manual" ? "auto" : v;
+          localStorage.setItem("minicc-mode-by-sid", JSON.stringify(next));
+          return next;
+        });
     };
     const onCont = (e: any) => {
       if (typeof e.detail?.max === "number") setContMax(e.detail.max);
@@ -642,8 +663,6 @@ export function App() {
       }
     })()),
   );
-  const autoRef = useRef(autoMode);
-  autoRef.current = autoMode;
   const streamRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true); // 用户是否贴着底部：滚上去看历史时暂停自动吸底，滚回底部再恢复
   const forceBottomRef = useRef(false); // 切换会话:内容异步改高，需多帧兜底吸底(否则要点两下)
@@ -1064,7 +1083,8 @@ export function App() {
           });
           break;
         case "evt:permission-request":
-          if (autoRef.current || alwaysAllowRef.current.has(payload.name))
+          // 放行与否看【发起这次调用的会话】自己的模式，不是当前屏幕上那个会话的
+          if (modeOf(payload.sid || currentIdRef.current) !== "manual" || alwaysAllowRef.current.has(payload.name))
             window.minicc.respondPermission(payload.id, "allow");
           else setPending(payload);
           break;
@@ -1108,23 +1128,26 @@ export function App() {
           break;
         case "evt:suggest":
           if (payload.sid === currentIdRef.current) {
+            const sid = payload.sid;
             setSuggestion(payload.text || "");
             setSuggestBusy(false);
             lastSuggestRef.current = { text: payload.text || "", canContinue: !!payload.canContinue, auto: false };
-            // 智能继续：只有"纯推进确认"才自动接话；危险/要你拿主意的(ASK)一律停在这儿等你
+            // 智能继续：只有"纯推进确认"才自动接话；危险/要你拿主意的(ASK)一律停在这儿等你。
+            // 开没开智能继续看这个会话自己的设置。
+            const n0 = contBySid.current.get(sid) || 0;
             if (
-              autoContRef.current &&
+              modeOf(sid) === "cont" &&
               payload.canContinue &&
               (payload.text || "").trim() &&
-              contNRef.current < contMaxRef.current
+              n0 < contMaxRef.current
             ) {
-              contNRef.current += 1;
-              setContN(contNRef.current);
+              contBySid.current.set(sid, n0 + 1);
+              setContN(n0 + 1);
               lastSuggestRef.current.auto = true;
               const go = payload.text.trim();
               setTimeout(() => {
-                // 反悔窗口(设置里可调)：这期间你一打字或按停，就不自动发了
-                if (!autoContRef.current || busyRef.current || inputRef.current.trim()) return;
+                // 反悔窗口(设置里可调)：这期间你一打字或按停，或切走了这个会话，就不自动发了
+                if (modeOf(sid) !== "cont" || sid !== currentIdRef.current || busyRef.current || inputRef.current.trim()) return;
                 setSuggestion("");
                 dispatchMessage(go, [], false);
               }, Math.max(0, contDelayRef.current));
@@ -1243,8 +1266,7 @@ export function App() {
 
   useEffect(() => {
     setSuggestion(""); // 切换会话清掉上个会话的建议
-    contNRef.current = 0;
-    setContN(0);
+    setContN(contBySid.current.get(currentId) || 0); // 计数按会话各算各的
     lastSuggestRef.current = { text: "", canContinue: false, auto: false };
     // 切进来的会话如果停在"下一步/要不要继续"上，也给出建议(以前只在回复结束那一刻算一次，
     // 打开历史会话就什么都没有)。跑动中的不打扰。
@@ -1433,8 +1455,8 @@ export function App() {
       return;
     }
     setSuggestion(""); // 发送后清掉旧的下一步建议(回复完会重新生成)
-    // 你自己动手发了 → 自动继续的连击清零
-    contNRef.current = 0;
+    // 你自己动手发了 → 这个会话的自动继续连击清零
+    contBySid.current.set(currentId, 0);
     setContN(0);
     // 学习：上一轮判成"要问你"(ASK)、结果你只是说了句"继续" → 记下这类以后可以直接放行
     const ls = lastSuggestRef.current;
@@ -1513,7 +1535,7 @@ export function App() {
     const ls = lastSuggestRef.current;
     if (ls.auto && ls.text) window.minicc.contHabitAdd?.(`「${ls.text}」这类要先问我一句再做，别自动继续`);
     lastSuggestRef.current = { text: "", canContinue: false, auto: false };
-    contNRef.current = 0;
+    contBySid.current.set(currentId, 0);
     setContN(0);
     window.minicc.stop(currentId);
   };
@@ -2979,32 +3001,27 @@ export function App() {
                 </>
               )}
             </div>
-            <div className="mode-mini">
+            <div className="mode-mini" title="只对当前这个对话生效，每个对话各记各的">
               {showManual && (
                 <button
-                  className={!autoMode ? "on" : ""}
-                  title="每一步工具调用都要你确认"
-                  onClick={() => { setAutoMode(false); setAutoCont(false); localStorage.setItem("minicc-auto-cont", "0"); }}
+                  className={curMode === "manual" ? "on" : ""}
+                  title="这个对话：每一步工具调用都要你确认"
+                  onClick={() => setMode(currentId, "manual")}
                 >
                   手动
                 </button>
               )}
               <button
-                className={autoMode && !autoCont ? "on" : ""}
-                title="工具自动放行，每轮回复完停下来等你"
-                onClick={() => { setAutoMode(true); setAutoCont(false); localStorage.setItem("minicc-auto-cont", "0"); }}
+                className={curMode === "auto" ? "on" : ""}
+                title="这个对话：工具自动放行，每轮回复完停下来等你"
+                onClick={() => setMode(currentId, "auto")}
               >
                 自动
               </button>
               <button
                 className={autoCont ? "on cont" : ""}
-                title={`智能继续：它只是问「要不要接着推进」时，自动替你回一句往下做；\n遇到删除/上线/花钱/发消息这类有风险的，或需要你拿主意的，仍会停下来等你。\n最多连推 ${contMax} 轮，发出前留 ${(contDelay / 1000).toFixed(1)} 秒反悔（设置→运行模式里可改）；你一打字或按停就中断。`}
-                onClick={() => {
-                  const v = !autoCont;
-                  setAutoMode(true); setAutoCont(v);
-                  localStorage.setItem("minicc-auto-cont", v ? "1" : "0");
-                  contNRef.current = 0; setContN(0);
-                }}
+                title={`智能继续（只对当前这个对话生效）：它只是问「要不要接着推进」时，自动替你回一句往下做；\n遇到删除/上线/花钱/发消息这类有风险的，或需要你拿主意的，仍会停下来等你。\n最多连推 ${contMax} 轮，发出前留 ${(contDelay / 1000).toFixed(1)} 秒反悔（设置→运行模式里可改）；你一打字或按停就中断。`}
+                onClick={() => setMode(currentId, autoCont ? "auto" : "cont")}
               >
                 智能继续{autoCont && contN > 0 ? ` ${contN}` : ""}
               </button>
