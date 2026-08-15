@@ -1391,6 +1391,27 @@ async function maybeSmartTitle(id: string) {
 
 // 输入框「下一步动作」建议：回复完后，用模型根据对话(尤其助手最后回复常以问题/建议结尾)
 // 预测用户接下来最可能输入的一句话，发给前端做幽灵提示(Tab 补全)。无明确下一步则清空。
+// —— 智能继续：从用户的实际反应里学他的习惯 ——
+// 判 ASK 停下来、用户却直接说"继续" → 记下这类可以放行；
+// 判 AUTO 自动接了话、用户马上按停 → 记下这类要先问一句。下次判断时作为参考喂给模型。
+let contHabits: string[] = [];
+const habitsFile = () => join(app.getPath("userData"), "cont-habits.json");
+function loadContHabits() {
+  try { contHabits = JSON.parse(readFileSync(habitsFile(), "utf-8")) || []; } catch { contHabits = []; }
+}
+function saveContHabits() {
+  try { writeFileSync(habitsFile(), JSON.stringify(contHabits.slice(-24)), "utf-8"); } catch { /* 存不下不影响主流程 */ }
+}
+ipcMain.handle("chat:contHabit", (_e, note: string) => {
+  const t = String(note || "").trim().slice(0, 120);
+  if (!t || contHabits.includes(t)) return;
+  contHabits.push(t);
+  if (contHabits.length > 24) contHabits = contHabits.slice(-24);
+  saveContHabits();
+});
+ipcMain.handle("chat:contHabits", () => contHabits.slice());
+ipcMain.handle("chat:contHabitsClear", () => { contHabits = []; saveContHabits(); });
+
 const suggestInFlight = new Set<string>();
 async function suggestNextAction(id: string) {
   if (suggestInFlight.has(id) || !provider) return;
@@ -1413,13 +1434,23 @@ async function suggestNextAction(id: string) {
     .filter((s: string) => s.length > 3)
     .join("\n");
   const lastReplyTail = msgTextTail(last, 600); // 助手最后回复的结尾——预测下一步只认它
+  const habitBlock = contHabits.map((h) => "- " + h).join("\n");
   try {
     const res = await provider.complete(
       "你是输入建议助手。下面对话里，助手『最后一条回复』的结尾通常会提出一个问题、或建议一个待确认的下一步动作。" +
         "请【只针对助手最后回复结尾的那个问题/下一步】，用中文写出用户最可能的回应(第一人称或祈使句，像用户自己会打的话，不超过20字)——" +
         "比如结尾问『要我继续部署吗?』就回『继续部署』/『先本地验证』这类。" +
-        "务必忽略对话中间的其它话题，别自己另起一件事。直接输出这句话，不要引号、解释或前缀。" +
-        "若结尾没有明确的问题或待确认的下一步(助手在等用户自由发挥)，只输出：无",
+        "务必忽略对话中间的其它话题，别自己另起一件事。\n" +
+        "输出两行，不要引号、解释或前缀：\n" +
+        "第1行：那句话本身；若结尾没有明确的问题或待确认的下一步(助手在等用户自由发挥)，第1行只写：无\n" +
+        "第2行：只写 AUTO 或 ASK。\n" +
+        "AUTO = 助手只是在确认按它已说明的方案往下推进，且这一步属于寻常低风险的事：本地或测试环境的操作、" +
+        "只读的检查与验证、查资料研究、改代码写文件、跑测试、构建、生成文档、整理数据。\n" +
+        "ASK = 只要沾上任何一条就必须停下来问人：删除/清空/覆盖数据、部署或上线到生产正式环境、发布对外内容、" +
+        "改线上配置或写生产数据库、花钱付款、替用户发邮件或消息、改权限与安全设置、任何不可逆或会影响他人的动作；" +
+        "或者需要用户做实质判断：多个方案里选一个、要用户提供信息或凭据、上一步出错要用户定夺、助手在征求偏好。\n" +
+        "拿不准一律写 ASK。" +
+        (habitBlock ? "\n用户过去的习惯(优先参考)：\n" + habitBlock : ""),
       [
         {
           role: "user",
@@ -1434,21 +1465,28 @@ async function suggestNextAction(id: string) {
       [],
       {},
     );
-    let raw = (res.content || [])
+    const whole = (res.content || [])
       .filter((b: any) => b.type === "text")
       .map((b: any) => b.text)
       .join("")
-      .trim()
-      .replace(/^["'「『]|["'」』]$/g, "")
-      .slice(0, 40);
+      .trim();
+    const lines = whole.split("\n").map((s: string) => s.trim()).filter(Boolean);
+    let raw = (lines[0] || "").replace(/^["'「『]|["'」』]$/g, "").slice(0, 40);
     if (raw === "无" || raw === "无。") raw = "";
-    send("evt:suggest", { sid: id, text: raw });
+    // 只有模型明确判定「纯推进确认」才允许智能继续自动接话；缺这一行一律当 ASK
+    const canContinue = /\bAUTO\b/i.test(lines[1] || "") && !!raw;
+    send("evt:suggest", { sid: id, text: raw, canContinue });
   } catch {
-    send("evt:suggest", { sid: id, text: "" });
+    send("evt:suggest", { sid: id, text: "", canContinue: false });
   } finally {
     suggestInFlight.delete(id);
   }
 }
+
+// 界面主动要一次建议(切到某个会话、或用户点灯泡)——回合结束时那次是自动发的
+ipcMain.handle("chat:suggest", async (_e, sid: string) => {
+  await suggestNextAction(String(sid || ""));
+});
 
 function createWindow() {
   const b = loadWindowBounds(); // 上次窗口尺寸/位置
@@ -1529,6 +1567,7 @@ if (!gotLock) {
     }
   });
   app.whenReady().then(() => {
+    loadContHabits(); // 智能继续:恢复上次学到的习惯
     // app://bundle/xxx → out/renderer/xxx（打包后 renderer 与 main 同级 out 下）
     protocol.handle("app", async (request) => {
       const { pathname } = new URL(request.url);

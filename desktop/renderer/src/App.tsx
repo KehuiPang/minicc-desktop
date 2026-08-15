@@ -278,6 +278,17 @@ export function App() {
     return () => window.removeEventListener("keydown", h);
   }, [lightbox, imgMenu]);
   const [suggestion, setSuggestion] = useState(""); // 输入框幽灵提示：下一步动作建议(Tab 补全)
+  const [suggestBusy, setSuggestBusy] = useState(false); // 正在现算建议(点灯泡手动要)
+  // 智能继续：AI 停下来只是问"要不要接着推进"时自动替你回一句，危险/需要你拿主意的一律停下
+  const [autoCont, setAutoCont] = useState(() => localStorage.getItem("minicc-auto-cont") === "1");
+  const autoContRef = useRef(autoCont);
+  autoContRef.current = autoCont;
+  const [contN, setContN] = useState(0); // 已连续自动继续多少次
+  const contNRef = useRef(0);
+  const CONT_MAX = 30; // 安全阀：连着推这么多轮还没结束就停下来等人
+  const lastSuggestRef = useRef<{ text: string; canContinue: boolean; auto: boolean }>({
+    text: "", canContinue: false, auto: false,
+  });
   const [interruptedSessions, setInterruptedSessions] = useState<{ id: string; title: string }[]>([]); // 上次被强杀、待恢复的任务
   const [autoMode, setAutoMode] = useState(true);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
@@ -315,6 +326,10 @@ export function App() {
   const [newGroupName, setNewGroupName] = useState("");
   const [currentId, setCurrentId] = useState("");
   const busy = runningSet.has(currentId); // 当前可见会话是否在跑(多任务:各会话独立)
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  const inputRef = useRef(input);
+  inputRef.current = input;
   const currentIdRef = useRef(currentId); // 事件回调里读最新 currentId(判是否本会话的更新)
   currentIdRef.current = currentId;
   // 切到某会话后，它的 ask 通知就没必要留着了(框已在眼前)
@@ -1063,7 +1078,29 @@ export function App() {
           setRate(payload);
           break;
         case "evt:suggest":
-          if (payload.sid === currentIdRef.current) setSuggestion(payload.text || "");
+          if (payload.sid === currentIdRef.current) {
+            setSuggestion(payload.text || "");
+            setSuggestBusy(false);
+            lastSuggestRef.current = { text: payload.text || "", canContinue: !!payload.canContinue, auto: false };
+            // 智能继续：只有"纯推进确认"才自动接话；危险/要你拿主意的(ASK)一律停在这儿等你
+            if (
+              autoContRef.current &&
+              payload.canContinue &&
+              (payload.text || "").trim() &&
+              contNRef.current < CONT_MAX
+            ) {
+              contNRef.current += 1;
+              setContN(contNRef.current);
+              lastSuggestRef.current.auto = true;
+              const go = payload.text.trim();
+              setTimeout(() => {
+                // 这 1.2 秒是留给你反悔的：期间打字或按停，就不自动发了
+                if (!autoContRef.current || busyRef.current || inputRef.current.trim()) return;
+                setSuggestion("");
+                dispatchMessage(go, [], false);
+              }, 1200);
+            }
+          }
           break;
         case "evt:assistant-replace":
           // 清理泄漏工具调用/噪音后：把屏上那条 assistant 换成干净正文(为空则移除该气泡)
@@ -1177,6 +1214,18 @@ export function App() {
 
   useEffect(() => {
     setSuggestion(""); // 切换会话清掉上个会话的建议
+    contNRef.current = 0;
+    setContN(0);
+    lastSuggestRef.current = { text: "", canContinue: false, auto: false };
+    // 切进来的会话如果停在"下一步/要不要继续"上，也给出建议(以前只在回复结束那一刻算一次，
+    // 打开历史会话就什么都没有)。跑动中的不打扰。
+    const sid = currentId;
+    if (!sid || runningSet.has(sid)) return;
+    const t = setTimeout(() => {
+      setSuggestBusy(true);
+      window.minicc.suggestNow?.(sid).catch(() => setSuggestBusy(false));
+    }, 400);
+    return () => clearTimeout(t);
   }, [currentId]);
 
   // 打开用量面板且当前是 Codex：拉取可用的免费限额重置次数
@@ -1355,6 +1404,15 @@ export function App() {
       return;
     }
     setSuggestion(""); // 发送后清掉旧的下一步建议(回复完会重新生成)
+    // 你自己动手发了 → 自动继续的连击清零
+    contNRef.current = 0;
+    setContN(0);
+    // 学习：上一轮判成"要问你"(ASK)、结果你只是说了句"继续" → 记下这类以后可以直接放行
+    const ls = lastSuggestRef.current;
+    if (ls.text && !ls.canContinue && !ls.auto && /^(继续|接着|往下|下一步|go|ok|好的?继续)/i.test(text) && text.length <= 12) {
+      window.minicc.contHabitAdd?.(`「${ls.text}」这类可以直接继续，不用停下来问我`);
+    }
+    lastSuggestRef.current = { text: "", canContinue: false, auto: false };
     const imgs = pendingImages;
     const inject = busy; // 跑动中→注入到当前回合
     // 铁律:发送绝不能依赖密钥扫描。扫描失败/无该接口都要照常发,主进程还会兜底脱敏。
@@ -1421,7 +1479,15 @@ export function App() {
     clearComposer();
   }
 
-  const stop = () => window.minicc.stop(currentId);
+  const stop = () => {
+    // 学习：刚才是智能继续替你接的话、你马上按了停 → 记下这类以后先问你一句
+    const ls = lastSuggestRef.current;
+    if (ls.auto && ls.text) window.minicc.contHabitAdd?.(`「${ls.text}」这类要先问我一句再做，别自动继续`);
+    lastSuggestRef.current = { text: "", canContinue: false, auto: false };
+    contNRef.current = 0;
+    setContN(0);
+    window.minicc.stop(currentId);
+  };
 
   // ——— 侧栏分组/排序辅助 ———
   const orderKey = (s: SessionMeta) => (s.order != null ? s.order : -s.updatedAt);
@@ -2756,9 +2822,9 @@ export function App() {
                 taRef.current?.focus();
               }}
             >
-              <span className="suggest-ico">💡</span>
+              <span className="suggest-ico"><Ic.IcSparkle size={13} /></span>
               <span className="suggest-text">{suggestion}</span>
-              <span className="suggest-key">Tab 采纳</span>
+              <span className="suggest-key">{autoCont ? "智能继续中" : "Tab 采纳"}</span>
             </div>
           )}
           <div className="input-wrap">
@@ -2788,6 +2854,16 @@ export function App() {
                 }
               }}
             />
+            {!busy && !suggestion && (
+              <button
+                className={"hint-btn" + (suggestBusy ? " on" : "")}
+                title="想不起来接着说什么？点一下，让它读完这轮回复给个下一步"
+                disabled={suggestBusy}
+                onClick={() => { setSuggestBusy(true); window.minicc.suggestNow?.(currentId).catch(() => setSuggestBusy(false)); }}
+              >
+                <Ic.IcSparkle size={15} />
+              </button>
+            )}
             {busy ? (
               <button className="send-btn stop" onClick={stop} title="停止">
                 <span className="stop-sq" />
@@ -2851,12 +2927,32 @@ export function App() {
                 </>
               )}
             </div>
-            <div className="mode-mini" title={autoMode ? "工具自动放行" : "每步需确认"}>
-              <button className={autoMode ? "on" : ""} onClick={() => setAutoMode(true)}>
+            <div className="mode-mini">
+              <button
+                className={!autoMode ? "on" : ""}
+                title="每一步工具调用都要你确认"
+                onClick={() => { setAutoMode(false); setAutoCont(false); localStorage.setItem("minicc-auto-cont", "0"); }}
+              >
+                手动
+              </button>
+              <button
+                className={autoMode && !autoCont ? "on" : ""}
+                title="工具自动放行，每轮回复完停下来等你"
+                onClick={() => { setAutoMode(true); setAutoCont(false); localStorage.setItem("minicc-auto-cont", "0"); }}
+              >
                 自动
               </button>
-              <button className={!autoMode ? "on" : ""} onClick={() => setAutoMode(false)}>
-                手动
+              <button
+                className={autoCont ? "on cont" : ""}
+                title={"智能继续：它只是问「要不要接着推进」时，自动替你回一句往下做；\n遇到删除/上线/花钱/发消息这类有风险的，或需要你拿主意的，仍会停下来等你。\n最多连推 " + CONT_MAX + " 轮；你一打字或按停就中断。"}
+                onClick={() => {
+                  const v = !autoCont;
+                  setAutoMode(true); setAutoCont(v);
+                  localStorage.setItem("minicc-auto-cont", v ? "1" : "0");
+                  contNRef.current = 0; setContN(0);
+                }}
+              >
+                智能继续{autoCont && contN > 0 ? ` ${contN}` : ""}
               </button>
             </div>
 

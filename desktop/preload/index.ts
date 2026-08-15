@@ -114,6 +114,10 @@ contextBridge.exposeInMainWorld("minicc", {
   // 输入框草稿(文字+粘贴的图)实时存本地，重开自动恢复
   draftGet: () => ipcRenderer.invoke("draft:get") as Promise<{ text: string; images: string[] }>,
   draftSet: (draft: { text: string; images: string[] }) => ipcRenderer.send("draft:set", draft),
+  suggestNow: (sid: string) => ipcRenderer.invoke("chat:suggest", sid) as Promise<void>,
+  contHabitAdd: (note: string) => ipcRenderer.invoke("chat:contHabit", note) as Promise<void>,
+  contHabits: () => ipcRenderer.invoke("chat:contHabits") as Promise<string[]>,
+  contHabitsClear: () => ipcRenderer.invoke("chat:contHabitsClear") as Promise<void>,
   // 本地知识网络 Brain
   brainGraph: () =>
     ipcRenderer.invoke("brain:graph") as Promise<{
