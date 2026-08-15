@@ -1412,6 +1412,37 @@ ipcMain.handle("chat:contHabit", (_e, note: string) => {
 ipcMain.handle("chat:contHabits", () => contHabits.slice());
 ipcMain.handle("chat:contHabitsClear", () => { contHabits = []; saveContHabits(); });
 
+// —— 会话总目标：给这个对话定一个大目标，它自己拆解、自己一步步推进 ——
+type SessionGoal = { text: string; active: boolean };
+let sessionGoals: Record<string, SessionGoal> = {};
+const goalsFile = () => join(app.getPath("userData"), "session-goals.json");
+function loadGoals() {
+  try { sessionGoals = JSON.parse(readFileSync(goalsFile(), "utf-8")) || {}; } catch { sessionGoals = {}; }
+}
+function saveGoals() {
+  try { writeFileSync(goalsFile(), JSON.stringify(sessionGoals), "utf-8"); } catch { /* 存不下不影响主流程 */ }
+}
+// 用户自己写的「必须停下来问我」的规则(设置→运行模式)，优先级高于内置判断
+let stopRules = "";
+const stopRulesFile = () => join(app.getPath("userData"), "stop-rules.txt");
+function loadStopRules() {
+  try { stopRules = readFileSync(stopRulesFile(), "utf-8"); } catch { stopRules = ""; }
+}
+ipcMain.handle("chat:stopRulesGet", () => stopRules);
+ipcMain.handle("chat:stopRulesSet", (_e, t: string) => {
+  stopRules = String(t || "").slice(0, 4000);
+  try { writeFileSync(stopRulesFile(), stopRules, "utf-8"); } catch { /* ignore */ }
+});
+
+ipcMain.handle("chat:goalGet", (_e, sid: string) => sessionGoals[String(sid || "")] || null);
+ipcMain.handle("chat:goalSet", (_e, sid: string, goal: SessionGoal | null) => {
+  const k = String(sid || "");
+  if (!k) return;
+  if (!goal || !String(goal.text || "").trim()) delete sessionGoals[k];
+  else sessionGoals[k] = { text: String(goal.text).slice(0, 2000), active: !!goal.active };
+  saveGoals();
+});
+
 const suggestInFlight = new Set<string>();
 async function suggestNextAction(id: string) {
   if (suggestInFlight.has(id) || !provider) return;
@@ -1435,6 +1466,8 @@ async function suggestNextAction(id: string) {
     .join("\n");
   const lastReplyTail = msgTextTail(last, 600); // 助手最后回复的结尾——预测下一步只认它
   const habitBlock = contHabits.map((h) => "- " + h).join("\n");
+  const g = sessionGoals[id];
+  const goalBlock = g && g.active ? g.text.slice(0, 600) : "";
   try {
     const res = await provider.complete(
       "你是输入建议助手。下面对话里，助手『最后一条回复』的结尾通常会提出一个问题、或建议一个待确认的下一步动作。" +
@@ -1450,6 +1483,14 @@ async function suggestNextAction(id: string) {
         "改线上配置或写生产数据库、花钱付款、替用户发邮件或消息、改权限与安全设置、任何不可逆或会影响他人的动作；" +
         "或者需要用户做实质判断：多个方案里选一个、要用户提供信息或凭据、上一步出错要用户定夺、助手在征求偏好。\n" +
         "拿不准一律写 ASK。" +
+        (goalBlock
+          ? "\n用户给这个对话定了总目标：" + goalBlock +
+            "\n他已经授权你朝这个目标自主推进，所以【朝目标推进的常规步骤一律写 AUTO】，" +
+            "第1行就写出推进下一步该说的话(别问要不要，直接说做什么)。只有上面 ASK 的红线才停。"
+          : "") +
+        (stopRules.trim()
+          ? "\n用户自己定的红线(命中就必须写 ASK，优先级最高)：\n" + stopRules.trim()
+          : "") +
         (habitBlock ? "\n用户过去的习惯(优先参考)：\n" + habitBlock : ""),
       [
         {
@@ -1568,6 +1609,8 @@ if (!gotLock) {
   });
   app.whenReady().then(() => {
     loadContHabits(); // 智能继续:恢复上次学到的习惯
+    loadGoals();
+    loadStopRules();
     // app://bundle/xxx → out/renderer/xxx（打包后 renderer 与 main 同级 out 下）
     protocol.handle("app", async (request) => {
       const { pathname } = new URL(request.url);

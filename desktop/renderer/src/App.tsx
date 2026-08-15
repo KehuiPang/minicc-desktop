@@ -305,6 +305,16 @@ export function App() {
     const v = localStorage.getItem("minicc-cont-delay");
     return v === null ? 1200 : Number(v) || 0;
   });
+  // 会话总目标：定好一个大目标，它自己拆解、自己一步步推进，直到做完
+  const [goal, setGoal] = useState<{ text: string; active: boolean } | null>(null);
+  const [goalEdit, setGoalEdit] = useState<null | { sid: string; text: string }>(null);
+  // 用户自定义的"必须停下来问我"红线(设置→运行模式)，前端弹窗自动决定时也照它拦
+  const [stopRules, setStopRules] = useState("");
+  // 智能继续时它弹选择题：等你这么多秒还没选，就让它按目标自己定(0=永远等你)
+  const [askAutoSec, setAskAutoSec] = useState(() => {
+    const v = localStorage.getItem("minicc-ask-auto-sec");
+    return v === null ? 3 : Number(v) || 0;
+  });
   const contMaxRef = useRef(contMax);
   contMaxRef.current = contMax;
   const contDelayRef = useRef(contDelay);
@@ -446,6 +456,7 @@ export function App() {
     const onCont = (e: any) => {
       if (typeof e.detail?.max === "number") setContMax(e.detail.max);
       if (typeof e.detail?.delay === "number") setContDelay(e.detail.delay);
+      if (typeof e.detail?.askSec === "number") setAskAutoSec(e.detail.askSec);
     };
     window.addEventListener("minicc-show-manual", onManual);
     window.addEventListener("minicc-cont-cfg", onCont);
@@ -1264,6 +1275,42 @@ export function App() {
     });
   }, [items, busy, pending]);
 
+  // 切会话/启动时读这个会话的总目标 + 全局红线
+  useEffect(() => {
+    let alive = true;
+    window.minicc.goalGet?.(currentId).then((g) => { if (alive) setGoal(g || null); }).catch(() => {});
+    return () => { alive = false; };
+  }, [currentId]);
+  useEffect(() => {
+    window.minicc.stopRulesGet?.().then((t) => setStopRules(t || "")).catch(() => {});
+    const onRules = (e: any) => setStopRules(String(e.detail || ""));
+    window.addEventListener("minicc-stop-rules", onRules);
+    return () => window.removeEventListener("minicc-stop-rules", onRules);
+  }, []);
+
+  // 定好目标就交给它自己跑：这段话是给 AI 的工作方式约定，决定了它会不会一直停下来问
+  function startGoal(text: string) {
+    const t = text.trim();
+    if (!t) return;
+    const sid = currentId;
+    window.minicc.goalSet?.(sid, { text: t, active: true });
+    setGoal({ text: t, active: true });
+    setMode(sid, "cont"); // 自动开智能继续
+    setGoalEdit(null);
+    sendText(
+      `【这个对话的总目标】${t}\n\n` +
+        `从现在起你按这个目标自主推进，工作方式：\n` +
+        `1. 先把目标拆成可执行的步骤列出来，不用问我要不要拆；\n` +
+        `2. 然后自己一步步做下去，每做完一步简短报告进展，接着继续下一步，不用等我批准；\n` +
+        `3. 能自己查资料、自己验证、自己决策的一律自己来，无关紧要的选择自己定；\n` +
+        `4. 只有这几种情况停下来问我：需要我提供你拿不到的东西(服务器/账号/密钥/付费/线下信息)；` +
+        `要做删除、上线、写生产、花钱、对外发送这类不可逆或影响他人的动作；目标方向上出现分歧要我拍板；\n` +
+        `5. 我随时可能插话补充信息，听完照做，然后继续朝目标推进；\n` +
+        `6. 每轮结尾用一句话说清"下一步做什么"，方便自动接力。\n` +
+        `现在开始，先给拆解方案，然后直接动手做第一步。`,
+    );
+  }
+
   useEffect(() => {
     setSuggestion(""); // 切换会话清掉上个会话的建议
     setContN(contBySid.current.get(currentId) || 0); // 计数按会话各算各的
@@ -1963,6 +2010,19 @@ export function App() {
                     </button>
                   )}
                   <div className="ctx-sep" />
+                  <button
+                    className="ctx-item"
+                    title="给这个对话定一个大目标，它自己拆解、自己一步步推进，做完为止"
+                    onClick={() => {
+                      const sid = ctxMenu.sid;
+                      close();
+                      window.minicc.goalGet?.(sid)
+                        .then((g) => setGoalEdit({ sid, text: g?.text || "" }))
+                        .catch(() => setGoalEdit({ sid, text: "" }));
+                    }}
+                  >
+                    ◎ 设置总目标…
+                  </button>
                   <button
                     className="ctx-item"
                     onClick={() => {
@@ -2897,6 +2957,49 @@ export function App() {
               ))}
             </div>
           )}
+          {goal && (
+            <div className={"goal-bar" + (goal.active ? " on" : "")}>
+              <span className="goal-ico">◎</span>
+              <span className="goal-text" title={goal.text}>{goal.text}</span>
+              {goal.active ? (
+                <>
+                  <span className="goal-state">自主推进中{curMode === "cont" && contN > 0 ? ` · 第 ${contN} 步` : ""}</span>
+                  <button
+                    onClick={() => {
+                      window.minicc.goalSet?.(currentId, { text: goal.text, active: false });
+                      setGoal({ ...goal, active: false });
+                      setMode(currentId, "auto"); // 暂停 = 回到自动，不再替你接话
+                    }}
+                  >
+                    暂停
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="on"
+                  onClick={() => {
+                    window.minicc.goalSet?.(currentId, { text: goal.text, active: true });
+                    setGoal({ ...goal, active: true });
+                    setMode(currentId, "cont");
+                    sendText("继续朝总目标推进，接着上次没做完的往下做。");
+                  }}
+                >
+                  继续
+                </button>
+              )}
+              <button onClick={() => setGoalEdit({ sid: currentId, text: goal.text })}>改</button>
+              <button
+                title="目标已达成，撤掉它"
+                onClick={() => {
+                  window.minicc.goalSet?.(currentId, null);
+                  setGoal(null);
+                  setMode(currentId, "auto");
+                }}
+              >
+                ✓ 完成
+              </button>
+            </div>
+          )}
           {suggestion && input === "" && (
             <div
               className="suggest-bar"
@@ -3602,11 +3705,74 @@ export function App() {
         </div>
       )}
 
+      {goalEdit && (
+        <>
+          <div className="mq-overlay" onClick={() => setGoalEdit(null)} />
+          <div className="goal-modal">
+            <div className="goal-modal-h">◎ 这个对话的总目标</div>
+            <div className="goal-modal-sub">
+              写清楚你要达成什么。点「开始执行」后它会自动切到智能继续，自己拆解任务、一步步做下去，
+              只有真正需要你出面的（服务器、账号、花钱、上线这类）才会停下来问你。
+            </div>
+            <textarea
+              autoFocus
+              rows={6}
+              value={goalEdit.text}
+              placeholder={"例：实现 AGI 的第一步——把最前沿的相关文献全部调研一遍，梳理出有哪些研究方向，\n收敛出最有价值的一条，然后一步步实践、测试、迭代，直到跑出可验证的结果。"}
+              onChange={(e) => setGoalEdit({ ...goalEdit, text: e.target.value })}
+            />
+            <div className="goal-modal-b">
+              {goal && (
+                <button
+                  className="ghost"
+                  onClick={() => {
+                    window.minicc.goalSet?.(goalEdit.sid, null);
+                    if (goalEdit.sid === currentId) setGoal(null);
+                    setGoalEdit(null);
+                  }}
+                >
+                  删除目标
+                </button>
+              )}
+              <span style={{ flex: 1 }} />
+              <button className="ghost" onClick={() => setGoalEdit(null)}>取消</button>
+              <button
+                className="ghost"
+                onClick={() => {
+                  const t = goalEdit.text.trim();
+                  window.minicc.goalSet?.(goalEdit.sid, t ? { text: t, active: false } : null);
+                  if (goalEdit.sid === currentId) setGoal(t ? { text: t, active: false } : null);
+                  setGoalEdit(null);
+                }}
+              >
+                只保存
+              </button>
+              <button className="primary" disabled={!goalEdit.text.trim()} onClick={() => startGoal(goalEdit.text)}>
+                开始执行
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       {asks[currentId] && (
         <AskModal
           key={asks[currentId].id}
           data={asks[currentId]}
           anchor={composerRef}
+          /* 智能继续时的"你自己定"：无关紧要的选择题等几秒没人理就交给它自己拿主意，
+             但问题里一沾删除/上线/花钱这类，askAutoSecFor 会返回 0，老老实实等你 */
+          autoSec={curMode === "cont" ? askAutoSecFor(asks[currentId].questions, askAutoSec, stopRules) : 0}
+          onAuto={() => {
+            window.minicc.answerAsk(asks[currentId].id, {
+              list: asks[currentId].questions.map(() => ({
+                selected: [],
+                text: "这个你按我的目标自己定就行，不用问我，继续往下做。",
+              })),
+              images: [],
+            });
+            clearAsk(currentId);
+          }}
           onSubmit={(list, images) => {
             window.minicc.answerAsk(asks[currentId].id, { list, images });
             clearAsk(currentId);
@@ -4365,16 +4531,38 @@ function ResumeBox({
   );
 }
 
+// 一沾这些就别替用户拿主意——宁可停下来等人，也不能自动替他决定
+const RISKY_ASK = /删除|清空|覆盖|抹掉|销毁|上线|发布|部署|生产|正式环境|prod\b|线上|付款|支付|下单|花钱|转账|发邮件|发消息|通知(客户|用户|大家)|授权|权限|密钥|token|密码|回滚|重置|drop\s+table|truncate|rm\s+-rf|强制推送|force\s*push/i;
+/** 这道题能不能超时自动替他答：内置危险词 + 用户自己写的红线，命中任一就返回 0(死等) */
+function askAutoSecFor(qs: AskQuestion[], sec: number, rules = ""): number {
+  if (!sec || sec <= 0) return 0;
+  // 用户红线按行/顿号拆成关键词，2 个字以上才算(避免"的""和"这种误伤)
+  const words = rules
+    .split(/[\n、,，;；]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 2);
+  for (const q of qs || []) {
+    const blob = [q.question, q.header, ...(q.options || []).map((o: any) => `${o.label} ${o.description || ""}`)].join(" ");
+    if (RISKY_ASK.test(blob)) return 0;
+    if (words.some((w) => blob.includes(w))) return 0;
+  }
+  return sec;
+}
+
 function AskModal({
   data,
   anchor,
   onSubmit,
   onCancel,
+  autoSec = 0,
+  onAuto,
 }: {
   data: { id: number; questions: AskQuestion[] };
   anchor: React.RefObject<HTMLDivElement | null>; // 输入框(composer)，用于对齐定位
   onSubmit: (list: { selected: string[]; text?: string }[], images: string[]) => void;
   onCancel: () => void;
+  autoSec?: number; // >0：这么多秒没人动就交给 AI 自己定
+  onAuto?: () => void;
 }) {
   const qs = data.questions;
   const [sel, setSel] = useState<Record<number, string[]>>({});
@@ -4395,6 +4583,31 @@ function AskModal({
       reader.readAsDataURL(f);
     }
   };
+  // 倒计时：到点还没人动就交给 AI 自己定；你一碰这个框(点/打字/滚)就作废
+  const [left, setLeft] = useState(autoSec);
+  const autoOff = useRef(false);
+  const cancelAuto = () => {
+    if (autoOff.current) return;
+    autoOff.current = true;
+    setLeft(0);
+  };
+  useEffect(() => {
+    if (!autoSec || autoOff.current) return;
+    setLeft(autoSec);
+    const t = setInterval(() => {
+      setLeft((v) => {
+        if (autoOff.current) return 0;
+        if (v <= 1) {
+          clearInterval(t);
+          if (!autoOff.current) onAuto?.();
+          return 0;
+        }
+        return v - 1;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [autoSec]);
+
   const buildList = (s: Record<number, string[]>) =>
     qs.map((_, qi) => ({ selected: s[qi] || [], text: (other[qi] || "").trim() || undefined }));
   const allImgs = () => qs.flatMap((_, qi) => imgs[qi] || []); // 所有题的截图汇总一并回传
@@ -4513,6 +4726,9 @@ function AskModal({
     <div
       ref={panelRef}
       className="ask"
+      onMouseDownCapture={cancelAuto}
+      onKeyDownCapture={cancelAuto}
+      onWheelCapture={cancelAuto}
       style={
         box
           ? {
@@ -4528,6 +4744,16 @@ function AskModal({
       <div className="ask-bar">
         <span className="ask-drag" onMouseDown={onDragDown} title="拖动位置">⠿</span>
         <span className="ask-bar-title">请选择（可折叠/拖动去看后面内容）</span>
+        {left > 0 && (
+          <button
+            type="button"
+            className="ask-auto-left"
+            title="智能继续：这种无关紧要的选择，等你几秒没动就交给它自己按目标定。点一下改成等我。"
+            onClick={cancelAuto}
+          >
+            {left}s 后它自己定 · 点这等我
+          </button>
+        )}
         {userSize && (
           <button
             type="button"
@@ -4651,16 +4877,52 @@ function AskModal({
 }
 // 复制按钮：点后短暂显示绿色勾 + "已复制"提示
 // 智能继续的两个安全阀：能连推几轮 / 发出前留多久反悔。改完立刻广播给主界面。
+// 自定义红线：用户自己写"哪些事必须停下来问我"，存主进程(判断 AUTO/ASK 时优先看它)
+function StopRulesSettings() {
+  const [text, setText] = useState("");
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    window.minicc.stopRulesGet?.().then((t) => setText(t || "")).catch(() => {});
+  }, []);
+  return (
+    <>
+      <div className="app-set-row" style={{ cursor: "default" }}>
+        <div className="app-set-label">必须停下来问我的情况（自己加）</div>
+      </div>
+      <textarea
+        className="pcfg-ta"
+        rows={5}
+        value={text}
+        placeholder={"一行一条，例：\n碰 figcheck 线上库 / prod 容器\n给任何人发邮件或短信\n改 nginx 配置\n跑超过 10 分钟的任务"}
+        onChange={(e) => { setText(e.target.value); setSaved(false); }}
+        onBlur={() => {
+          window.minicc.stopRulesSet?.(text);
+          window.dispatchEvent(new CustomEvent("minicc-stop-rules", { detail: text }));
+          setSaved(true);
+        }}
+      />
+      <div style={{ fontSize: 11, opacity: saved ? 0.75 : 0.45, margin: "4px 0 10px" }}>
+        {saved ? "已保存（离开输入框即保存）" : "改完点一下别处即保存"}
+      </div>
+    </>
+  );
+}
+
 function ContSettings() {
   const [max, setMax] = useState(() => Number(localStorage.getItem("minicc-cont-max")) || 30);
   const [delay, setDelay] = useState(() => {
     const v = localStorage.getItem("minicc-cont-delay");
     return v === null ? 1200 : Number(v) || 0;
   });
-  const push = (m: number, d: number) => {
+  const [askSec, setAskSec] = useState(() => {
+    const v = localStorage.getItem("minicc-ask-auto-sec");
+    return v === null ? 3 : Number(v) || 0;
+  });
+  const push = (m: number, d: number, a: number) => {
     localStorage.setItem("minicc-cont-max", String(m));
     localStorage.setItem("minicc-cont-delay", String(d));
-    window.dispatchEvent(new CustomEvent("minicc-cont-cfg", { detail: { max: m, delay: d } }));
+    localStorage.setItem("minicc-ask-auto-sec", String(a));
+    window.dispatchEvent(new CustomEvent("minicc-cont-cfg", { detail: { max: m, delay: d, askSec: a } }));
   };
   return (
     <>
@@ -4668,7 +4930,7 @@ function ContSettings() {
         <div className="app-set-label" style={{ whiteSpace: "nowrap" }}>智能继续最多连推</div>
         <input
           type="range" min={3} max={100} step={1} value={max} style={{ flex: 1 }}
-          onChange={(e) => { const v = Number(e.target.value); setMax(v); push(v, delay); }}
+          onChange={(e) => { const v = Number(e.target.value); setMax(v); push(v, delay, askSec); }}
         />
         <div className="app-set-hint" style={{ minWidth: 44, textAlign: "right" }}>{max} 轮</div>
       </div>
@@ -4676,10 +4938,20 @@ function ContSettings() {
         <div className="app-set-label" style={{ whiteSpace: "nowrap" }}>发出前反悔窗口</div>
         <input
           type="range" min={0} max={10000} step={100} value={delay} style={{ flex: 1 }}
-          onChange={(e) => { const v = Number(e.target.value); setDelay(v); push(max, v); }}
+          onChange={(e) => { const v = Number(e.target.value); setDelay(v); push(max, v, askSec); }}
         />
         <div className="app-set-hint" style={{ minWidth: 44, textAlign: "right" }}>
           {delay === 0 ? "立即" : (delay / 1000).toFixed(1) + " 秒"}
+        </div>
+      </div>
+      <div className="app-set-row" style={{ cursor: "default", gap: "10px" }}>
+        <div className="app-set-label" style={{ whiteSpace: "nowrap" }}>选择题多久由它自己定</div>
+        <input
+          type="range" min={0} max={30} step={1} value={askSec} style={{ flex: 1 }}
+          onChange={(e) => { const v = Number(e.target.value); setAskSec(v); push(max, delay, v); }}
+        />
+        <div className="app-set-hint" style={{ minWidth: 44, textAlign: "right" }}>
+          {askSec === 0 ? "一直等我" : askSec + " 秒"}
         </div>
       </div>
     </>
@@ -7396,9 +7668,14 @@ function SettingsModal({
                 默认只留「自动」和「智能继续」两档。手动模式适合在陌生仓库里逐步盯着放行，平时用不到就藏起来。
               </div>
               <ContSettings />
-              <div style={{ fontSize: 11, opacity: .55, marginBottom: 14, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 11, opacity: .55, marginBottom: 12, lineHeight: 1.5 }}>
                 智能继续只在它「问你要不要接着推进」时替你回话；删除、上线、写生产、花钱、发消息、改权限这类，
                 以及需要你拿主意的，一律停下等你。反悔窗口设成 0 就是立刻发。
+              </div>
+              <StopRulesSettings />
+              <div style={{ fontSize: 11, opacity: .55, marginBottom: 14, lineHeight: 1.5 }}>
+                一行一条，你写的这些优先级最高：命中就一定停下来问你，绝不自动继续、也不会替你选。
+                内置已经拦了删除/上线/写生产/花钱/对外发送/改权限这些，这里补你自己的（比如「碰 figcheck 线上库」「重启任何 prod 容器」）。
               </div>
               <div className="app-set-group">AGI 板块(实验性)</div>
               <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 13 }}>

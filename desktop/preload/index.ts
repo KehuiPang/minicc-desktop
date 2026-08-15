@@ -118,6 +118,11 @@ contextBridge.exposeInMainWorld("minicc", {
   contHabitAdd: (note: string) => ipcRenderer.invoke("chat:contHabit", note) as Promise<void>,
   contHabits: () => ipcRenderer.invoke("chat:contHabits") as Promise<string[]>,
   contHabitsClear: () => ipcRenderer.invoke("chat:contHabitsClear") as Promise<void>,
+  goalGet: (sid: string) => ipcRenderer.invoke("chat:goalGet", sid) as Promise<{ text: string; active: boolean } | null>,
+  goalSet: (sid: string, goal: { text: string; active: boolean } | null) =>
+    ipcRenderer.invoke("chat:goalSet", sid, goal) as Promise<void>,
+  stopRulesGet: () => ipcRenderer.invoke("chat:stopRulesGet") as Promise<string>,
+  stopRulesSet: (t: string) => ipcRenderer.invoke("chat:stopRulesSet", t) as Promise<void>,
   // 本地知识网络 Brain
   brainGraph: () =>
     ipcRenderer.invoke("brain:graph") as Promise<{
