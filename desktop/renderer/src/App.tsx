@@ -300,7 +300,10 @@ export function App() {
   const [contN, setContN] = useState(0); // 当前会话已连续自动继续多少次
   const contBySid = useRef(new Map<string, number>()); // 计数也按会话各算各的
   // 安全阀都可调(设置→运行模式)：最多连推几轮、发出前留多久反悔
-  const [contMax, setContMax] = useState(() => Number(localStorage.getItem("minicc-cont-max")) || 30);
+  const [contMax, setContMax] = useState(() => {
+    const v = localStorage.getItem("minicc-cont-max");
+    return v === null ? 30 : Math.max(0, Number(v) || 0); // 0 = 不限
+  });
   const [contDelay, setContDelay] = useState(() => {
     const v = localStorage.getItem("minicc-cont-delay");
     return v === null ? 1200 : Number(v) || 0;
@@ -1155,7 +1158,7 @@ export function App() {
               modeOf(sid) === "cont" &&
               payload.canContinue &&
               (payload.text || "").trim() &&
-              n0 < contMaxRef.current
+              (contMaxRef.current <= 0 || n0 < contMaxRef.current) // 0 = 不限轮数
             ) {
               contBySid.current.set(sid, n0 + 1);
               setContN(n0 + 1);
@@ -1172,7 +1175,7 @@ export function App() {
               // 只要这句话本身不碰红线，就给个倒计时自动往下走；碰红线的才真的停住等你。
               modeOf(sid) === "cont" &&
               (payload.text || "").trim() &&
-              n0 < contMaxRef.current &&
+              (contMaxRef.current <= 0 || n0 < contMaxRef.current) &&
               askAutoSecFor([{ question: payload.text, header: "", options: [] } as any], askAutoSecRef.current, stopRulesRef.current) > 0
             ) {
               setSuggestWait(Math.max(3, askAutoSecRef.current * 2));
@@ -3175,7 +3178,7 @@ export function App() {
               </button>
               <button
                 className={autoCont ? "on cont" : ""}
-                title={`智能继续（只对当前这个对话生效）：它只是问「要不要接着推进」时，自动替你回一句往下做；\n遇到删除/上线/花钱/发消息这类有风险的，或需要你拿主意的，仍会停下来等你。\n最多连推 ${contMax} 轮，发出前留 ${(contDelay / 1000).toFixed(1)} 秒反悔（设置→运行模式里可改）；你一打字或按停就中断。`}
+                title={`智能继续（只对当前这个对话生效）：它只是问「要不要接着推进」时，自动替你回一句往下做；\n遇到删除/上线/花钱/发消息这类有风险的，或需要你拿主意的，仍会停下来等你。\n最多连推 ${contMax <= 0 ? "不限轮数" : contMax + " 轮"}，发出前留 ${(contDelay / 1000).toFixed(1)} 秒反悔（设置→运行模式里可改）；你一打字或按停就中断。`}
                 onClick={() => setMode(currentId, autoCont ? "auto" : "cont")}
               >
                 智能继续{autoCont && contN > 0 ? ` ${contN}` : ""}
@@ -5004,7 +5007,10 @@ function StopRulesSettings() {
 }
 
 function ContSettings() {
-  const [max, setMax] = useState(() => Number(localStorage.getItem("minicc-cont-max")) || 30);
+  const [max, setMax] = useState(() => {
+    const v = localStorage.getItem("minicc-cont-max");
+    return v === null ? 30 : Math.max(0, Number(v) || 0); // 0 = 不限
+  });
   const [delay, setDelay] = useState(() => {
     const v = localStorage.getItem("minicc-cont-delay");
     return v === null ? 1200 : Number(v) || 0;
@@ -5023,11 +5029,24 @@ function ContSettings() {
     <>
       <div className="app-set-row" style={{ cursor: "default", gap: "10px" }}>
         <div className="app-set-label" style={{ whiteSpace: "nowrap" }}>智能继续最多连推</div>
+        <span style={{ flex: 1 }} />
         <input
-          type="range" min={3} max={100} step={1} value={max} style={{ flex: 1 }}
-          onChange={(e) => { const v = Number(e.target.value); setMax(v); push(v, delay, askSec); }}
+          type="number"
+          min={0}
+          value={max}
+          style={{
+            width: 96, textAlign: "right", padding: "4px 8px", fontFamily: "var(--mono)",
+            background: "var(--bg-input)", color: "var(--text)",
+            border: "1px solid var(--border-strong)", borderRadius: 8, outline: "none",
+          }}
+          onChange={(e) => { const v = Math.max(0, Math.floor(Number(e.target.value) || 0)); setMax(v); push(v, delay, askSec); }}
         />
-        <div className="app-set-hint" style={{ minWidth: 44, textAlign: "right" }}>{max} 轮</div>
+        <div className="app-set-hint" style={{ minWidth: 56, textAlign: "right" }}>
+          {max <= 0 ? "不限" : "轮"}
+        </div>
+      </div>
+      <div style={{ fontSize: 11, opacity: .5, margin: "-2px 0 8px" }}>
+        自己填，多大都行；填 0 就是不限轮数，一直推到目标做完（随时能按停或切回自动）。
       </div>
       <div className="app-set-row" style={{ cursor: "default", gap: "10px" }}>
         <div className="app-set-label" style={{ whiteSpace: "nowrap" }}>发出前反悔窗口</div>
