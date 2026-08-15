@@ -342,8 +342,6 @@ export function App() {
   const [babyChatLog, setBabyChatLog] = useState<{ role: "you" | "baby"; text: string }[]>([]);
   const [babyChatInput, setBabyChatInput] = useState("");
   const [babyBusy, setBabyBusy] = useState<string>(""); // 正在执行的操作描述(禁用按钮)
-  const [babyLiveN, setBabyLiveN] = useState(5); // 自定义"活N个循环"的次数
-  const [babySeedInput, setBabySeedInput] = useState(""); // 种好奇输入(Electron禁用prompt,用输入框)
   const [babyAlive, setBabyAlive] = useState(false); // 无限生命循环开关(它持续自主活着)
   const [babyAliveInfo, setBabyAliveInfo] = useState(""); // 活着时的实时进度展示
   const [babyActivity, setBabyActivity] = useState(""); // 它此刻正在干嘛(学习/搜索/睡觉/发呆/对话)
@@ -362,17 +360,20 @@ export function App() {
     const el = babyChatRef.current;
     if (el && babyChatStick.current) el.scrollTop = el.scrollHeight;
   }, [babyChatLog, babyBusy]);
-  // 面板打开就每 2 秒轮询：更新"它在干嘛"活动状态 + 进度；活着时还刷新状态区(日志/好奇实时)
+  // 面板打开就每 2 秒轮询：更新"它在干嘛"活动状态 + 进度；活着时每轮刷状态区(日志/好奇实时)，
+  // 歇着时每 10 轮(20s)刷一次(面板已无手动刷新按钮，不能让状态区停在打开那一刻)
   useEffect(() => {
     if (agiView !== "baby") return;
+    let n = 0;
     const tick = async () => {
       try {
         const j = JSON.parse(await window.minicc.babyAliveStatus());
         setBabyActivity(j.activity || "");
         setBabyAlive(!!j.alive);
         setBabyAliveInfo(`年龄${j.age}·精力${j.energy}·${j.mood}·已学${j.concepts}·好奇${j.curiosity}`);
-        if (j.alive) babyRefresh(); // 活着时状态区实时更新
+        if (j.alive || n % 10 === 0) babyRefresh();
       } catch { /* ignore */ }
+      n++;
     };
     tick();
     const t = setInterval(tick, 2000);
@@ -717,13 +718,6 @@ export function App() {
       setBabyStatusState(st || ""); setBabyDiaryState(di || ""); setBabyCuriousState(cu || "");
     } catch (e) { setBabyStatusState("读取状态失败:" + String(e)); }
   }
-  async function babyLive(n: number) {
-    setBabyBusy(`让它自己活 ${n} 个循环中(自主学习,需要一会儿)...`);
-    // 循环期间每 2 秒轮询刷新，状态/成长日志/好奇实时更新，不用等整轮结束
-    const timer = setInterval(() => { babyRefresh(); }, 2000);
-    try { await w.minicc.babyLive(n); await babyRefresh(); }
-    finally { clearInterval(timer); setBabyBusy(""); }
-  }
   async function loadBabyGraph() {
     try { const g = JSON.parse(await w.minicc.babyGraph()); setBabyGraphData({ nodes: g.nodes || [], edges: g.edges || [] }); } catch {}
   }
@@ -740,14 +734,6 @@ export function App() {
       setBabyChatLog((l) => [...l, { role: "baby", text: ans || "(没说话)" }]);
       await babyRefresh(); // 聊天可能上网学到新东西(进记忆/日志)，刷新状态区
     } finally { setBabyBusy(""); }
-  }
-  async function babyPraise() { setBabyBusy("夸它中..."); try { await w.minicc.babyPraise(); await babyRefresh(); } finally { setBabyBusy(""); } }
-  async function babyScold() { setBabyBusy("..."); try { await w.minicc.babyScold(); await babyRefresh(); } finally { setBabyBusy(""); } }
-  async function babySeed() {
-    // 注意：Electron 打包版禁用 window.prompt()，改用面板内输入框
-    const c = babySeedInput.trim(); if (!c || babyBusy) return;
-    setBabyBusy("种下好奇...");
-    try { await w.minicc.babySeed(c); setBabySeedInput(""); await babyRefresh(); } finally { setBabyBusy(""); }
   }
   function createBaby() {
     setBabyExists(true); localStorage.setItem("minicc-baby-exists", "1");
@@ -2083,34 +2069,12 @@ export function App() {
                     <span className="baby-activity-text">{babyActivity || (babyAlive ? "活着…" : "😌 歇着呢")}</span>
                   </div>
                   <div className="baby-card-title">📊 状态</div>
-                  <pre className="baby-pre">{babyStatus || "(点下方刷新)"}</pre>
-                  <div className="baby-actions">
-                    <button disabled={!!babyBusy} onClick={() => babyLive(3)}>🍼 活3个循环</button>
-                    <button disabled={!!babyBusy} onClick={() => babyLive(8)}>🍼 活8个循环</button>
-                    <button disabled={!!babyBusy} onClick={babyRefresh}>🔄 刷新</button>
-                  </div>
-                  <div className="baby-actions baby-live-custom">
-                    <span className="baby-live-label">自定义循环</span>
-                    <input type="number" min={1} max={100} value={babyLiveN} disabled={!!babyBusy}
-                      onChange={(e) => setBabyLiveN(Math.max(1, Math.min(100, parseInt(e.target.value) || 1)))} />
-                    <button disabled={!!babyBusy} onClick={() => babyLive(babyLiveN)}>🍼 活{babyLiveN}个循环</button>
-                  </div>
+                  <pre className="baby-pre">{babyStatus || "(读取中…)"}</pre>
                   <div className="baby-actions baby-alive-row">
                     <button className={"baby-alive-toggle" + (babyAlive ? " on" : "")} onClick={toggleBabyAlive}>
                       {babyAlive ? "⏸ 停止" : "♾️ 让它一直活着"}
                     </button>
                     {babyAlive && <span className="baby-alive-info">🟢 活着 · {babyAliveInfo || "…"}</span>}
-                  </div>
-                  <div className="baby-actions baby-seed-row">
-                    <input className="baby-seed-input" placeholder="想让它学什么？输入概念，如「注意力机制」"
-                      value={babySeedInput} disabled={!!babyBusy}
-                      onChange={(e) => setBabySeedInput(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") babySeed(); }} />
-                    <button disabled={!!babyBusy || !babySeedInput.trim()} onClick={babySeed}>🌱 种好奇</button>
-                  </div>
-                  <div className="baby-actions">
-                    <button disabled={!!babyBusy} onClick={babyPraise}>🥰 夸它</button>
-                    <button disabled={!!babyBusy} onClick={babyScold}>😔 说它</button>
                   </div>
                   {babyBusy && <div className="baby-busy">⏳ {babyBusy}</div>}
                 </div>
