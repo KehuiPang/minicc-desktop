@@ -550,7 +550,10 @@ body {
   letter-spacing: 0.2px;
   background: var(--bg-soft);
   border-bottom: 1px solid var(--border);
-  overflow: hidden;
+  /* 不能 overflow:hidden——右上角「⋯」的下拉要往标题栏外面掉，会被整个裁掉；
+     标题过长的省略号由 .tb-title 自己的 overflow 负责。position+z-index 让下拉压在主区之上 */
+  position: relative;
+  z-index: 45;
   white-space: nowrap;
 }
 .tb-title {
@@ -1439,6 +1442,7 @@ body {
   color: var(--text);
 }
 .tb-more-menu {
+  -webkit-app-region: no-drag; /* 菜单上沿还压在拖拽带里，不写这条那一截点不动 */
   position: absolute;
   top: 30px;
   right: 0;
