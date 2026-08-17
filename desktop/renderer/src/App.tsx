@@ -2605,12 +2605,12 @@ export function App() {
                       <Ic.IcBack size={14} />返回对话
                     </button>
                   )}
-                  <button className="by-tidy ghost" disabled={babyTidy || brainLoad.busy}
+                  <button className="by-tidy ghost" data-busy-self="1" disabled={babyTidy || brainLoad.busy}
                     onClick={() => void reloadBabyBrain()} title="重新读一遍当前的网络/金字塔">
                     <span className={brainLoad.busy ? "by-spin" : ""} style={{ display: "flex" }}><Ic.IcRefresh size={14} /></span>
                     {brainLoad.busy ? "读取中…" : "重新读取"}
                   </button>
-                  <button className="by-tidy" disabled={babyTidy} onClick={babyTidyUp}
+                  <button className="by-tidy" data-busy-self="1" disabled={babyTidy} onClick={babyTidyUp}
                     title="让它把学过的东西重新自组织成一座金字塔(会真的改变塔的形状，要跑一会儿)">
                     <span className={babyTidy ? "by-spin" : ""} style={{ display: "flex" }}><Ic.IcSparkle size={14} /></span>
                     {babyTidy ? "整理中…" : "整理知识"}

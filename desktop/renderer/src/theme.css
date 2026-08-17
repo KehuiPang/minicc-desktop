@@ -4423,3 +4423,41 @@ body {
   0%, 25% { background: var(--accent-soft); box-shadow: 0 0 0 6px var(--accent-soft); }
   100% { background: transparent; box-shadow: 0 0 0 6px transparent; }
 }
+
+/* ============ 按钮进度圈 ============ */
+/* 点了要等的操作(IPC 还没回来)时，按钮上转个圈；由 preload 统一挂 .btn-busy。
+   秒回的调用不会挂(>150ms 才显示)，所以不会到处乱闪。 */
+.btn-busy {
+  position: relative;
+  color: transparent !important;
+  pointer-events: none; /* 转圈期间别让人连点重复触发 */
+}
+.btn-busy > * {
+  visibility: hidden; /* 图标/文字都先藏起来，只留那个圈 */
+}
+.btn-busy::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  margin: -7px 0 0 -7px;
+  border: 2px solid var(--text-muted);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: btnBusySpin 0.7s linear infinite;
+}
+@keyframes btnBusySpin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-busy::after { animation-duration: 1.8s; }
+}
+/* 朱赭底的主操作上，灰圈看不清 → 换白圈 */
+.by-tidy:not(.ghost).btn-busy::after,
+.new-session.btn-busy::after,
+.send-btn.btn-busy::after {
+  border-color: rgba(255, 255, 255, 0.85);
+  border-top-color: transparent;
+}

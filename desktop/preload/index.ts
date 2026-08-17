@@ -32,7 +32,50 @@ const EVENTS = [
   "evt:handoff",
 ] as const;
 
-contextBridge.exposeInMainWorld("minicc", {
+// —— 点击 → 进度圈 ——
+// "点了不知道有没有生效"的根治：凡是点按钮触发的、**真的要等**的调用(返回 Promise 的 invoke)，
+// 就在那个按钮上转个圈，等它跑完再恢复。不搞按压/波纹那类花哨效果，只在真有等待时给圈。
+// 放在 preload：这里正好是所有 IPC 的唯一入口，包一层就全覆盖，组件一个都不用改。
+let lastBtn: HTMLElement | null = null;
+let lastAt = 0;
+const busyCount = new WeakMap<HTMLElement, number>();
+window.addEventListener(
+  "pointerdown",
+  (e) => {
+    const t = e.target as Element | null;
+    lastBtn = (t?.closest?.("button") as HTMLElement | null) || null;
+    lastAt = Date.now();
+  },
+  true,
+);
+// 一开始打字就别再算到刚才那个按钮头上(比如点开搜索后输入，防抖搜索不该让放大镜转圈)
+window.addEventListener("keydown", () => { lastBtn = null; }, true);
+
+function trackBusy<T>(ret: T): T {
+  const p = ret as unknown as Promise<unknown>;
+  if (!p || typeof (p as any).then !== "function") return ret; // 不用等的调用(send 类)不给圈
+  const btn = lastBtn;
+  if (!btn || Date.now() - lastAt > 800) return ret; // 不是这次点击引发的(轮询/启动加载)
+  if (btn.dataset.busySelf === "1") return ret; // 组件自己管着进度(如「整理知识」)，别叠两个
+  let settled = false;
+  // >150ms 才转圈：秒回的调用闪一下反而更烦
+  const show = window.setTimeout(() => {
+    if (settled) return;
+    busyCount.set(btn, (busyCount.get(btn) || 0) + 1);
+    btn.classList.add("btn-busy");
+  }, 150);
+  const off = () => {
+    settled = true;
+    clearTimeout(show);
+    const n = (busyCount.get(btn) || 0) - 1;
+    busyCount.set(btn, Math.max(0, n));
+    if (n <= 0) window.setTimeout(() => { if ((busyCount.get(btn) || 0) <= 0) btn.classList.remove("btn-busy"); }, 200);
+  };
+  p.then(off, off);
+  return ret;
+}
+
+const API = {
   // ——— AGI 板块:数字婴儿 ———
   agiCfg: () => ipcRenderer.invoke("agi:cfg") as Promise<any>,
   babyStatus: () => ipcRenderer.invoke("agi:baby:status") as Promise<string>,
@@ -272,4 +315,11 @@ contextBridge.exposeInMainWorld("minicc", {
       for (const [ch, h] of handlers) ipcRenderer.removeListener(ch, h);
     };
   },
-});
+};
+
+// 每个方法包一层进度圈追踪(不返回 Promise 的原样透传)，再暴露给渲染进程
+const EXPOSED: Record<string, unknown> = {};
+for (const [k, v] of Object.entries(API)) {
+  EXPOSED[k] = typeof v === "function" ? (...a: unknown[]) => trackBusy((v as (...x: unknown[]) => unknown)(...a)) : v;
+}
+contextBridge.exposeInMainWorld("minicc", EXPOSED);
