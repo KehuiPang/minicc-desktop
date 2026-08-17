@@ -310,6 +310,7 @@ export function App() {
     ctxWindow: CTX_MAX,
   });
   const [usage, setUsage] = useState<Usage>({ totalInput: 0, totalOutput: 0, lastInput: 0 });
+  const usageBySid = useRef(new Map<string, Usage>()); // 各会话自己的用量快照(切会话直接取)
   const [rate, setRate] = useState<any>(null);
   const [input, setInput] = useState("");
   const [lightbox, setLightbox] = useState<string | null>(null); // 图片放大预览的 src
@@ -1142,8 +1143,13 @@ export function App() {
           setBrowserDetached(!!payload);
           break;
         case "evt:session-loaded": {
+          // ★ ref 立刻同步，别等 React 渲染：主进程紧接着推的 evt:usage 等「按 sid 过滤」的事件
+          // 可能落在同一个 tick 里，那时 state 还是旧 id，会被当成"别的会话"丢掉(底栏卡在上个会话的数字)
+          currentIdRef.current = payload.id;
           setCurrentId(payload.id);
           clearReasoning(); // 切换会话：清掉上个会话残留的思考
+          // 底栏上下文/用量立刻切成这个会话自己的(主进程随后推的那份会再校准一次)
+          setUsage(usageBySid.current.get(payload.id) || { totalInput: 0, totalOutput: 0, lastInput: 0 });
           // 搜索结果点进来的：目标不是底部而是命中那条 → 别吸底，交给下面的跳转 effect
           const jumping = jumpRef.current?.sid === payload.id;
           clearSearchHighlight(); // 上一次搜索的高亮不跨会话残留(要跳转的话下面会重新打)
@@ -1224,7 +1230,10 @@ export function App() {
           break;
         }
         case "evt:usage":
-          if (payload.sid !== currentIdRef.current) break; // 只显示当前会话用量
+          // 每个会话的用量各存一份：切会话时直接取它自己的那份显示，不依赖
+          // 「session-loaded 和 usage 谁先到」——两条是独立 IPC 消息，靠时序会漏(底栏卡在上个会话的数字)
+          if (payload.sid) usageBySid.current.set(payload.sid, payload.usage);
+          if (payload.sid !== currentIdRef.current) break; // 后台会话的用量只入账，不上屏
           setUsage(payload.usage);
           // 实时盖到本轮正在生成的最后一条助手气泡上：footer 悬停即见本轮 token(每完成一段就刷新)。
           // 仅当带 round(每步上报)才盖，避免 bootstrap/切会话的无 round 快照冲掉已有值。
@@ -1577,7 +1586,10 @@ export function App() {
       atBottomRef.current = true; // 初次打开：定位到最新(底部)
       forceBottomRef.current = true; // 多帧兜底吸底，同切换会话
       setItems(messagesToItems(r.messages || []));
-      if (r.usage) setUsage(r.usage);
+      if (r.usage) {
+        setUsage(r.usage);
+        if (r.currentId) usageBySid.current.set(r.currentId, r.usage);
+      }
       if (r.rateLimits) setRate(r.rateLimits);
       if (r.interrupted?.length) setInterruptedSessions(r.interrupted); // 上次被强杀的任务→提示恢复
     });

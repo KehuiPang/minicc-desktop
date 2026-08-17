@@ -1252,10 +1252,13 @@ function switchSessionProvider(id: string, providerId: string, kind: Settings["k
 }
 
 const EMPTY_USAGE = { totalInput: 0, totalOutput: 0, lastInput: 0, totalCacheHit: 0, totalCacheMiss: 0, totalSteps: 0 };
-// 切换/加载会话后推送该会话自己的用量
+// 切换/加载会话后推送该会话自己的用量。
+// ★必须带 sid 且包在 usage 里：前端 evt:usage 是按 `payload.sid === 当前会话` 过滤的，
+// 以前这里直接把裸用量对象丢过去(没有 sid)，前端一律当"不是本会话"丢掉 →
+// 切会话后底栏上下文还停在上一个会话的数字(2026-08-17 用户发现两个会话显示一模一样)。
 function sendUsageFor(id: string) {
   const a = agents.get(id);
-  send("evt:usage", a ? a.getUsage() : EMPTY_USAGE);
+  send("evt:usage", { sid: id, usage: a ? a.getUsage() : EMPTY_USAGE });
 }
 
 // 启动时：选最近会话或新建，推送列表与当前会话历史
