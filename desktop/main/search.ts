@@ -64,13 +64,15 @@ function emptyIdx(): IndexFile {
 
 async function loadIdx(): Promise<IndexFile> {
   if (idx) return idx;
+  let loaded: IndexFile;
   try {
     const j = JSON.parse(await readFile(IDX_FILE, "utf8"));
-    idx = j && j.v === 1 && j.sessions ? j : emptyIdx();
+    loaded = j && j.v === 1 && j.sessions ? (j as IndexFile) : emptyIdx();
   } catch {
-    idx = emptyIdx();
+    loaded = emptyIdx(); // 没索引/坏索引：从空开始，下面会重建
   }
-  return idx;
+  idx = loaded;
+  return loaded;
 }
 
 // 索引落盘节流：任务跑起来时每步都会 saveSession→更新索引，

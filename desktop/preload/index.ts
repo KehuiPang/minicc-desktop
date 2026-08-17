@@ -117,6 +117,8 @@ contextBridge.exposeInMainWorld("minicc", {
   draftGet: () => ipcRenderer.invoke("draft:get") as Promise<{ text: string; images: string[] }>,
   draftSet: (draft: { text: string; images: string[] }) => ipcRenderer.send("draft:set", draft),
   suggestNow: (sid: string) => ipcRenderer.invoke("chat:suggest", sid) as Promise<void>,
+  // 同步"哪些会话开着智能继续"：这些会话在后台跑完也要算下一步建议，好自己接着推进
+  setContSessions: (ids: string[]) => ipcRenderer.send("chat:cont-sessions", ids),
   contHabitAdd: (note: string) => ipcRenderer.invoke("chat:contHabit", note) as Promise<void>,
   contHabits: () => ipcRenderer.invoke("chat:contHabits") as Promise<string[]>,
   contHabitsClear: () => ipcRenderer.invoke("chat:contHabitsClear") as Promise<void>,

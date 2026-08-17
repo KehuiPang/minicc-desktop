@@ -1463,6 +1463,15 @@ ipcMain.handle("chat:goalSet", (_e, sid: string, goal: SessionGoal | null) => {
   saveGoals();
 });
 
+// 开着「智能继续/自主推进」的会话集合(渲染端在模式变化时同步过来)。
+// 这些会话即使不在屏幕上，跑完一轮也要照样算下一步建议——否则切走就断在那儿，
+// 非得等你切回去前端现要一次建议才继续(用户 2026-08-17 反馈的"跑着跑着自己停了")。
+const contSessions = new Set<string>();
+ipcMain.on("chat:cont-sessions", (_e, ids: string[]) => {
+  contSessions.clear();
+  for (const id of Array.isArray(ids) ? ids : []) if (id) contSessions.add(String(id));
+});
+
 const suggestInFlight = new Set<string>();
 async function suggestNextAction(id: string) {
   if (suggestInFlight.has(id) || !provider) return;
@@ -1764,7 +1773,8 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
     persist(useId); // 该会话跑完落盘
     if (!runs.has(useId)) setSessionRunning(useId, false); // 无残留活跃轮→清运行标记(须在 persist 后,它会保留旧标记)
     void emitAccount(); // 刷新余额/本会话已消耗(DeepSeek 等)
-    if (useId === currentId && !ac.signal.aborted) void suggestNextAction(useId); // 仅当前会话、正常跑完才提建议
+    // 正常跑完就算下一步建议：当前会话(给建议条用) + 开着智能继续的后台会话(它要自己接着推进)
+    if ((useId === currentId || contSessions.has(useId)) && !ac.signal.aborted) void suggestNextAction(useId);
   }
 }
 

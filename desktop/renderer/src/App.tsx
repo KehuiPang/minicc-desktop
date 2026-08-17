@@ -291,6 +291,8 @@ export function App() {
   // 非当前会话发起的 ask → 右上角通知(点击切过去/✕忽略/30s自动消失)
   const [askToasts, setAskToasts] = useState<{ askId: number; sid: string; title: string }[]>([]);
   const dropToast = (askId: number) => setAskToasts((t) => t.filter((x) => x.askId !== askId));
+  const asksRef = useRef(asks); // 定时器里判"这道题还在不在"(后台会话超时自动作答)
+  asksRef.current = asks;
   const clearAsk = (sid: string) => {
     setAsks((m) => {
       if (!(sid in m)) return m;
@@ -346,6 +348,10 @@ export function App() {
     contBySid.current.set(sid, 0);
     setContN(0);
   };
+  // 告诉主进程哪些会话开着智能继续：它们在后台跑完也要算下一步建议，好自己接着推进
+  useEffect(() => {
+    window.minicc.setContSessions?.(Object.keys(modeBySid).filter((s) => modeBySid[s] === "cont"));
+  }, [modeBySid]);
   const [contN, setContN] = useState(0); // 当前会话已连续自动继续多少次
   const contBySid = useRef(new Map<string, number>()); // 计数也按会话各算各的
   // 安全阀都可调(设置→运行模式)：最多连推几轮、发出前留多久反悔
@@ -428,6 +434,8 @@ export function App() {
   const busy = runningSet.has(currentId); // 当前可见会话是否在跑(多任务:各会话独立)
   const busyRef = useRef(busy);
   busyRef.current = busy;
+  const runningSetRef = useRef(runningSet); // 后台自动推进要按 sid 判它自己在不在跑
+  runningSetRef.current = runningSet;
   const inputRef = useRef(input);
   inputRef.current = input;
   const currentIdRef = useRef(currentId); // 事件回调里读最新 currentId(判是否本会话的更新)
@@ -1171,13 +1179,29 @@ export function App() {
         case "evt:ask-user": {
           // AI 请用户选择：按发起会话 id 存。当前会话→直接弹框；别的会话→右上角通知，不打断当前对话。
           const askSid = payload.sid || currentIdRef.current;
-          setAsks((m) => ({ ...m, [askSid]: { id: payload.id, questions: payload.questions || [] } }));
+          const qs: AskQuestion[] = payload.questions || [];
+          setAsks((m) => ({ ...m, [askSid]: { id: payload.id, questions: qs } }));
           if (askSid !== currentIdRef.current) {
             const title = sessionsRef.current.find((s) => s.id === askSid)?.title || "其它会话";
             setAskToasts((t) => [...t.filter((x) => x.sid !== askSid), { askId: payload.id, sid: askSid, title }]);
             // 自动消失：按设置的开关与秒数(关掉则常驻，直到点开/✕忽略)
             if (askToastAutoRef.current) {
               window.setTimeout(() => dropToast(payload.id), Math.max(1, askToastSecRef.current) * 1000);
+            }
+            // 后台会话开着智能继续：无关紧要的选择题等几秒没人理就替它自己定，别卡在那儿等切过去
+            // (跟当前会话弹框里的"自动"同一套规则：一沾删除/上线/花钱等红线，askAutoSecFor 返回 0=死等)
+            const sec = modeOf(askSid) === "cont" ? askAutoSecFor(qs, askAutoSecRef.current, stopRulesRef.current) : 0;
+            if (sec > 0) {
+              window.setTimeout(() => {
+                if (asksRef.current[askSid]?.id !== payload.id) return; // 你已经答过/它已撤销
+                if (modeOf(askSid) !== "cont" || askSid === currentIdRef.current) return; // 关了智能继续 or 你切过去了→交给屏上那套
+                window.minicc.answerAsk(payload.id, {
+                  list: qs.map(() => ({ selected: [], text: "这个你按我的目标自己定就行，不用问我，继续往下做。" })),
+                  images: [],
+                });
+                clearAsk(askSid);
+                dropToast(payload.id);
+              }, sec * 1000);
             }
           }
           break;
@@ -1206,43 +1230,36 @@ export function App() {
           if (payload?.providerId && payload.providerId !== curProviderIdRef.current) break;
           setRate(payload);
           break;
-        case "evt:suggest":
-          if (payload.sid === currentIdRef.current) {
-            const sid = payload.sid;
+        case "evt:suggest": {
+          const sid = payload.sid;
+          const cur = sid === currentIdRef.current;
+          if (cur) {
+            // 建议条/幽灵提示只画当前会话；后台会话不占屏幕，只在下面照常往下推进
             setSuggestion(payload.text || "");
             setSuggestBusy(false);
             lastSuggestRef.current = { text: payload.text || "", canContinue: !!payload.canContinue, auto: false };
-            // 智能继续：只有"纯推进确认"才自动接话；危险/要你拿主意的(ASK)一律停在这儿等你。
-            // 开没开智能继续看这个会话自己的设置。
-            const n0 = contBySid.current.get(sid) || 0;
-            if (
-              modeOf(sid) === "cont" &&
-              payload.canContinue &&
-              (payload.text || "").trim() &&
-              (contMaxRef.current <= 0 || n0 < contMaxRef.current) // 0 = 不限轮数
-            ) {
-              contBySid.current.set(sid, n0 + 1);
-              setContN(n0 + 1);
-              lastSuggestRef.current.auto = true;
-              const go = payload.text.trim();
-              setTimeout(() => {
-                // 反悔窗口(设置里可调)：这期间你一打字或按停，或切走了这个会话，就不自动发了
-                if (modeOf(sid) !== "cont" || sid !== currentIdRef.current || busyRef.current || inputRef.current.trim()) return;
-                setSuggestion("");
-                dispatchMessage(go, [], false);
-              }, Math.max(0, contDelayRef.current));
-            } else if (
-              // 判成"要你拿主意"(ASK)时的兜底：智能继续下不该干等着。
-              // 只要这句话本身不碰红线，就给个倒计时自动往下走；碰红线的才真的停住等你。
-              modeOf(sid) === "cont" &&
-              (payload.text || "").trim() &&
-              (contMaxRef.current <= 0 || n0 < contMaxRef.current) &&
-              askAutoSecFor([{ question: payload.text, header: "", options: [] } as any], askAutoSecRef.current, stopRulesRef.current) > 0
-            ) {
-              setSuggestWait(Math.max(3, askAutoSecRef.current * 2));
-            }
+          }
+          // 智能继续：只有"纯推进确认"才自动接话；危险/要你拿主意的(ASK)一律停下等你。
+          // 开没开智能继续看这个会话自己的设置——**跟它在不在屏幕上无关**，
+          // 否则切走的会话就永远断在这儿(2026-08-17 修:后台自主推进跑着跑着自己停了)。
+          const go = (payload.text || "").trim();
+          const n0 = contBySid.current.get(sid) || 0;
+          if (modeOf(sid) !== "cont" || !go || (contMaxRef.current > 0 && n0 >= contMaxRef.current)) break;
+          if (payload.canContinue) {
+            if (cur) lastSuggestRef.current.auto = true;
+            // 反悔窗口(设置里可调)：这期间你一打字或按停，autoContinue 里会再校验一次
+            setTimeout(() => autoContinue(sid, go), Math.max(0, contDelayRef.current));
+          } else if (
+            // 判成"要你拿主意"(ASK)时的兜底：智能继续下不该干等着。
+            // 只要这句话本身不碰红线，就给个延时自动往下走；碰红线的才真停住等你。
+            askAutoSecFor([{ question: go, header: "", options: [] } as any], askAutoSecRef.current, stopRulesRef.current) > 0
+          ) {
+            const sec = Math.max(3, askAutoSecRef.current * 2);
+            if (cur) setSuggestWait(sec); // 当前会话:屏上走秒，你随时能点"等我"
+            else setTimeout(() => autoContinue(sid, go), sec * 1000); // 后台会话:静默等同样久再走
           }
           break;
+        }
         case "evt:assistant-replace":
           // 清理泄漏工具调用/噪音后：把屏上那条 assistant 换成干净正文(为空则移除该气泡)
           if (payload.sid !== currentIdRef.current) break;
@@ -1401,6 +1418,30 @@ export function App() {
     };
   }, [items, currentId]);
 
+  // 智能继续：替你把下一步发出去。**当前会话和后台会话走同一条路径**——
+  // 后台会话没有输入框/建议条，就直接投递给它自己的 sid，不碰当前屏幕。
+  // (只在最后落笔前再校验一次各种闸门，因为从收到建议到真发出去中间隔着"反悔窗口")
+  const autoContinue = (sid: string, text: string) => {
+    const go = (text || "").trim();
+    if (!go || !sid) return;
+    if (modeOf(sid) !== "cont") return; // 这期间被关掉了智能继续/点了暂停
+    if (runningSetRef.current.has(sid)) return; // 它又跑起来了(用户手动发了/上一轮还没完)
+    const cur = sid === currentIdRef.current;
+    if (cur && inputRef.current.trim()) return; // 当前会话:你正在打字就别抢
+    const n = (contBySid.current.get(sid) || 0) + 1;
+    if (contMaxRef.current > 0 && n > contMaxRef.current) return; // 连推轮数封顶(0=不限)
+    contBySid.current.set(sid, n);
+    setRunningSet((s) => new Set(s).add(sid)); // 乐观置运行中(主进程随后 evt:tasks 校准)
+    turnStreamRef.current.set(sid, { start: Date.now(), chars: 0, text: "" });
+    if (cur) {
+      setContN(n);
+      setSuggestion("");
+      atBottomRef.current = true;
+      push({ type: "user", text: go, ts: Date.now() }); // 只有看得见的会话才画气泡
+    }
+    window.minicc.send(sid, go);
+  };
+
   // ASK 兜底倒计时：每秒减一，减到头仍然把这句发出去(智能继续下不该干等)
   const suggestionRef = useRef(suggestion);
   suggestionRef.current = suggestion;
@@ -1409,15 +1450,10 @@ export function App() {
     const t = setTimeout(() => {
       if (suggestWait > 1) { setSuggestWait(suggestWait - 1); return; }
       setSuggestWait(0);
-      const sid = currentIdRef.current;
       const go = suggestionRef.current.trim();
-      if (!go || modeOf(sid) !== "cont" || busyRef.current || inputRef.current.trim()) return;
-      const n0 = contBySid.current.get(sid) || 0;
-      contBySid.current.set(sid, n0 + 1);
-      setContN(n0 + 1);
+      if (!go) return;
       lastSuggestRef.current = { text: go, canContinue: false, auto: true };
-      setSuggestion("");
-      dispatchMessage(go, [], false);
+      autoContinue(currentIdRef.current, go);
     }, 1000);
     return () => clearTimeout(t);
   }, [suggestWait]);

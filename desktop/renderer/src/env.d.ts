@@ -104,6 +104,8 @@ export interface MiniccApi {
   setKeepRecent(n: number): void;
   setAppSettings(patch: Record<string, boolean>): void;
   answerAsk(id: number, answers: unknown): void;
+  suggestNow(sid: string): Promise<void>; // 现算一次"下一步建议"
+  setContSessions(ids: string[]): void; // 同步开着智能继续的会话(后台也要自己往下推进)
   codexResetCredits(): Promise<{ ok: boolean; availableCount?: number; credits?: any[]; error?: string }>;
   codexConsumeReset(creditId: string): Promise<{ ok: boolean; error?: string }>;
   setBrainPrompt(text: string | null): void;
