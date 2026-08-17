@@ -223,6 +223,9 @@
 .by-seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .by-brain-stats { display: flex; gap: 12px; margin-left: 4px; font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); }
 .by-brain-stats b { color: var(--text-dim); font-weight: 600; }
+/* 「重新读取」的结果反馈：数据没变时也让人看得出它确实读了 */
+.by-load-ok { color: var(--green); }
+.by-load-err { color: var(--red); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .by-tidy { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--spark); background: var(--spark); color: #fff; border-radius: var(--by-r-sm); padding: 5px 12px; cursor: pointer; font-size: 12px; font-weight: 600; }
 .by-tidy:hover:not(:disabled) { filter: brightness(1.08); }
 .by-tidy:disabled { opacity: .55; cursor: progress; }

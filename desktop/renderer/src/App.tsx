@@ -497,6 +497,8 @@ export function App() {
   const [babyPyramid, setBabyPyramid] = useState<any>(null);
   const [brainFull, setBrainFull] = useState(false); // 记忆网络/金字塔全屏看
   const [babyTidy, setBabyTidy] = useState(false); // 正在整理知识(重建金字塔)
+  // 「重新读取」的状态:转圈中 / 上次读成的时间 / 失败原因(以前全吞掉,点了像没反应)
+  const [brainLoad, setBrainLoad] = useState<{ busy: boolean; at: number; err: string }>({ busy: false, at: 0, err: "" });
   const toggleCard = (k: string) =>
     setBabyCards((m) => {
       const n = { ...m, [k]: !m[k] };
@@ -904,11 +906,26 @@ export function App() {
       setBabyDiaryState(di || ""); setBabyCuriousState(cu || "");
     } catch { /* 轮询失败不打扰界面，下一轮再来 */ }
   }
+  // 读网络图/金字塔。**故意会往外抛错**：以前这里 catch{} 全吞，后端挂了/超时了界面
+  // 一点提示都没有，点「重新读取」看着像没反应。要静默的调用点自己 .catch(()=>{})。
   async function loadBabyGraph() {
-    try { const g = JSON.parse(await w.minicc.babyGraph()); setBabyGraphData({ nodes: g.nodes || [], edges: g.edges || [] }); } catch {}
+    const g = JSON.parse(await w.minicc.babyGraph());
+    setBabyGraphData({ nodes: g.nodes || [], edges: g.edges || [] });
   }
   async function loadBabyPyramid() {
-    try { setBabyPyramid(JSON.parse(await w.minicc.babyPyramid())); } catch {}
+    setBabyPyramid(JSON.parse(await w.minicc.babyPyramid()));
+  }
+  // 「重新读取」：转圈 + 读完报「已更新 时:分:秒」+ 失败把原因显出来。
+  // 数据没变时页面看不出差别，所以必须有这行反馈，否则分不清"读了但没变"和"根本没读到"。
+  async function reloadBabyBrain() {
+    if (brainLoad.busy) return;
+    setBrainLoad({ busy: true, at: 0, err: "" });
+    try {
+      await Promise.all([loadBabyGraph(), loadBabyPyramid()]);
+      setBrainLoad({ busy: false, at: Date.now(), err: "" });
+    } catch (e: any) {
+      setBrainLoad({ busy: false, at: 0, err: String(e?.message || e).slice(0, 80) });
+    }
   }
   // 「整理知识」：让它主动做一次深度整理(自组织重建整座金字塔)，完事刷新两个视图。
   // 这不是单纯刷新——它会把新学的概念重新归类、该合的合该裂的裂，跑完塔的形状真的会变。
@@ -918,7 +935,7 @@ export function App() {
     try {
       const note = await w.minicc.babyReorganize();
       setBabyChatLog((l) => [...l, { role: "baby", text: `（整理完知识了）${note || ""}`, ts: Date.now() }]);
-      await Promise.all([loadBabyGraph(), loadBabyPyramid(), babyRefresh()]);
+      await Promise.all([loadBabyGraph().catch(() => {}), loadBabyPyramid().catch(() => {}), babyRefresh()]);
     } finally { setBabyTidy(false); }
   }
   async function toggleBabyAlive() {
@@ -2542,7 +2559,7 @@ export function App() {
                   <Ic.IcHome size={15} />主界面
                 </button>
                 <button className={"baby-tab" + (babyTab === "brain" ? " on" : "")}
-                  onClick={() => { setBabyTab("brain"); loadBabyGraph(); loadBabyPyramid(); }}>
+                  onClick={() => { setBabyTab("brain"); void reloadBabyBrain(); }}>
                   <Ic.IcBrain size={15} />记忆网络
                 </button>
               </div>
@@ -2554,10 +2571,10 @@ export function App() {
               <div className={"baby-brain" + (brainFull ? " fs" : "")}>
                 <div className="baby-brain-bar">
                   <div className="by-seg">
-                    <button className={brainView === "graph" ? "on" : ""} onClick={() => { setBrainView("graph"); loadBabyGraph(); }}>
+                    <button className={brainView === "graph" ? "on" : ""} onClick={() => { setBrainView("graph"); loadBabyGraph().catch(() => {}); }}>
                       <Ic.IcNodes size={14} />网络图
                     </button>
-                    <button className={brainView === "pyramid" ? "on" : ""} onClick={() => { setBrainView("pyramid"); loadBabyPyramid(); }}>
+                    <button className={brainView === "pyramid" ? "on" : ""} onClick={() => { setBrainView("pyramid"); loadBabyPyramid().catch(() => {}); }}>
                       <Ic.IcPyramid size={14} />金字塔
                     </button>
                   </div>
@@ -2570,6 +2587,12 @@ export function App() {
                         <span><b>{babyPyramid.stats.loose}</b> 没固化</span>
                       </>
                     )}
+                    {/* 读取反馈：数字不变时页面看不出差别，靠这行区分"读到了但没变" vs "根本没读到" */}
+                    {brainLoad.err ? (
+                      <span className="by-load-err" title={brainLoad.err}>读取失败：{brainLoad.err}</span>
+                    ) : brainLoad.at > 0 ? (
+                      <span className="by-load-ok">已更新 {new Date(brainLoad.at).toLocaleTimeString()}</span>
+                    ) : null}
                   </div>
                   <button className="by-tidy ghost" style={{ marginLeft: "auto" }}
                     onClick={() => setBrainFull((v) => !v)} title={brainFull ? "退出全屏 (Esc)" : "全屏看"}>
@@ -2582,9 +2605,10 @@ export function App() {
                       <Ic.IcBack size={14} />返回对话
                     </button>
                   )}
-                  <button className="by-tidy ghost" disabled={babyTidy}
-                    onClick={() => { loadBabyGraph(); loadBabyPyramid(); }} title="重新读一遍当前的网络/金字塔">
-                    <Ic.IcRefresh size={14} />重新读取
+                  <button className="by-tidy ghost" disabled={babyTidy || brainLoad.busy}
+                    onClick={() => void reloadBabyBrain()} title="重新读一遍当前的网络/金字塔">
+                    <span className={brainLoad.busy ? "by-spin" : ""} style={{ display: "flex" }}><Ic.IcRefresh size={14} /></span>
+                    {brainLoad.busy ? "读取中…" : "重新读取"}
                   </button>
                   <button className="by-tidy" disabled={babyTidy} onClick={babyTidyUp}
                     title="让它把学过的东西重新自组织成一座金字塔(会真的改变塔的形状，要跑一会儿)">
