@@ -20,6 +20,7 @@ BAKDIR="$HOME/.minicc/backups"                       # 备份放这儿,不放 /A
 BAK="$BAKDIR/minicc.app.bak_$(date +%Y%m%d_%H%M%S)"
 LOG="$HOME/.minicc/upgrade.log"
 KEEP=3                                                # 只留最近 3 个备份(每个约 700MB)
+WAIT=${WAIT:-28800}                                   # 等用户退出的秒数(默认 8 小时:挂上去等你哪会儿顺手退出)
 PAT="^/Applications/minicc\.app/Contents/MacOS/minicc" # 只匹配正式安装路径
 
 say() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
@@ -28,8 +29,8 @@ running() { pgrep -f "$PAT" > /dev/null; }
 mkdir -p "$BAKDIR"
 [ -d "$SRC" ] || { say "新版不存在：$SRC（先跑 electron-builder）"; exit 1; }
 
-say "===== 等待 minicc 退出（最多 30 分钟）====="
-for _ in $(seq 1 1800); do running || break; sleep 1; done
+say "===== 等待 minicc 退出（最多 $((WAIT / 60)) 分钟）====="
+for _ in $(seq 1 "$WAIT"); do running || break; sleep 1; done
 if running; then say "超时：minicc 一直没退出，本次升级放弃（旧版原样没动）"; exit 1; fi
 sleep 2 # 给它收尾落盘的时间
 
