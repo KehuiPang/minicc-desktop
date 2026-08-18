@@ -126,8 +126,9 @@ function collapseRepeatedBlocks(content: ContentBlock[]): ContentBlock[] {
 // 之后(含当前及历史)一律从开头剥掉。只认小写且不在命令词白名单里的词——正经缩写(GWT/IM1)、
 // 命令(git/npm)、带连字符词(f-string检查)都不会命中，极少误伤。
 const STRAY_LEAD_THRESH = 3;
-// 开头：2-15 个小写字母，紧跟一个中文字(无空格)。命中则捕获那个词。
-const STRAY_LEAD_RE = /^([a-z]{2,15})(?=[一-鿿])/;
+// 开头：2-15 个小写字母，后面紧跟 空白/中文/结尾(即它单独成词，不是某个更长英文词的一截)。
+// 命中则捕获那个词。含空白→能抓「card 读文档…」「card\n读文档…」乃至整块就一个「card」。
+const STRAY_LEAD_RE = /^([a-z]{2,15})(?=[\s一-鿿]|$)/;
 // 常见合法的小写命令/工具词，绝不当杂词剥
 const STRAY_LEAD_ALLOW = new Set([
   "git", "npm", "npx", "pnpm", "yarn", "ssh", "scp", "cd", "ls", "rm", "cp", "mv", "cat",
@@ -332,14 +333,20 @@ export class Agent {
     }
   }
 
-  // 从历史里所有「该词紧贴中文领头」的助手消息剥掉这个杂词前缀(就地改，给模型干净上下文)
+  // 从历史里所有「该词领头」的助手消息剥掉这个杂词前缀(就地改，给模型干净上下文)。
+  // 词后带的空白一并去掉；若整块就是这个词→有其它块(工具调用等)则删掉该空块，否则留着不造空消息。
   private sweepStrayLead(word: string): void {
-    const re = new RegExp("^" + word + "(?=[一-鿿])");
+    const re = new RegExp("^" + word + "(?=[\\s一-鿿]|$)");
     for (const m of this.messages) {
       if (m.role !== "assistant") continue;
-      for (const b of m.content) {
-        if (b.type === "text" && re.test((b as any).text || "")) {
-          (b as any).text = ((b as any).text as string).slice(word.length);
+      for (let i = 0; i < m.content.length; i++) {
+        const b = m.content[i];
+        if (b.type !== "text" || !re.test((b as any).text || "")) continue;
+        const stripped = ((b as any).text as string).slice(word.length).replace(/^[ \t\r\n]+/, "");
+        if (stripped) (b as any).text = stripped;
+        else if (m.content.length > 1) {
+          m.content.splice(i, 1);
+          i--;
         }
       }
     }
@@ -363,8 +370,18 @@ export class Agent {
     if (!strip) return content;
     const idx = content.findIndex((b) => b.type === "text" && ((b as any).text || "").length);
     if (idx < 0) return content;
+    const stripped = ((content[idx] as any).text as string).slice(w.length).replace(/^[ \t\r\n]+/, "");
     const nc = content.slice();
-    nc[idx] = { type: "text", text: ((content[idx] as any).text as string).slice(w.length) } as ContentBlock;
+    if (stripped) {
+      nc[idx] = { type: "text", text: stripped } as ContentBlock;
+    } else {
+      // 整块就是这个杂词：有其它块(工具调用等)则删掉这个空块；只有这一块则留着，别造空消息
+      const hasOther = content.some(
+        (b, i) => i !== idx && !(b.type === "text" && !((b as any).text || "").trim()),
+      );
+      if (!hasOther) return content;
+      nc.splice(idx, 1);
+    }
     return nc;
   }
 
