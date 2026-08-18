@@ -9,6 +9,7 @@ import type {
   Tool,
   ToolContext,
 } from "../types.js";
+import { collapseRepeatedText } from "./repetition.js";
 
 // —— 上下文 token 粗估(发请求前判断该不该压缩;真实分词拿不到,宁可略高以尽早压缩) ——
 // 中文/日韩表意字 ≈0.6 token/字，其它(英文/代码/符号) ≈0.28 token/字。
@@ -100,6 +101,22 @@ function stripStrayText(content: ContentBlock[]): ContentBlock[] {
   const kept = content.filter((b) => !(b.type === "text" && isNoise((b as any).text || "")));
   if (kept.length === content.length) return content; // 没删任何东西，原样返回(保持引用不变)
   return kept.length ? kept : content; // 万一全被判噪音，宁可不动也不返回空
+}
+
+// 折叠退化重复：某文本块若被模型刷成「短单元无限重复」(如整块 count\ncount…)，
+// 折叠成几遍+提示。与流式守卫(provider 里已提前中止)互补——这里兜底清理已落地的重复块，
+// 让屏上(经 onRecover)和历史都干净，下一轮模型不会顺着旧输出继续刷。
+// 有块被折叠→返回新数组(触发上层替换/前端刷新)；无则原样返回，保持引用不变。
+function collapseRepeatedBlocks(content: ContentBlock[]): ContentBlock[] {
+  let changed = false;
+  const out = content.map((b) => {
+    if (b.type !== "text") return b;
+    const collapsed = collapseRepeatedText((b as any).text || "");
+    if (collapsed == null) return b;
+    changed = true;
+    return { type: "text", text: collapsed } as ContentBlock;
+  });
+  return changed ? out : content;
 }
 
 // 兜底：模型偶尔把工具调用写成文本(<invoke name="x"><parameter name="y">…</parameter></invoke>)，
@@ -412,6 +429,8 @@ export class Agent {
       // 兜底2：去掉像 "count"/"课" 这种落单杂字块——不再要求必须有工具调用，纯文字轮也清；
       // 中/英/符号一起认。防止杂字漏进历史被下一轮模型学去、越滚越乱。
       finalContent = stripStrayText(finalContent);
+      // 兜底3：某文本块被刷成退化重复(count\ncount…)→折叠成几遍+提示，别污染历史/下一轮
+      finalContent = collapseRepeatedBlocks(finalContent);
 
       // 内容被清理过 → 替换历史里那条 + 通知前端修正屏上显示
       if (finalContent !== result.content) {

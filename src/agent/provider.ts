@@ -12,6 +12,7 @@ import type {
   ProviderStreamHandlers,
   ToolSpec,
 } from "../types.js";
+import { RepetitionGuard } from "./repetition.js";
 
 // Claude Code 订阅版(OAuth) 请求时，服务端要求 system 首段是官方身份，否则拒绝。
 const CLAUDE_CODE_IDENTITY =
@@ -157,12 +158,43 @@ class AnthropicProvider implements Provider {
       { signal: handlers.signal },
     );
 
-    stream.on("text", (delta) => handlers.onText?.(delta));
+    // 退化重复守卫：模型若把某词/行无限刷向 max_tokens，检测到即中止本次流(不白跑满额度)
+    const guard = new RepetitionGuard();
+    let acc = ""; // 自累积正文，abort 后 finalMessage 取不到时用它兜底
+    let repTripped = false;
+    stream.on("text", (delta) => {
+      handlers.onText?.(delta);
+      acc += delta;
+      if (!repTripped && guard.push(delta)) {
+        repTripped = true;
+        try {
+          stream.abort();
+        } catch {
+          /* 已结束/无法中止则忽略 */
+        }
+      }
+    });
     // 扩展思考(若开启)：thinking 增量推给前端做「思考中」展示；未开启则永不触发，无副作用
     (stream as { on(ev: string, cb: (delta: string) => void): void }).on("thinking", (delta) =>
       handlers.onReasoning?.(delta),
     );
-    const final = await stream.finalMessage();
+    let final: Awaited<ReturnType<typeof stream.finalMessage>>;
+    try {
+      final = await stream.finalMessage();
+    } catch (e) {
+      // 只吞「我们主动 abort 的重复循环」；用户中断/真错仍抛出
+      if (repTripped) {
+        // 返回已累积的原始正文(带重复尾)，交由 loop.ts 统一折叠清理+加提示——
+        // 此处别拼提示，否则会破坏尾部周期性、令后续 collapse 检测不到重复
+        return {
+          content: [{ type: "text", text: acc }],
+          stopReason: "other",
+          usage: { inputTokens: 0, outputTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0 },
+          rateLimits: this.oauth ? parseUnifiedRate(this.lastHeaders) : undefined,
+        };
+      }
+      throw e;
+    }
 
     const content: ContentBlock[] = [];
     for (const block of final.content) {
@@ -288,8 +320,10 @@ class OpenAIProvider implements Provider {
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
+    const guard = new RepetitionGuard(); // 退化重复守卫：刷同一词/行到 max_tokens 时中止
     let buf = "";
     let text = "";
+    let repTripped = false;
     let sawTool = false;
     const toolAcc: Record<number, { id?: string; name?: string; args: string }> = {};
     let usage: {
@@ -348,6 +382,15 @@ class OpenAIProvider implements Provider {
         if (typeof d.content === "string" && d.content) {
           text += d.content;
           handlers.onText?.(d.content); // 逐块推给渲染进程
+          if (!repTripped && guard.push(d.content)) {
+            repTripped = true; // 别拼提示，保留重复尾交 loop.ts 统一清理
+            try {
+              await reader.cancel();
+            } catch {
+              /* ignore */
+            }
+            break outer; // 停止读流，用已累积文本收尾
+          }
         }
         for (const tc of d.tool_calls ?? []) {
           sawTool = true;
@@ -538,6 +581,8 @@ class CodexProvider implements Provider {
     // 解析 Responses SSE，累积文本与 function_call
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
+    const guard = new RepetitionGuard(); // 退化重复守卫
+    let repTripped = false;
     let buf = "";
     const content: ContentBlock[] = [];
     let curText = "";
@@ -547,7 +592,7 @@ class CodexProvider implements Provider {
     };
     const toolCalls: { call_id: string; name: string; args: string }[] = [];
 
-    while (true) {
+    codexRead: while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
@@ -567,6 +612,15 @@ class CodexProvider implements Provider {
           if (ev.type === "response.output_text.delta" && ev.delta) {
             curText += ev.delta;
             handlers.onText?.(ev.delta);
+            if (!repTripped && guard.push(ev.delta)) {
+              repTripped = true; // 别拼提示，保留重复尾交 loop.ts 统一清理
+              try {
+                await reader.cancel();
+              } catch {
+                /* ignore */
+              }
+              break codexRead; // 退化重复→停止读流，用已累积文本收尾
+            }
           } else if (ev.type === "response.output_item.done" && ev.item?.type === "function_call") {
             toolCalls.push({
               call_id: ev.item.call_id,
