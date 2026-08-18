@@ -119,6 +119,32 @@ function collapseRepeatedBlocks(content: ContentBlock[]): ContentBlock[] {
   return changed ? out : content;
 }
 
+// —— 学习式「漏字前缀」清除 ——
+// 模型偶发在正文最前面粘一个与内容无关的杂词(如 count)，紧贴中文、几乎每条都冒出来
+// (常是早前 count\ncount 重复循环污染了历史所致)。这类整块粘连 stripStrayText 抓不到。
+// 策略：某个「小写英文词紧贴中文」的开头词，在本会话作为开头反复出现(≥THRESH 次)→判为杂词，
+// 之后(含当前及历史)一律从开头剥掉。只认小写且不在命令词白名单里的词——正经缩写(GWT/IM1)、
+// 命令(git/npm)、带连字符词(f-string检查)都不会命中，极少误伤。
+const STRAY_LEAD_THRESH = 3;
+// 开头：2-15 个小写字母，紧跟一个中文字(无空格)。命中则捕获那个词。
+const STRAY_LEAD_RE = /^([a-z]{2,15})(?=[一-鿿])/;
+// 常见合法的小写命令/工具词，绝不当杂词剥
+const STRAY_LEAD_ALLOW = new Set([
+  "git", "npm", "npx", "pnpm", "yarn", "ssh", "scp", "cd", "ls", "rm", "cp", "mv", "cat",
+  "sudo", "python", "node", "deno", "bun", "docker", "kubectl", "curl", "wget", "vim",
+  "nvim", "brew", "pip", "go", "cargo", "make", "bash", "sh", "zsh", "grep", "sed", "awk",
+  "tar", "ffmpeg", "mysql", "redis", "nginx", "conda", "adb", "gcc", "clang", "java",
+]);
+// 取一条消息里首个非空文本块的开头小写词(紧贴中文)；无则 null
+function leadStrayWord(content: ContentBlock[]): string | null {
+  const tb = content.find((b) => b.type === "text" && ((b as any).text || "").length);
+  if (!tb) return null;
+  const m = ((tb as any).text as string).match(STRAY_LEAD_RE);
+  if (!m) return null;
+  const w = m[1];
+  return STRAY_LEAD_ALLOW.has(w) ? null : w;
+}
+
 // 兜底：模型偶尔把工具调用写成文本(<invoke name="x"><parameter name="y">…</parameter></invoke>)，
 // 导致没有结构化 tool_use → 循环判定"结束"而自动停止，且屏上留一堆 XML 符号。
 // 这里把这种泄漏的调用解析回来，转成真正的 tool_use 去执行，并给出去掉 XML 的干净正文。
@@ -183,6 +209,8 @@ export class Agent {
   private pendingInject: { text: string; images: string[] }[] = []; // 运行中注入的新需求，循环边界取用
   private round: RoundUsage = { input: 0, output: 0, cacheHit: 0, cacheMiss: 0, steps: 0, lastInput: 0 }; // 本轮自足用量
   private softStop = false; // 温和停止:不切断当前输出，让本轮自然吐完并干净落历史后，在下个边界停
+  private leadStrayCount = new Map<string, number>(); // 「漏字前缀」候选词→作为开头出现的次数
+  private knownStray = new Set<string>(); // 已判定的杂词前缀，见即剥
 
   constructor(
     private provider: Provider,
@@ -284,6 +312,60 @@ export class Agent {
   // 载入已保存的会话历史（切换/恢复会话时用）
   setMessages(msgs: Message[]): void {
     this.messages = msgs;
+    this.learnStrayFromHistory(); // 载入即扫历史学出杂词前缀并清掉，让下一条回复就干净
+  }
+
+  // 扫历史里各助手消息的开头小写词(紧贴中文)，统计领头次数；达阈值者判为杂词并从历史里剥掉。
+  // 解决「早前被污染的会话一打开，模型顺着旧输出继续冒 count」——先给它一个干净上下文。
+  private learnStrayFromHistory(): void {
+    this.leadStrayCount.clear();
+    for (const m of this.messages) {
+      if (m.role !== "assistant") continue;
+      const w = leadStrayWord(m.content);
+      if (w) this.leadStrayCount.set(w, (this.leadStrayCount.get(w) || 0) + 1);
+    }
+    for (const [w, c] of this.leadStrayCount) {
+      if (c >= STRAY_LEAD_THRESH) {
+        this.knownStray.add(w);
+        this.sweepStrayLead(w);
+      }
+    }
+  }
+
+  // 从历史里所有「该词紧贴中文领头」的助手消息剥掉这个杂词前缀(就地改，给模型干净上下文)
+  private sweepStrayLead(word: string): void {
+    const re = new RegExp("^" + word + "(?=[一-鿿])");
+    for (const m of this.messages) {
+      if (m.role !== "assistant") continue;
+      for (const b of m.content) {
+        if (b.type === "text" && re.test((b as any).text || "")) {
+          (b as any).text = ((b as any).text as string).slice(word.length);
+        }
+      }
+    }
+  }
+
+  // 处理单条助手消息的开头杂词：已知杂词→直接剥；未知→计数，达阈值则登记为杂词、清历史、剥当前。
+  // 返回可能被剥过的新内容(引用变了→上层触发替换+onRecover 修正屏显)。
+  private stripLearnedStrayLead(content: ContentBlock[]): ContentBlock[] {
+    const w = leadStrayWord(content);
+    if (!w) return content;
+    let strip = this.knownStray.has(w);
+    if (!strip) {
+      const c = (this.leadStrayCount.get(w) || 0) + 1;
+      this.leadStrayCount.set(w, c);
+      if (c >= STRAY_LEAD_THRESH) {
+        this.knownStray.add(w);
+        this.sweepStrayLead(w); // 追溯清掉历史里已积累的同款杂词
+        strip = true;
+      }
+    }
+    if (!strip) return content;
+    const idx = content.findIndex((b) => b.type === "text" && ((b as any).text || "").length);
+    if (idx < 0) return content;
+    const nc = content.slice();
+    nc[idx] = { type: "text", text: ((content[idx] as any).text as string).slice(w.length) } as ContentBlock;
+    return nc;
   }
 
   // 运行时切换模型后端（用户在设置里改 provider/model）
@@ -431,6 +513,8 @@ export class Agent {
       finalContent = stripStrayText(finalContent);
       // 兜底3：某文本块被刷成退化重复(count\ncount…)→折叠成几遍+提示，别污染历史/下一轮
       finalContent = collapseRepeatedBlocks(finalContent);
+      // 兜底4：正文开头粘的杂词前缀(如每条都冒 count紧贴中文)→学习后剥掉，别污染历史/下一轮
+      finalContent = this.stripLearnedStrayLead(finalContent);
 
       // 内容被清理过 → 替换历史里那条 + 通知前端修正屏上显示
       if (finalContent !== result.content) {
