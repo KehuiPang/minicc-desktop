@@ -293,7 +293,47 @@ export function App() {
   const dropToast = (askId: number) => setAskToasts((t) => t.filter((x) => x.askId !== askId));
   const asksRef = useRef(asks); // 定时器里判"这道题还在不在"(后台会话超时自动作答)
   asksRef.current = asks;
+  // AskModal 草稿(按 ask id)：切会话时 AskModal 会卸载，其本地 state(已填文字/图片/选择/步骤)就丢了。
+  // 提到这里存着→回到该会话时回填；并落盘 ~/.minicc/ask-drafts.json 扛重开/更新。答完/取消即随 clearAsk 清掉。
+  type AskDraft = {
+    sel: Record<number, string[]>;
+    other: Record<number, string>;
+    imgs: Record<number, string[]>;
+    step: number;
+  };
+  const [askDrafts, setAskDrafts] = useState<Record<number, AskDraft>>({});
+  const askDraftsRef = useRef(askDrafts);
+  askDraftsRef.current = askDrafts;
+  const askDraftsLoadedRef = useRef(false);
+  useEffect(() => {
+    window.minicc
+      .askDraftGet()
+      .then((m) => {
+        if (m && typeof m === "object") setAskDrafts(m as Record<number, AskDraft>);
+      })
+      .catch(() => {})
+      .finally(() => {
+        askDraftsLoadedRef.current = true;
+      });
+  }, []);
+  // 落盘：节流+trailing(同输入框草稿)，避免连打时每次输入都重置计时器导致一直不落盘
+  const askDraftTimerRef = useRef<number | null>(null);
+  const askDraftLastSaveRef = useRef(0);
+  useEffect(() => {
+    if (!askDraftsLoadedRef.current) return;
+    const flush = () => {
+      askDraftTimerRef.current = null;
+      askDraftLastSaveRef.current = Date.now();
+      window.minicc.askDraftSet(askDraftsRef.current);
+    };
+    const since = Date.now() - askDraftLastSaveRef.current;
+    const GAP = 400;
+    if (since >= GAP) flush();
+    else if (askDraftTimerRef.current == null)
+      askDraftTimerRef.current = window.setTimeout(flush, GAP - since);
+  }, [askDrafts]);
   const clearAsk = (sid: string) => {
+    const askId = asksRef.current[sid]?.id; // 该会话当前 ask 的 id，用于连带清掉草稿
     setAsks((m) => {
       if (!(sid in m)) return m;
       const n = { ...m };
@@ -301,6 +341,13 @@ export function App() {
       return n;
     });
     setAskToasts((t) => t.filter((x) => x.sid !== sid));
+    if (askId != null)
+      setAskDrafts((d) => {
+        if (!(askId in d)) return d;
+        const n = { ...d };
+        delete n[askId];
+        return n;
+      });
   };
   const [meta, setMeta] = useState({
     backend: "…",
@@ -4157,6 +4204,8 @@ export function App() {
         <AskModal
           key={asks[currentId].id}
           data={asks[currentId]}
+          initialDraft={askDrafts[asks[currentId].id]}
+          onDraft={(d) => setAskDrafts((m) => ({ ...m, [asks[currentId].id]: d }))}
           anchor={composerRef}
           /* 智能继续时的"你自己定"：无关紧要的选择题等几秒没人理就交给它自己拿主意，
              但问题里一沾删除/上线/花钱这类，askAutoSecFor 会返回 0，老老实实等你 */
@@ -4976,6 +5025,8 @@ function AskModal({
   onCancel,
   autoSec = 0,
   onAuto,
+  initialDraft,
+  onDraft,
 }: {
   data: { id: number; questions: AskQuestion[] };
   anchor: React.RefObject<HTMLDivElement | null>; // 输入框(composer)，用于对齐定位
@@ -4983,13 +5034,34 @@ function AskModal({
   onCancel: () => void;
   autoSec?: number; // >0：这么多秒没人动就交给 AI 自己定
   onAuto?: () => void;
+  // 草稿回填/上报：切会话时本组件卸载会丢本地 state，交由父组件按 ask id 存着，回来再灌进来
+  initialDraft?: {
+    sel: Record<number, string[]>;
+    other: Record<number, string>;
+    imgs: Record<number, string[]>;
+    step: number;
+  };
+  onDraft?: (d: {
+    sel: Record<number, string[]>;
+    other: Record<number, string>;
+    imgs: Record<number, string[]>;
+    step: number;
+  }) => void;
 }) {
   const qs = data.questions;
-  const [sel, setSel] = useState<Record<number, string[]>>({});
-  const [other, setOther] = useState<Record<number, string>>({});
-  const [imgs, setImgs] = useState<Record<number, string[]>>({}); // 每题附带的截图(dataURL)
+  const [sel, setSel] = useState<Record<number, string[]>>(() => initialDraft?.sel || {});
+  const [other, setOther] = useState<Record<number, string>>(() => initialDraft?.other || {});
+  const [imgs, setImgs] = useState<Record<number, string[]>>(() => initialDraft?.imgs || {}); // 每题附带的截图(dataURL)
   const fileRef = useRef<HTMLInputElement>(null);
-  const [step, setStep] = useState(0); // 分步：一次只问一题，答完再出下一题
+  const [step, setStep] = useState(() => {
+    const s = initialDraft?.step ?? 0; // 回到上次停留的那一题，但防越界(问题数变了)
+    return s >= 0 && s < qs.length ? s : 0;
+  }); // 分步：一次只问一题，答完再出下一题
+  // 已填内容变化→上报父组件存草稿(含切会话卸载后仍在)。仅上报，父组件节流落盘。
+  useEffect(() => {
+    onDraft?.({ sel, other, imgs, step });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel, other, imgs, step]);
   const q = qs[step];
   const isLast = step === qs.length - 1;
   const curMulti = !!q.multiSelect;

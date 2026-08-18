@@ -159,6 +159,9 @@ const API = {
   // 输入框草稿(文字+粘贴的图)实时存本地，重开自动恢复
   draftGet: () => ipcRenderer.invoke("draft:get") as Promise<{ text: string; images: string[] }>,
   draftSet: (draft: { text: string; images: string[] }) => ipcRenderer.send("draft:set", draft),
+  // AI 选择框(AskModal)草稿：按 ask id 存「已选/文字/截图/步骤」，切会话/重开回到那题仍在
+  askDraftGet: () => ipcRenderer.invoke("ask-draft:get") as Promise<Record<string, unknown>>,
+  askDraftSet: (map: Record<string, unknown>) => ipcRenderer.send("ask-draft:set", map),
   suggestNow: (sid: string) => ipcRenderer.invoke("chat:suggest", sid) as Promise<void>,
   // 同步"哪些会话开着智能继续"：这些会话在后台跑完也要算下一步建议，好自己接着推进
   setContSessions: (ids: string[]) => ipcRenderer.send("chat:cont-sessions", ids),

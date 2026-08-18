@@ -2397,6 +2397,26 @@ ipcMain.on("draft:set", (_e, draft: { text?: string; images?: string[] }) => {
   }
 });
 
+// —— AI 选择框(AskModal)草稿：按 ask id 存「已选/其它文字/截图/步骤」，落盘 ~/.minicc/ask-drafts.json。
+// 切会话时 AskModal 会卸载(其本地 state 丢失)，回到那会话时从这里回填；重开/更新亦能恢复。
+// 只留「未答」的 ask；答完/取消即由渲染进程从 map 里删掉该 id 再回写，不会无限堆积。
+const ASK_DRAFT_FILE = join(homedir(), ".minicc", "ask-drafts.json");
+ipcMain.handle("ask-draft:get", () => {
+  try {
+    return JSON.parse(readFileSync(ASK_DRAFT_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+});
+ipcMain.on("ask-draft:set", (_e, map: Record<string, unknown>) => {
+  try {
+    mkdirSync(dirname(ASK_DRAFT_FILE), { recursive: true });
+    writeFileSync(ASK_DRAFT_FILE, JSON.stringify(map || {}), "utf8");
+  } catch {
+    /* 落盘失败不影响答题 */
+  }
+});
+
 // —— 本地知识网络 Brain（设置里的"知识网络"面板 + 模型预热）——
 function refreshSysAfterBrain() {
   refreshAllAgentSystems();
