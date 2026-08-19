@@ -668,6 +668,9 @@ export class Agent {
     if (transcript.length > MAX) {
       transcript = transcript.slice(0, 6000) + "\n\n…(中间大段略去)…\n\n" + transcript.slice(-(MAX - 6000));
     }
+    // 掐头留尾的切点可能落在 UTF-16 代理对(emoji/部分字符)中间，留下孤立代理，
+    // JSON.stringify 会产出非法 JSON 致 API 400(no low/high surrogate)。清掉落单的代理字符。
+    transcript = transcript.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
     const res = await this.provider.complete(
       "你是「工作交接文档」整理器。下面是一段可能很长、甚至跑题或被无关内容污染的工作对话。" +
         "请只抽取真正有价值的信息，产出一份结构清晰的中文交接文档，让接手者(另一个 AI 助手)不看原对话也能直接继续干活。" +
