@@ -1986,17 +1986,32 @@ ipcMain.handle("session:handoff", async (_e, sid: string) => {
   currentId = newId;
   getAgent(newId);
   switchSessionProvider(newId, sp.providerId, sp.kind, sp.model); // 继承平台/模型(内部会 setRuntime+刷底栏)
+  // 迁移总目标：源会话若定过总目标，交接给新会话并重新激活(active)，让它接着自主推进；
+  // 即便源会话已标「完成」，交接的用意就是继续这个大目标，故 done 归零重新开跑。
+  const srcGoal = sessionGoals[srcId];
+  const goalMigrated = !!(srcGoal && String(srcGoal.text || "").trim());
+  if (goalMigrated) {
+    sessionGoals[newId] = { text: srcGoal.text, active: true, done: false };
+    saveGoals();
+  }
   send("evt:session-loaded", { id: newId, messages: [] });
   sendUsageFor(newId);
-  send("evt:handoff", { sid: newId, phase: "done" });
+  send("evt:handoff", { sid: newId, phase: "done", goalMigrated });
+  const goalPreface = goalMigrated
+    ? "【这个对话的总目标（从上一个对话继承）】\n" +
+      srcGoal!.text.slice(0, 600) +
+      "\n你已获授权朝这个总目标自主推进：理解交接内容后，接着把未完成的部分一步步做完，" +
+      "别每步都停下来问；只有删除/上线生产/花钱/发消息等不可逆或影响他人的动作才停下确认。\n\n"
+    : "";
   const firstMsg =
+    goalPreface +
     "【工作交接（来自上一个对话）】\n" +
     "上一个对话的上下文比较杂乱/过长，以下是从中整理出的有价值内容与当前进展。" +
     "请先理解交接内容，然后**接着把未完成的部分继续做完**；有不确定处再问我。\n\n" +
     "----\n" +
     doc;
   void startTurn(newId, firstMsg);
-  return { ok: true, newId };
+  return { ok: true, newId, goalMigrated };
 });
 
 ipcMain.on("session:switch", (_e, id: string) => {

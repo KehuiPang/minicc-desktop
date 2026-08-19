@@ -2362,6 +2362,12 @@ export function App() {
                       try {
                         const r = await window.minicc.handoffSession(sid);
                         if (!r?.ok) push({ type: "notice", text: "交接失败：该会话暂无可提炼的内容" });
+                        // 源会话定过总目标：新会话已在主进程带上目标，这里给它开「智能继续」，
+                        // 让它交接完自动朝总目标一步步续跑(目标条由 goalGet effect 自动加载显示)。
+                        else if (r.goalMigrated && r.newId) {
+                          setMode(r.newId, "cont");
+                          push({ type: "notice", text: "总目标已一并交接，新对话将自动继续推进 →" });
+                        }
                       } finally {
                         setHandoffBusy(false);
                       }

@@ -105,7 +105,7 @@ const API = {
   newSession: () => ipcRenderer.send("session:new"),
   renameSession: (id: string, title: string) => ipcRenderer.send("session:rename", id, title), // 手动重命名并锁定标题
   handoffSession: (sid: string) =>
-    ipcRenderer.invoke("session:handoff", sid) as Promise<{ ok: boolean; newId?: string }>, // 一键总结→开新会话接着做
+    ipcRenderer.invoke("session:handoff", sid) as Promise<{ ok: boolean; newId?: string; goalMigrated?: boolean }>, // 一键总结→开新会话接着做(带总目标一起交接)
 
   switchSession: (id: string) => ipcRenderer.send("session:switch", id),
   setSessionModel: (sid: string, model: string) => ipcRenderer.send("session:set-model", sid, model), // 每会话独立:只改本会话模型
