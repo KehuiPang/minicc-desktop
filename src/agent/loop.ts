@@ -9,7 +9,7 @@ import type {
   Tool,
   ToolContext,
 } from "../types.js";
-import { collapseRepeatedText } from "./repetition.js";
+import { collapseRepeatedText, REPEAT_TRUNC_NOTE } from "./repetition.js";
 
 // —— 上下文 token 粗估(发请求前判断该不该压缩;真实分词拿不到,宁可略高以尽早压缩) ——
 // 中文/日韩表意字 ≈0.6 token/字，其它(英文/代码/符号) ≈0.28 token/字。
@@ -216,6 +216,7 @@ export class Agent {
   private softStop = false; // 温和停止:不切断当前输出，让本轮自然吐完并干净落历史后，在下个边界停
   private leadStrayCount = new Map<string, number>(); // 「漏字前缀」候选词→作为开头出现的次数
   private knownStray = new Set<string>(STRAY_LEAD_SEED); // 已判定的杂词前缀，见即剥(预置已知退化词)
+  private repeatRounds = 0; // 连续「本轮输出被判退化重复」的轮数——跨轮攒够就 softStop，掐断死循环
 
   constructor(
     private provider: Provider,
@@ -336,6 +337,14 @@ export class Agent {
         this.knownStray.add(w);
         this.sweepStrayLead(w);
       }
+    }
+    // 单独成块的杂字(course/课…)与退化重复块只在「新消息落库」时清过；早前已污染进历史的
+    // 一直没扫，打开旧会话还留在屏上、又被喂给模型让它继续冒。加载时对每条历史助手消息补跑一遍。
+    for (const m of this.messages) {
+      if (m.role !== "assistant") continue;
+      let c = stripStrayText(m.content);
+      c = collapseRepeatedBlocks(c);
+      if (c !== m.content) m.content = c;
     }
   }
 
@@ -551,6 +560,22 @@ export class Agent {
           .map((b: any) => b.text)
           .join("");
         hooks.onRecover?.(t);
+      }
+
+      // 跨轮退化循环兜底：单条流的重复守卫每轮都重置，抓不到「每步吐一点 course/课 就结束、
+      // 又自动续下一步」这种跨轮死循环(智能继续下尤其明显)。这里累计「本轮被判退化重复」的轮数：
+      // 连续 2 轮就 softStop 干净停住，别再无脑往下续、把上下文越刷越脏。正常轮清零。
+      {
+        const txt = finalContent
+          .filter((b) => b.type === "text")
+          .map((b: any) => b.text)
+          .join("");
+        const degen = txt.includes(REPEAT_TRUNC_NOTE);
+        this.repeatRounds = degen ? this.repeatRounds + 1 : 0;
+        if (this.repeatRounds >= 2) {
+          this.repeatRounds = 0;
+          this.softStop = true; // 落到下面的 softStop 检查点，干净停在完整消息上
+        }
       }
 
       // 温和停止检查点:此刻这轮模型已「完整」生成并入历史(不是被截断的半截)。
