@@ -5042,7 +5042,9 @@ const DEFAULT_GOAL_PROMPT = `【这个对话的总目标】{目标}
 const goalPromptOf = () => localStorage.getItem("minicc-goal-prompt") || DEFAULT_GOAL_PROMPT;
 
 // 一沾这些就别替用户拿主意——宁可停下来等人，也不能自动替他决定
-const RISKY_ASK = /删除|清空|覆盖|抹掉|销毁|上线|发布|部署|生产|正式环境|prod\b|线上|付款|支付|下单|花钱|转账|发邮件|发消息|通知(客户|用户|大家)|授权|权限|密钥|token|密码|回滚|重置|drop\s+table|truncate|rm\s+-rf|强制推送|force\s*push/i;
+// 「权限/授权」用收窄的动作模式，别用裸词——裸「权限」会误伤「文件权限/TCC 权限被冻结」这类
+// 环境障碍描述(它只是在说卡在哪、不是要干危险事)，导致自主推进被误当红线死等(2026-08-19 用户遇到)。
+const RISKY_ASK = /删除|清空|覆盖|抹掉|销毁|上线|发布|部署|生产|正式环境|prod\b|线上|付款|支付|下单|花钱|转账|发邮件|发消息|通知(客户|用户|大家)|授权为|授予权限|改权限|改.{0,4}权限|权限设置|申请权限|提权|sso|oauth|密钥|token|密码|回滚|重置|drop\s+table|truncate|rm\s+-rf|强制推送|force\s*push/i;
 /** 这道题能不能超时自动替他答：内置危险词 + 用户自己写的红线，命中任一就返回 0(死等) */
 function askAutoSecFor(qs: AskQuestion[], sec: number, rules = ""): number {
   if (!sec || sec <= 0) return 0;
