@@ -129,6 +129,10 @@ const STRAY_LEAD_THRESH = 3;
 // 开头：2-15 个小写字母，后面紧跟 空白/中文/结尾(即它单独成词，不是某个更长英文词的一截)。
 // 命中则捕获那个词。含空白→能抓「card 读文档…」「card\n读文档…」乃至整块就一个「card」。
 const STRAY_LEAD_RE = /^([a-z]{2,15})(?=[\s一-鿿]|$)/;
+// 已知的模型退化杂词：反复出现、明确无意义(常由 count\ncount 重复循环污染历史所致)。
+// 预置为「已知杂词」→ 第一次粘在正文开头就剥，不必等攒够 STRAY_LEAD_THRESH 次才学会，
+// 免得开头几条仍漏出「course 提。」这种。都是小写英文、紧贴中文时几乎不可能是正经内容。
+const STRAY_LEAD_SEED = ["count", "course", "card"];
 // 常见合法的小写命令/工具词，绝不当杂词剥
 const STRAY_LEAD_ALLOW = new Set([
   "git", "npm", "npx", "pnpm", "yarn", "ssh", "scp", "cd", "ls", "rm", "cp", "mv", "cat",
@@ -211,7 +215,7 @@ export class Agent {
   private round: RoundUsage = { input: 0, output: 0, cacheHit: 0, cacheMiss: 0, steps: 0, lastInput: 0 }; // 本轮自足用量
   private softStop = false; // 温和停止:不切断当前输出，让本轮自然吐完并干净落历史后，在下个边界停
   private leadStrayCount = new Map<string, number>(); // 「漏字前缀」候选词→作为开头出现的次数
-  private knownStray = new Set<string>(); // 已判定的杂词前缀，见即剥
+  private knownStray = new Set<string>(STRAY_LEAD_SEED); // 已判定的杂词前缀，见即剥(预置已知退化词)
 
   constructor(
     private provider: Provider,
@@ -320,6 +324,8 @@ export class Agent {
   // 解决「早前被污染的会话一打开，模型顺着旧输出继续冒 count」——先给它一个干净上下文。
   private learnStrayFromHistory(): void {
     this.leadStrayCount.clear();
+    // 预置的已知退化词(count/course/card)：加载即从历史里追溯剥掉，别让旧污染会话开头几条还脏
+    for (const w of this.knownStray) this.sweepStrayLead(w);
     for (const m of this.messages) {
       if (m.role !== "assistant") continue;
       const w = leadStrayWord(m.content);
