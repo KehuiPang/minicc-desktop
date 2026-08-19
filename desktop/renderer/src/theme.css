@@ -3639,6 +3639,8 @@ body {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ctx-item:hover { background: var(--accent-soft); }
+.ctx-item.danger { color: #e5484d; }
+.ctx-item.danger:hover { background: rgba(229,72,77,0.12); }
 .ctx-new { color: var(--accent); }
 .ctx-input {
   width: 100%; box-sizing: border-box; margin: 2px 0;

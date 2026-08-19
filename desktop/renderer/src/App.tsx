@@ -465,6 +465,7 @@ export function App() {
   streamSpeedRef.current = streamSpeed;
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [ctxMenu, setCtxMenu] = useState<{ sid: string; x: number; y: number } | null>(null); // 会话右键菜单
+  const [babyCtx, setBabyCtx] = useState<{ x: number; y: number } | null>(null); // 数字婴儿节点右键菜单
   const [handoffBusy, setHandoffBusy] = useState(false); // 正在生成交接文档(总结→开新会话)
   const [renameSid, setRenameSid] = useState<string | null>(null); // 正在重命名的会话 id
   const [renameText, setRenameText] = useState(""); // 重命名输入框内容
@@ -2091,8 +2092,11 @@ export function App() {
             {agiExpanded && (
               <div className="agi-items">
                 {babyExists ? (
-                  <div className={"agi-item" + (agiView === "baby" ? " active" : "")}>
-                    <span className="agi-item-name" onClick={openBaby} title="点击进入数字婴儿">👶 数字婴儿</span>
+                  <div
+                    className={"agi-item" + (agiView === "baby" ? " active" : "")}
+                    onContextMenu={(e) => { e.preventDefault(); setBabyCtx({ x: e.clientX, y: e.clientY }); }}
+                  >
+                    <span className="agi-item-name" onClick={openBaby} title="点击进入数字婴儿（右键更多）">👶 数字婴儿</span>
                     <span className="agi-item-del" title="删除对接" onClick={deleteBaby}>✕</span>
                   </div>
                 ) : (
@@ -2271,6 +2275,37 @@ export function App() {
             );
           })()}
         </div>
+        {babyCtx && (
+          <>
+            <div
+              className="ctx-overlay"
+              onClick={() => setBabyCtx(null)}
+              onContextMenu={(e) => { e.preventDefault(); setBabyCtx(null); }}
+            />
+            <div className="ctx-menu" style={{ left: babyCtx.x, top: babyCtx.y }}>
+              <button
+                className="ctx-item"
+                title="在浏览器打开数字婴儿可解释自我仪表盘（需 baby_server 运行在 :8799）"
+                onClick={() => { window.minicc.openExternal("http://127.0.0.1:8799/dashboard"); setBabyCtx(null); }}
+              >
+                📊 可视化（浏览器打开仪表盘）
+              </button>
+              <button
+                className="ctx-item"
+                onClick={() => { openBaby(); setBabyCtx(null); }}
+              >
+                👶 进入数字婴儿面板
+              </button>
+              <div className="ctx-sep" />
+              <button
+                className="ctx-item danger"
+                onClick={() => { deleteBaby(); setBabyCtx(null); }}
+              >
+                ✕ 删除对接
+              </button>
+            </div>
+          </>
+        )}
         {ctxMenu &&
           (() => {
             const s = sessions.find((x) => x.id === ctxMenu.sid);
