@@ -4224,7 +4224,9 @@ body {
 .agi-item { display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 .agi-item:hover { background: rgba(127,127,127,.1); }
 .agi-item.active { background: rgba(90,120,255,.16); }
-.agi-item-name { flex: 1; }
+.agi-title { display: inline-flex; align-items: center; gap: 6px; }
+.agi-title svg, .agi-item-name svg { opacity: .9; flex: none; }
+.agi-item-name { flex: 1; display: flex; align-items: center; gap: 6px; }
 .agi-item-del { opacity: .4; padding: 0 4px; }
 .agi-item-del:hover { opacity: 1; color: #e5484d; }
 .agi-add { padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 12px; opacity: .7; border: 1px dashed var(--border, #ddd); text-align: center; }

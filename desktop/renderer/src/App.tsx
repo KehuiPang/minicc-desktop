@@ -2086,7 +2086,7 @@ export function App() {
         {agiEnabled && (
           <div className="agi-panel">
             <div className="agi-head" onClick={() => { const v = !agiExpanded; setAgiExpanded(v); localStorage.setItem("minicc-agi-expanded", v ? "1" : "0"); }}>
-              <span>🧠 AGI</span>
+              <span className="agi-title"><Ic.IcBrain size={14} /> AGI</span>
               <span className="agi-caret">{agiExpanded ? "▾" : "▸"}</span>
             </div>
             {agiExpanded && (
@@ -2096,7 +2096,7 @@ export function App() {
                     className={"agi-item" + (agiView === "baby" ? " active" : "")}
                     onContextMenu={(e) => { e.preventDefault(); setBabyCtx({ x: e.clientX, y: e.clientY }); }}
                   >
-                    <span className="agi-item-name" onClick={openBaby} title="点击进入数字婴儿（右键更多）">👶 数字婴儿</span>
+                    <span className="agi-item-name" onClick={openBaby} title="点击进入数字婴儿（右键更多）"><Ic.IcBaby size={15} /> 数字婴儿</span>
                     <span className="agi-item-del" title="删除对接" onClick={deleteBaby}>✕</span>
                   </div>
                 ) : (
