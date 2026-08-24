@@ -966,9 +966,16 @@ function refreshAllAgentSystems() {
 function provForSession(id: string, s: Settings): { providerId: string; kind: Settings["kind"]; model: string } {
   const ov = sessionProvOverride.get(id); // 内存覆盖优先(即时生效，含未落盘会话)
   if (ov) return ov;
+  // 模型必须「按平台」解析：本会话/本平台记住的 → 该平台默认模型。绝不跨平台把全局 s.model 带过来——
+  // 全局 s.model 属于「上次的全局平台」，平台切了它常不同步(如全局切到 codex，s.model 却还留着 claude-opus-4-8)，
+  // 硬凑就会出现「Codex 订阅 · claude-opus-4-8」这种非法组合(尤其新建会话默认走全局时)。
+  const modelFor = (pid: string, kind: Settings["kind"], own?: string): string =>
+    own || (s.creds || {})[pid]?.model || cfgForProvider(s, pid, kind, "").model || "";
   const m = listSessions().find((x) => x.id === id);
-  if (m?.providerId && m?.providerKind) return { providerId: m.providerId, kind: m.providerKind, model: m.model || s.model || "" };
-  return { providerId: s.providerId || "", kind: s.kind, model: s.model || "" };
+  if (m?.providerId && m?.providerKind)
+    return { providerId: m.providerId, kind: m.providerKind, model: modelFor(m.providerId, m.providerKind, m.model) };
+  const pid = s.providerId || "";
+  return { providerId: pid, kind: s.kind, model: modelFor(pid, s.kind) };
 }
 // 把「当前可见会话」的平台/模型设为全局运行时(供 conn:check/fetchModels/底栏显示)——不落盘、不动其它会话
 function setRuntimeForSession(id: string) {
