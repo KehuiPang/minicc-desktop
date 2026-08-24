@@ -580,6 +580,18 @@ class CodexProvider implements Provider {
 
     // 解析 Responses SSE，累积文本与 function_call
     const reader = res.body.getReader();
+    // 用户按停(abort)→取消读流，让卡在「等下一批字节」的 reader.read() 立刻解除。
+    // 否则流被 Codex 后端卡住时(Electron 注入的 net.fetch 对已开始的 body 不一定因原 signal 报错)，
+    // 这个循环会永远挂着——表现就是「停止按钮完全停不下来」。cancel 后 read() 以 done 收场跳出循环。
+    const sig = handlers.signal;
+    const onAbort = () => {
+      reader.cancel().catch(() => {});
+    };
+    if (sig?.aborted) {
+      reader.cancel().catch(() => {});
+      throw new DOMException("Aborted", "AbortError");
+    }
+    sig?.addEventListener("abort", onAbort, { once: true });
     const decoder = new TextDecoder();
     const guard = new RepetitionGuard(); // 退化重复守卫
     let repTripped = false;
@@ -592,6 +604,7 @@ class CodexProvider implements Provider {
     };
     const toolCalls: { call_id: string; name: string; args: string }[] = [];
 
+    try {
     codexRead: while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -642,6 +655,12 @@ class CodexProvider implements Provider {
         }
       }
     }
+    } finally {
+      sig?.removeEventListener("abort", onAbort);
+    }
+    // 用户按停(abort)→reader.cancel() 让上面的循环以 done 收场跳出;这里按中断抛出，
+    // 与 Anthropic provider 语义一致，交由 loop.ts 走「已停止」收尾，别把半截内容当正常完成继续跑下一步。
+    if (sig?.aborted) throw new DOMException("Aborted", "AbortError");
 
     if (curText) content.push({ type: "text", text: curText });
     for (const tc of toolCalls) {

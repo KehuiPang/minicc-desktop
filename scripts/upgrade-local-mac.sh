@@ -55,8 +55,18 @@ if ! running; then
   rm -rf "$DST"; mv "$BAK" "$DST"; open -a "$DST"; exit 1
 fi
 
+# ★ TCC 死循环根治：备份仍是合法 .app 包，LaunchServices 会把它扫进去登记；ad-hoc 签名下
+#   系统里多个同 bundleid 副本会让 TCC 把「访问文稿」的请求方认成备份副本，授权记错身份→每次重弹关不完。
+#   升级成功后，立刻把这个新备份从 LaunchServices 注销，别让它参与身份记账。
+LSREG="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [ -x "$LSREG" ]; then
+  say "从 LaunchServices 注销备份 $BAK（防 TCC 授权死循环）"
+  "$LSREG" -u "$BAK" >> "$LOG" 2>&1 || true
+  "$LSREG" -f "$DST" >> "$LOG" 2>&1 || true  # 确保正装 app 是被登记的那一个
+fi
+
 # 旧备份只留最近 KEEP 个
 ls -1dt "$BAKDIR"/minicc.app.bak_* 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r old; do
-  say "清理旧备份 $old"; rm -rf "$old"
+  say "清理旧备份 $old"; "$LSREG" -u "$old" >> "$LOG" 2>&1 || true; rm -rf "$old"
 done
 say "升级完成（备份在 $BAK）"
