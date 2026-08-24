@@ -140,14 +140,23 @@ const STRAY_LEAD_ALLOW = new Set([
   "nvim", "brew", "pip", "go", "cargo", "make", "bash", "sh", "zsh", "grep", "sed", "awk",
   "tar", "ffmpeg", "mysql", "redis", "nginx", "conda", "adb", "gcc", "clang", "java",
 ]);
-// 取一条消息里首个非空文本块的开头小写词(紧贴中文)；无则 null
-function leadStrayWord(content: ContentBlock[]): string | null {
-  const tb = content.find((b) => b.type === "text" && ((b as any).text || "").length);
-  if (!tb) return null;
-  const m = ((tb as any).text as string).match(STRAY_LEAD_RE);
+// 取单个文本串的开头小写杂词(紧贴中文、不在白名单)；无则 null
+function strayLeadOf(text: string): string | null {
+  const m = (text || "").match(STRAY_LEAD_RE);
   if (!m) return null;
   const w = m[1];
   return STRAY_LEAD_ALLOW.has(w) ? null : w;
+}
+// 一条消息里所有文本块的开头杂词(去重)。模型分步叙述时会把 care/card 各自当一个
+// 独立文本块粘在开头(text→tool_use→text→tool_use…)，只看首块会漏掉后面每一个。
+function leadStrayWords(content: ContentBlock[]): string[] {
+  const out = new Set<string>();
+  for (const b of content) {
+    if (b.type !== "text") continue;
+    const w = strayLeadOf((b as any).text || "");
+    if (w) out.add(w);
+  }
+  return [...out];
 }
 
 // 兜底：模型偶尔把工具调用写成文本(<invoke name="x"><parameter name="y">…</parameter></invoke>)，
@@ -329,8 +338,12 @@ export class Agent {
     for (const w of this.knownStray) this.sweepStrayLead(w);
     for (const m of this.messages) {
       if (m.role !== "assistant") continue;
-      const w = leadStrayWord(m.content);
-      if (w) this.leadStrayCount.set(w, (this.leadStrayCount.get(w) || 0) + 1);
+      // 逐块统计:分步叙述里 care/card 分散在多个文本块,只看首块会漏计、学不出来。
+      for (const b of m.content) {
+        if (b.type !== "text") continue;
+        const w = strayLeadOf((b as any).text || "");
+        if (w) this.leadStrayCount.set(w, (this.leadStrayCount.get(w) || 0) + 1);
+      }
     }
     for (const [w, c] of this.leadStrayCount) {
       if (c >= STRAY_LEAD_THRESH) {
@@ -367,37 +380,51 @@ export class Agent {
     }
   }
 
-  // 处理单条助手消息的开头杂词：已知杂词→直接剥；未知→计数，达阈值则登记为杂词、清历史、剥当前。
+  // 处理助手消息里的开头杂词：已知杂词→直接剥；未知→计数，达阈值则登记为杂词、清历史。
+  // 关键：模型分步叙述会把 care/card 各自当独立文本块粘在开头(text→tool_use→text→tool_use…)，
+  // 必须遍历「每个」文本块逐个剥，只处理首块会漏掉后面每一个(card 早在种子里却还漏就是这原因)。
   // 返回可能被剥过的新内容(引用变了→上层触发替换+onRecover 修正屏显)。
   private stripLearnedStrayLead(content: ContentBlock[]): ContentBlock[] {
-    const w = leadStrayWord(content);
-    if (!w) return content;
-    let strip = this.knownStray.has(w);
-    if (!strip) {
-      const c = (this.leadStrayCount.get(w) || 0) + 1;
+    const words = leadStrayWords(content);
+    if (!words.length) return content;
+    // 逐词判定是否要剥：已知→剥；未知→按「本消息内出现的块数」计数，达阈值则登记+追溯清历史。
+    const toStrip = new Set<string>();
+    for (const w of words) {
+      if (this.knownStray.has(w)) {
+        toStrip.add(w);
+        continue;
+      }
+      const hits = content.filter(
+        (b) => b.type === "text" && strayLeadOf((b as any).text || "") === w,
+      ).length;
+      const c = (this.leadStrayCount.get(w) || 0) + hits;
       this.leadStrayCount.set(w, c);
       if (c >= STRAY_LEAD_THRESH) {
         this.knownStray.add(w);
         this.sweepStrayLead(w); // 追溯清掉历史里已积累的同款杂词
-        strip = true;
+        toStrip.add(w);
       }
     }
-    if (!strip) return content;
-    const idx = content.findIndex((b) => b.type === "text" && ((b as any).text || "").length);
-    if (idx < 0) return content;
-    const stripped = ((content[idx] as any).text as string).slice(w.length).replace(/^[ \t\r\n]+/, "");
+    if (!toStrip.size) return content;
+    // 遍历所有文本块，凡开头是待剥杂词的都剥掉；整块只剩空则删该块(除非它是唯一内容块)。
     const nc = content.slice();
-    if (stripped) {
-      nc[idx] = { type: "text", text: stripped } as ContentBlock;
-    } else {
-      // 整块就是这个杂词：有其它块(工具调用等)则删掉这个空块；只有这一块则留着，别造空消息
-      const hasOther = content.some(
-        (b, i) => i !== idx && !(b.type === "text" && !((b as any).text || "").trim()),
-      );
-      if (!hasOther) return content;
-      nc.splice(idx, 1);
+    for (let i = 0; i < nc.length; i++) {
+      const b = nc[i];
+      if (b.type !== "text") continue;
+      const w = strayLeadOf((b as any).text || "");
+      if (!w || !toStrip.has(w)) continue;
+      const stripped = ((b as any).text as string).slice(w.length).replace(/^[ \t\r\n]+/, "");
+      if (stripped) {
+        nc[i] = { type: "text", text: stripped } as ContentBlock;
+      } else if (nc.length > 1) {
+        nc.splice(i, 1);
+        i--;
+      }
+      // else: 整块就是这个词且是唯一块 → 留着，别造空消息
     }
-    return nc;
+    // 引用是否真的变了(有实际改动才返回新数组，触发上层替换/onRecover)
+    const changed = nc.length !== content.length || nc.some((b, i) => b !== content[i]);
+    return changed ? nc : content;
   }
 
   // 运行时切换模型后端（用户在设置里改 provider/model）
