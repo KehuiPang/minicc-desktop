@@ -132,7 +132,7 @@ const STRAY_LEAD_RE = /^([a-z]{2,15})(?=[\s一-鿿]|$)/;
 // 已知的模型退化杂词：反复出现、明确无意义(常由 count\ncount 重复循环污染历史所致)。
 // 预置为「已知杂词」→ 第一次粘在正文开头就剥，不必等攒够 STRAY_LEAD_THRESH 次才学会，
 // 免得开头几条仍漏出「course 提。」这种。都是小写英文、紧贴中文时几乎不可能是正经内容。
-const STRAY_LEAD_SEED = ["count", "course", "card"];
+const STRAY_LEAD_SEED = ["count", "course", "card", "care"];
 // 常见合法的小写命令/工具词，绝不当杂词剥
 const STRAY_LEAD_ALLOW = new Set([
   "git", "npm", "npx", "pnpm", "yarn", "ssh", "scp", "cd", "ls", "rm", "cp", "mv", "cat",
