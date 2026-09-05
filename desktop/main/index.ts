@@ -15,6 +15,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { loadConfig } from "../../src/config.js";
 import { makeProvider, setHttpFetch } from "../../src/agent/provider.js";
+import type { Provider } from "../../src/types.js";
 import { Agent } from "../../src/agent/loop.js";
 import { systemPrompt, renderPrompt, DEFAULT_SYSTEM_PROMPT } from "../../src/agent/prompt.js";
 import { ALL_TOOLS, TOOL_MAP, MEMORY_FILE } from "../../src/tools/index.js";
@@ -1230,7 +1231,7 @@ function getAgent(id: string): Agent | null {
     const s = loadSettings() || ({} as Settings);
     const sp = provForSession(id, s);
     const cfg = cfgForProvider(s, sp.providerId, sp.kind, sp.model);
-    const p = makeProvider(cfg);
+    const p = makeProviderTagged(cfg);
     const sys = buildSysPrompt(cwd, cfg.model, sp.providerId, id);
     a = new Agent(p, sys, desktopTools(id), { cwd, sessionId: id }, desktopToolMap(id),
       { compactThreshold: cfg.compactThreshold, keepRecent: cfg.keepRecentTurns });
@@ -1253,7 +1254,7 @@ function switchSessionProvider(id: string, providerId: string, kind: Settings["k
   const cfg = cfgForProvider(s, providerId, kind, model);
   const a = getAgent(id);
   if (a) {
-    a.setProvider(makeProvider(cfg));
+    a.setProvider(makeProviderTagged(cfg));
     a.setSystem(buildSysPrompt(cwd, cfg.model, providerId, id));
     a.setCompactOpts({ compactThreshold: cfg.compactThreshold, keepRecent: cfg.keepRecentTurns });
   }
@@ -1724,17 +1725,26 @@ function saveOauthRefresh(pid: string, r: ClaudeOAuthResult | null) {
   log("oauthRefresh", "存续期凭据 平台=", pid, "过期=", r.expiresAt ? new Date(r.expiresAt).toISOString() : "无");
 }
 
+// 各会话 provider 所用的 access_token(WeakMap 随 provider 回收)：401 兜底时判断“凭据槽里是否已有更新的 token”。
+const provToken = new WeakMap<Provider, string>();
+function makeProviderTagged(cfg: ReturnType<typeof loadConfig>): Provider {
+  const p = makeProvider(cfg);
+  if (cfg.oauthToken) provToken.set(p, cfg.oauthToken);
+  return p;
+}
+
 // token 换新后重建所有用该平台的会话 provider(缓存的 agent 各自持着旧 token)。
-// 跳过正在跑的会话：它开跑时 token 尚有效，别在流中途换 provider；其下轮发送会自然走新 token。
+// ★正在跑的会话也必须换：refresh 轮换后旧 access_token 会被服务端立刻吊销(401 "has been revoked")，
+// 而 agent 循环每步都实时读 this.provider，中途换只影响下一次模型请求，是安全的。
+// (2026-09-05 教训：曾跳过运行中会话，导致它一直揣着已吊销的 token，之后再点“继续”也没人补建，只能重启/重授权。)
 function rebuildAgentsForProvider(pid: string) {
   const s = loadSettings() || ({} as Settings);
   let n = 0;
   for (const [aid, a] of agents.entries()) {
-    if (runs.has(aid)) continue;
     const sp = provForSession(aid, s);
     if (sp.providerId !== pid) continue;
     const cfg = cfgForProvider(s, sp.providerId, sp.kind, sp.model);
-    a.setProvider(makeProvider(cfg));
+    a.setProvider(makeProviderTagged(cfg));
     n++;
   }
   // 全局运行时 provider(conn:check/底栏用)也可能揣着旧 token → 当前会话若正用该平台，一并重建并让 UI 复检连通，
@@ -1752,13 +1762,14 @@ function rebuildAgentsForProvider(pid: string) {
 
 // 确保某订阅平台的 access_token 未临期；临期且有 refreshToken → 自动换新、回写 creds+oauthRefresh、重建 provider。
 // 返回 true=确实换过。失败(网络/refresh 失效)则维持旧 token，发送时该会话仍会弹一键授权条兜底。
-async function ensureClaudeOauthFresh(pid: string): Promise<boolean> {
+// force=true：不看续期窗口直接换(401 兜底用——token 明明没到期却被判无效时，只能换一个试)。
+async function ensureClaudeOauthFresh(pid: string, force = false): Promise<boolean> {
   if (pid !== "claude-oauth") return false; // 目前仅 Claude 订阅走 OAuth 续期
   const s0 = loadSettings();
   if (!claudeAutoRefreshEnabled(s0)) return false; // 用户主动关了→不续期(规避顶掉本机 claude CLI 登录)
   const meta = s0?.oauthRefresh?.[pid];
   if (!meta?.refreshToken) return false; // 没 refreshToken(旧 token/手填 key/尚未重新授权)→无从续期
-  if (meta.expiresAt && Date.now() < meta.expiresAt - OAUTH_REFRESH_SKEW_MS) return false; // 未到续期窗口
+  if (!force && meta.expiresAt && Date.now() < meta.expiresAt - OAUTH_REFRESH_SKEW_MS) return false; // 未到续期窗口
   let inflight = oauthRefreshInflight.get(pid);
   if (!inflight) {
     inflight = (async () => {
@@ -1831,6 +1842,26 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
         onStep: () => {
           streamDrafts.delete(useId); // 该段已进历史，清草稿
           persistQuiet(useId); // 即时落盘真实消息(每段/每工具轮)
+        },
+        // 撞 401(订阅 token 被吊销/过期)：先看凭据槽是否已有比本会话 provider 更新的 token(别处续期/重授权过但没落到本会话)，
+        // 有就直接换；没有则强制续期一次。换到新 token 才让 loop 重试本步，否则抛错走一键授权条。
+        onAuthError: async () => {
+          const s = loadSettings() || ({} as Settings);
+          const sp = provForSession(useId, s);
+          if (sp.providerId !== "claude-oauth") return null;
+          const inSlot = (s.creds || {})[sp.providerId]?.oauthToken || "";
+          const used = provToken.get(agent.getProvider()) || "";
+          let fresh = !!inSlot && inSlot !== used;
+          if (!fresh) fresh = await ensureClaudeOauthFresh("claude-oauth", true);
+          if (!fresh) {
+            log("oauthRefresh", "401 兜底：无更新 token 且强制续期失败，抛错走一键授权", useId.slice(0, 8));
+            return null;
+          }
+          const s2 = loadSettings() || ({} as Settings);
+          const sp2 = provForSession(useId, s2);
+          const cfg = cfgForProvider(s2, sp2.providerId, sp2.kind, sp2.model);
+          log("oauthRefresh", "401 兜底：按最新 token 重建本会话 provider 并重试一次", useId.slice(0, 8), "来源=", inSlot !== used ? "凭据槽已更新" : "强制续期");
+          return makeProviderTagged(cfg);
         },
         onRecover: (cleaned) => {
           streamDrafts.delete(useId);

@@ -41,6 +41,14 @@ function isPromptTooLong(e: unknown): boolean {
   );
 }
 
+// 识别"认证失效"类错误(401：OAuth token 过期/被吊销)。订阅 token 续期轮换后旧 access_token 即刻作废，
+// 正在跑的会话若还揣着旧 token 就会撞这个；由上层按最新凭据重建 provider 后重试一次。
+function isAuthError(e: unknown): boolean {
+  const err = e as { status?: number; message?: string; error?: { type?: string; message?: string } };
+  const msg = `${err?.message || ""} ${err?.error?.message || ""}`.toLowerCase();
+  return err?.status === 401 || err?.error?.type === "authentication_error" || /token has been revoked|token has expired/.test(msg);
+}
+
 export type PermissionDecision = "allow" | "deny";
 
 export interface AgentOptions {
@@ -82,6 +90,7 @@ export interface AgentHooks {
   onCompact?(before: number, after: number): void; // 压缩发生时回报条数变化
   onStep?(): void; // 每完成一段(助手消息/工具结果)后回调：用于即时落盘，重启不丢进度
   onRecover?(cleanedText: string): void; // 模型把工具调用当文本吐出→兜底解析后，回传清理后的正文供前端修正显示
+  onAuthError?(): Promise<Provider | null>; // 撞 401(token 过期/吊销)→上层按最新凭据给一个新 provider 则重试本步；null=放弃抛错
 }
 
 // 去掉落单的杂字文本块(模型偶发把杂词/单字跟正文或工具调用一起吐出，如 "count"/"course"/"课")。
@@ -435,6 +444,10 @@ export class Agent {
     this.provider = p;
   }
 
+  getProvider(): Provider {
+    return this.provider;
+  }
+
   setSystem(s: string): void {
     this.system = s;
   }
@@ -480,6 +493,7 @@ export class Agent {
     this.round = { input: 0, output: 0, cacheHit: 0, cacheMiss: 0, steps: 0, lastInput: 0 }; // 本轮清零重记
     this.softStop = false; // 新一轮开始，清掉上一轮可能残留的软停止标志
     let shrinkAttempts = 0; // 撞上下文上限后的紧急压缩重试计数(防死循环)
+    let authRetried = false; // 401 后换新 provider 只重试一次(续期也救不回就老实抛错)
 
     while (true) {
       if (signal?.aborted) return; // 已被用户硬中断(abort)
@@ -512,6 +526,15 @@ export class Agent {
         if (isPromptTooLong(e) && shrinkAttempts < 5 && (await this.emergencyShrink(hooks))) {
           shrinkAttempts++;
           continue;
+        }
+        // 撞 401(订阅 token 续期轮换后旧 token 被吊销/过期)→ 让上层按最新凭据重建 provider，换上后重试本步一次。
+        if (isAuthError(e) && !authRetried && hooks.onAuthError) {
+          authRetried = true;
+          const np = await hooks.onAuthError().catch(() => null);
+          if (np) {
+            this.provider = np;
+            continue;
+          }
         }
         throw e;
       }
