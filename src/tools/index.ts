@@ -332,6 +332,98 @@ function parseDDG(html: string): { title: string; url: string; snippet: string }
   return items.map((it, i) => ({ ...it, snippet: snips[i] || "" }));
 }
 
+type SearchHit = { title: string; url: string; snippet: string };
+
+// 解析 DuckDuckGo lite 版(比 html 版更轻、偶尔 html 版被挡时它还活着；注意 class 用的是单引号)。
+// lite 版有时不带摘要，只有标题+链接也照样有用。
+function parseDDGLite(html: string): SearchHit[] {
+  const linkRe = /<a[^>]*class=['"]result-link['"][^>]*href=['"]([^'"]+)['"][^>]*>([\s\S]*?)<\/a>|<a[^>]*href=['"]([^'"]+)['"][^>]*class=['"]result-link['"][^>]*>([\s\S]*?)<\/a>/gi;
+  const snipRe = /class=['"]result-snippet['"][^>]*>([\s\S]*?)<\/td>/gi;
+  const items: { title: string; url: string }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = linkRe.exec(html))) {
+    let url = (m[1] || m[3] || "").replace(/&amp;/g, "&");
+    const uddg = /[?&]uddg=([^&]+)/.exec(url);
+    if (uddg) url = decodeURIComponent(uddg[1]);
+    else if (url.startsWith("//")) url = "https:" + url;
+    items.push({ url, title: stripTags(m[2] || m[4] || "") });
+  }
+  const snips: string[] = [];
+  let s: RegExpExecArray | null;
+  while ((s = snipRe.exec(html))) snips.push(stripTags(s[1]));
+  return items.map((it, i) => ({ ...it, snippet: snips[i] || "" }));
+}
+
+// 解析 Bing 的 RSS 输出(format=rss)：官方 XML，结构稳定，不用抓易变的 HTML；且与 DDG 不同厂商，限流互不牵连。
+function parseBingRSS(xml: string): SearchHit[] {
+  const out: SearchHit[] = [];
+  const itemRe = /<item>([\s\S]*?)<\/item>/gi;
+  const pick = (block: string, tag: string) => {
+    const r = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "i").exec(block);
+    return r ? stripTags(r[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")) : "";
+  };
+  let m: RegExpExecArray | null;
+  while ((m = itemRe.exec(xml))) {
+    const url = pick(m[1], "link");
+    if (!/^https?:\/\//i.test(url)) continue;
+    out.push({ title: pick(m[1], "title"), url, snippet: pick(m[1], "description") });
+  }
+  return out;
+}
+
+// 搜索源：按顺序兜底。第二位放 Bing 而非 DDG lite——lite 与 html 同属 DDG，DDG 一限流俩一起哑，
+// 换一家厂商才是真兜底；lite 只作最后一道。
+const SEARCH_SOURCES: { name: string; url: (q: string) => string; parse: (s: string) => SearchHit[] }[] = [
+  {
+    name: "ddg",
+    url: (q) => "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(q),
+    parse: parseDDG,
+  },
+  {
+    name: "bing",
+    // 市场按查询语种走：含中日韩字符走 zh-CN，否则 en-US(否则 Bing 默认给国内市场，英文技术词会飘成知乎首页)
+    url: (q) =>
+      "https://www.bing.com/search?q=" + encodeURIComponent(q) + "&format=rss&mkt=" + (/[぀-ヿ㐀-鿿]/.test(q) ? "zh-CN" : "en-US"),
+    parse: parseBingRSS,
+  },
+  {
+    name: "ddg-lite",
+    url: (q) => "https://lite.duckduckgo.com/lite/?q=" + encodeURIComponent(q),
+    parse: parseDDGLite,
+  },
+];
+const SEARCH_RETRY_DELAYS_MS = [350, 900]; // 每源最多 3 次：立即 + 两次退避(带抖动)，躲过瞬时节流
+const SEARCH_COOLDOWN_MS = 60_000; // 某源刚空/报错 → 60 秒内跳过它，别继续砸已限流的源，也让兜底更快
+const SEARCH_WANT = 5; // 凑够这么多条就停止继续问下一个源
+const SEARCH_MAX = 8;
+const searchCooldownUntil = new Map<string, number>();
+
+const sleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((res, rej) => {
+    const t = setTimeout(res, ms);
+    signal?.addEventListener("abort", () => { clearTimeout(t); rej(new Error("aborted")); }, { once: true });
+  });
+
+// 查询单个源：立即一次 + 退避重试；空结果也视为可重试(节流页常是 200 但没内容)。全失败返回 []。
+async function querySource(src: (typeof SEARCH_SOURCES)[number], q: string, signal?: AbortSignal): Promise<SearchHit[]> {
+  for (let attempt = 0; attempt <= SEARCH_RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt > 0) await sleep(SEARCH_RETRY_DELAYS_MS[attempt - 1] + Math.floor(Math.random() * 250), signal);
+    try {
+      const res = await fetch(src.url(q), {
+        headers: { "User-Agent": UA, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8", Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" },
+        signal,
+      });
+      if (!res.ok) continue; // 4xx/5xx(含 429/503 节流)→ 退避再试
+      const hits = src.parse(await res.text());
+      if (hits.length) return hits;
+    } catch (e: any) {
+      if (signal?.aborted || /aborted/i.test(String(e?.message))) throw e; // 用户中止：不再重试
+      // 网络类错误 → 退避再试
+    }
+  }
+  return [];
+}
+
 const webSearchTool: Tool = {
   name: "web_search",
   description:
@@ -346,15 +438,33 @@ const webSearchTool: Tool = {
     try {
       const q = String(input.query || "").trim();
       if (!q) return { content: "搜索词为空", isError: true };
-      const res = await fetch("https://html.duckduckgo.com/html/?q=" + encodeURIComponent(q), {
-        headers: { "User-Agent": UA, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8" },
-        signal: ctx.signal,
-      });
-      const html = await res.text();
-      const results = parseDDG(html).slice(0, 8);
-      if (!results.length) return { content: "(无结果，或搜索源暂时不可用，可改用 web_fetch 直接抓已知 URL)" };
+      const merged: SearchHit[] = [];
+      const seen = new Set<string>();
+      const used: string[] = [];
+      const now = Date.now();
+      for (const src of SEARCH_SOURCES) {
+        if (merged.length >= SEARCH_WANT) break;
+        if ((searchCooldownUntil.get(src.name) || 0) > now) continue; // 冷却中的源直接跳过
+        const hits = await querySource(src, q, ctx.signal);
+        if (!hits.length) {
+          searchCooldownUntil.set(src.name, Date.now() + SEARCH_COOLDOWN_MS);
+          continue;
+        }
+        used.push(src.name);
+        for (const h of hits) {
+          const key = h.url.replace(/[#?].*$/, "").replace(/\/+$/, "").toLowerCase();
+          if (!h.url || seen.has(key)) continue;
+          seen.add(key);
+          merged.push(h);
+          if (merged.length >= SEARCH_MAX) break;
+        }
+      }
+      if (!merged.length)
+        return { content: "(三个搜索源(DuckDuckGo/Bing/DDG-lite)均暂时无结果或被限流，稍后重试，或改用 web_fetch 直接抓已知 URL)" };
       return {
-        content: results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join("\n\n"),
+        content:
+          merged.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join("\n\n") +
+          `\n\n(来源: ${used.join(" + ")})`,
       };
     } catch (e: any) {
       return { content: `搜索失败: ${e.message}`, isError: true };

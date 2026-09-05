@@ -220,6 +220,9 @@ export class Agent {
   };
   private compactThreshold: number;
   private keepRecent: number;
+  // 压不动时记下当时的消息数:消息数不变就不再重复压——否则"保留区本身超阈值"时每步都烧一次摘要请求、
+  // 屏上刷"42→42"无限循环(2026-09-03 用户带 3 张大图的 tool 密集轮触发)。消息数一变(新输入/新结果)自动解除。
+  private compactStuckAt = -1;
   private pendingInject: { text: string; images: string[] }[] = []; // 运行中注入的新需求，循环边界取用
   private round: RoundUsage = { input: 0, output: 0, cacheHit: 0, cacheMiss: 0, steps: 0, lastInput: 0 }; // 本轮自足用量
   private softStop = false; // 温和停止:不切断当前输出，让本轮自然吐完并干净落历史后，在下个边界停
@@ -788,7 +791,28 @@ export class Agent {
     // 取"上一轮成功值"与"当前实时估算"的较大者:成功值准但可能过时,估算值防它过时导致漏压。
     const trigger = Math.max(this.usage.lastInput, this.estimateContextTokens());
     if (trigger < this.compactThreshold) return;
+    // ★防死循环:上次压完消息数没变且仍超阈值 → 说明压不动(大头在保留区),本步不再压
+    if (this.compactStuckAt === this.messages.length) return;
     await this.compactOnce(hooks, this.keepRecent);
+    if (this.estimateContextTokens() < this.compactThreshold) {
+      this.compactStuckAt = -1;
+      return;
+    }
+    // 还超:大头在保留区(当前轮带大图/大工具结果,摘要碰不到) → 逐级少留;仍超则硬砍巨物(丢图/截长结果)
+    for (const keepN of [6, 3, 1]) {
+      if (this.messages.length <= keepN + 1) break;
+      if ((await this.compactOnce(hooks, keepN)) && this.estimateContextTokens() < this.compactThreshold) {
+        this.compactStuckAt = -1;
+        return;
+      }
+    }
+    const n0 = this.messages.length;
+    if (this.shrinkOversized()) {
+      this.usage.lastInput = 0; // 砍完让下轮按新估算重新度量
+      hooks.onCompact?.(n0, this.messages.length);
+    }
+    // 砍无可砍仍超 → 记住当前条数,条数不变就不再压;照常发送,真撞上限由 emergencyShrink 兜底
+    this.compactStuckAt = this.estimateContextTokens() >= this.compactThreshold ? this.messages.length : -1;
   }
 
   // 执行一次压缩:把安全切点之前的旧历史摘要成一条 user 消息,保留最近 keepN 条原始消息。
@@ -798,6 +822,16 @@ export class Agent {
 
     const cut = this.findCutIndex(keepN);
     if (cut <= 0) return false; // 找不到安全切点则不压
+    // 旧历史只剩上一次的摘要(摘要是纯文本 user 消息,findCutIndex 会把切点正好落在它后面):
+    // 再摘一遍毫无意义、还白烧一次请求且屏上刷"N→N",直接放弃(交给调用方升级处理)
+    const first = this.messages[0];
+    const olderIsJustSummary =
+      cut === 1 &&
+      first?.role === "user" &&
+      (first.content || []).length === 1 &&
+      (first.content[0] as any)?.type === "text" &&
+      String((first.content[0] as any).text || "").startsWith("【之前对话摘要】");
+    if (olderIsJustSummary) return false;
 
     const older = this.messages.slice(0, cut);
     const recent = this.messages.slice(cut);

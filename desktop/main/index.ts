@@ -82,11 +82,18 @@ import {
   brainEnabled,
   brainDocsEnabled,
   resumeDetectEnabled,
+  claudeAutoRefreshEnabled,
   type Settings,
   type SessionBal,
 } from "./settings.js";
 import { getAccount, logout } from "./account.js";
-import { claudeOAuthLogin, claudeOAuthOpenBrowser, claudeOAuthExchange } from "./claude-oauth.js";
+import {
+  claudeOAuthLogin,
+  claudeOAuthOpenBrowser,
+  claudeOAuthExchange,
+  claudeOAuthRefresh,
+  type ClaudeOAuthResult,
+} from "./claude-oauth.js";
 import { codexOAuthLogin } from "./codex-oauth.js";
 import { log, LOG_FILE } from "./logger.js";
 
@@ -1674,6 +1681,7 @@ if (!gotLock) {
       // 凭证等问题：窗口起来后提示
     }
     createWindow();
+    startOauthRefreshTimer(); // Claude 订阅令牌后台自动续期(过期前几分钟提前换，挂机也不弹授权条)
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
@@ -1699,6 +1707,94 @@ app.on("before-quit", () => {
 
 // —— IPC：渲染 → 主 ——
 // 多任务：sid 指定跑哪个会话(前端传 currentId)，各会话各自异步、互不阻塞。事件都带 sid，前端只把当前可见会话的更新画出来。
+// —— Claude 订阅令牌自动续期 ——
+// 续期凭据(refreshToken/expiresAt)存 settings.oauthRefresh[pid]，主进程独占；access_token 仍在 creds 槽。
+const OAUTH_REFRESH_SKEW_MS = 300_000; // 提前 5 分钟续期：后台定时器每 2 分钟一跳，保证过期前几分钟就换好，永不断
+const OAUTH_REFRESH_TICK_MS = 120_000; // 后台巡检间隔：开着 minicc 时不依赖发消息也能提前续期
+const oauthRefreshInflight = new Map<string, Promise<boolean>>(); // 按平台单飞：并发会话同时发只刷一次
+let oauthRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+// 授权/换码/续期成功后：把续期凭据落进 settings.oauthRefresh(与 creds 分开存，免被渲染层整槽重建冲掉)
+function saveOauthRefresh(pid: string, r: ClaudeOAuthResult | null) {
+  if (!r) return;
+  const s = loadSettings() || ({} as Settings);
+  const map = { ...(s.oauthRefresh || {}) };
+  map[pid] = { refreshToken: r.refreshToken, expiresAt: r.expiresAt };
+  saveSettings({ ...s, oauthRefresh: map });
+  log("oauthRefresh", "存续期凭据 平台=", pid, "过期=", r.expiresAt ? new Date(r.expiresAt).toISOString() : "无");
+}
+
+// token 换新后重建所有用该平台的会话 provider(缓存的 agent 各自持着旧 token)。
+// 跳过正在跑的会话：它开跑时 token 尚有效，别在流中途换 provider；其下轮发送会自然走新 token。
+function rebuildAgentsForProvider(pid: string) {
+  const s = loadSettings() || ({} as Settings);
+  let n = 0;
+  for (const [aid, a] of agents.entries()) {
+    if (runs.has(aid)) continue;
+    const sp = provForSession(aid, s);
+    if (sp.providerId !== pid) continue;
+    const cfg = cfgForProvider(s, sp.providerId, sp.kind, sp.model);
+    a.setProvider(makeProvider(cfg));
+    n++;
+  }
+  // 全局运行时 provider(conn:check/底栏用)也可能揣着旧 token → 当前会话若正用该平台，一并重建并让 UI 复检连通，
+  // 否则续期后左下角连通灯会停在黄(拿着已 revoke 的旧 token)、还冒“去解决”条。
+  try {
+    if (currentId && provForSession(currentId, s).providerId === pid) {
+      setRuntimeForSession(currentId);
+      send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow });
+    }
+  } catch {
+    /* ignore */
+  }
+  log("oauthRefresh", "已用新 token 重建", pid, "会话 provider ×", n);
+}
+
+// 确保某订阅平台的 access_token 未临期；临期且有 refreshToken → 自动换新、回写 creds+oauthRefresh、重建 provider。
+// 返回 true=确实换过。失败(网络/refresh 失效)则维持旧 token，发送时该会话仍会弹一键授权条兜底。
+async function ensureClaudeOauthFresh(pid: string): Promise<boolean> {
+  if (pid !== "claude-oauth") return false; // 目前仅 Claude 订阅走 OAuth 续期
+  const s0 = loadSettings();
+  if (!claudeAutoRefreshEnabled(s0)) return false; // 用户主动关了→不续期(规避顶掉本机 claude CLI 登录)
+  const meta = s0?.oauthRefresh?.[pid];
+  if (!meta?.refreshToken) return false; // 没 refreshToken(旧 token/手填 key/尚未重新授权)→无从续期
+  if (meta.expiresAt && Date.now() < meta.expiresAt - OAUTH_REFRESH_SKEW_MS) return false; // 未到续期窗口
+  let inflight = oauthRefreshInflight.get(pid);
+  if (!inflight) {
+    inflight = (async () => {
+      const r = await claudeOAuthRefresh(meta.refreshToken!);
+      if (!r) {
+        log("oauthRefresh", "续期失败(维持旧 token，发送时走一键授权兜底) 平台=", pid);
+        return false;
+      }
+      const s = loadSettings() || ({} as Settings);
+      const creds = { ...(s.creds || {}) };
+      creds[pid] = { ...(creds[pid] || {}), oauthToken: r.token }; // 新 access_token 进对应平台槽
+      const map = { ...(s.oauthRefresh || {}) };
+      map[pid] = { refreshToken: r.refreshToken, expiresAt: r.expiresAt };
+      const isCurrent = s.providerId === pid; // 当前生效平台才同步顶层 oauthToken(loadConfig 用)
+      saveSettings({ ...s, creds, oauthRefresh: map, ...(isCurrent ? { oauthToken: r.token } : {}) });
+      rebuildAgentsForProvider(pid);
+      log("oauthRefresh", "✓ 已续期并回写 平台=", pid);
+      return true;
+    })().finally(() => oauthRefreshInflight.delete(pid));
+    oauthRefreshInflight.set(pid, inflight);
+  }
+  return inflight;
+}
+
+// 后台巡检:开着 minicc 期间，即使不发消息也在令牌过期前几分钟自动续期(挂机跨过期不再弹授权条)。
+// ensureClaudeOauthFresh 内部自带“未到窗口就早退/单飞/开关判断”，这里只管按节奏叫它。
+function startOauthRefreshTimer() {
+  if (oauthRefreshTimer) return;
+  oauthRefreshTimer = setInterval(() => {
+    void ensureClaudeOauthFresh("claude-oauth").catch((e) =>
+      log("oauthRefresh", "后台巡检续期异常(忽略)", String(e)),
+    );
+  }, OAUTH_REFRESH_TICK_MS);
+  log("oauthRefresh", "后台续期巡检已启动，间隔", OAUTH_REFRESH_TICK_MS / 1000, "秒");
+}
+
 async function startTurn(useId: string, text: string, images?: string[], sysOverride?: string) {
   turnSid = useId; // 供 ask_user 工具的事件带上会话 id
   text = secrets.redact(text).text; // 兜底：已入库密钥出现在消息里→占位符替换，永不出网到模型
@@ -1708,6 +1804,14 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
     return;
   }
   if (runs.has(useId)) return; // 该会话已在跑，忽略重复提交
+  // Claude 订阅令牌快过期→发送前自动续期(全局共享，一次刷新惠及所有 claude-oauth 会话)；换过则已重建本会话 provider。
+  // 失败不拦发送：仍按旧 token 发，真过期时照旧弹一键授权条兜底。
+  try {
+    if (provForSession(useId, loadSettings() || ({} as Settings)).providerId === "claude-oauth")
+      await ensureClaudeOauthFresh("claude-oauth");
+  } catch (e) {
+    log("oauthRefresh", "续期检查异常(忽略，按原 token 继续)", String(e));
+  }
   // 每轮开跑前刷新系统提示词，让上一轮 remember 写入的记忆立即生效(用【本会话】自己的模型/平台，别用全局串味)
   const am = agentMeta.get(useId);
   agent.setSystem(sysOverride ?? buildSysPrompt(cwd, am?.model || modelLabel, provForSession(useId, loadSettings() || ({} as Settings)).providerId, useId));
@@ -2025,7 +2129,16 @@ ipcMain.on("session:switch", (_e, id: string) => {
   currentId = id;
   const a = getAgent(id);
   // getDisplayMessages：带上还没并入历史的注入消息，否则切回正在跑的会话时「刚发的那条」会不见
-  send("evt:session-loaded", { id, messages: a ? a.getDisplayMessages() : [] });
+  const msgs = a ? a.getDisplayMessages() : [];
+  // ★ 再带上正在生成、尚未并入历史的半截正文(streamDrafts)：渲染层对非当前会话的 evt:assistant-delta 一律丢弃，
+  // 切回一个正在输出的会话时若不补这段，后续增量会从"切回那一刻"起新建气泡 → 屏上只剩后缀(表头/开头丢失、
+  // 表格散成一行)，而落盘的 persistQuiet 却是完整的。与 persistQuiet 同法：作为末尾临时 assistant 消息附上，
+  // messagesToItems 会把它变成最后一个 assistant 条目，flushDelta 随后把新增量追加进去 → 正文完整。
+  const draft = runs.has(id) ? streamDrafts.get(id) : undefined;
+  const loaded = draft && draft.trim()
+    ? [...msgs, { role: "assistant", content: [{ type: "text", text: draft }], ts: Date.now() } as any]
+    : msgs;
+  send("evt:session-loaded", { id, messages: loaded });
   setRuntimeForSession(id); // 底栏平台/模型、conn 状态 反映「本会话」自己的
   sendUsageFor(id);
   void emitAccount();
@@ -2838,6 +2951,7 @@ ipcMain.on("account:logout", () => {
 ipcMain.handle("account:claude-login", async () => {
   log("claude-login-ipc", "应用内弹窗授权");
   const r = await claudeOAuthLogin();
+  if (r) saveOauthRefresh("claude-oauth", r); // 存 refreshToken/expiresAt，供后续自动续期
   return r ? r.token : null;
 });
 
@@ -2852,6 +2966,7 @@ ipcMain.handle("account:claude-oauth-open", () => {
 ipcMain.handle("account:claude-oauth-exchange", async (_e, code: string) => {
   log("claude-login-ipc", "用授权码换 token");
   const r = await claudeOAuthExchange(code);
+  if (r) saveOauthRefresh("claude-oauth", r); // 存 refreshToken/expiresAt，供后续自动续期
   return r ? r.token : null;
 });
 

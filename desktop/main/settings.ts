@@ -136,6 +136,10 @@ export interface Settings {
   baseUrl?: string; // openai 兼容端点
   oauthToken?: string; // anthropic 订阅
   creds?: Record<string, CredSlot>; // 按平台分槽保存的全部凭证
+  // 【主进程独占，渲染层任何保存路径都不写它】各订阅平台的续期凭据：refreshToken + 过期时刻。
+  // 单独放顶层而非塞进 creds 槽，是因为渲染层保存 key 时会整槽重建 creds[pid]，易把它冲掉；
+  // 放这里靠 saveSettings 的浅合并天然保留。发送前 ensureClaudeOauthFresh 据此自动续期。
+  oauthRefresh?: Record<string, { refreshToken?: string; expiresAt?: number }>;
   app?: AppSettings; // 应用级设置(与具体平台无关)
   systemPrompt?: string; // 自定义系统提示词(全局)；未设=用默认模板。支持 {model}/{cwd} 占位符
   brainPrompt?: string; // 脑网络说明提示词覆盖；未设=用 DEFAULT_BRAIN_NOTE(在「知识网络」设置里查看/改)
@@ -164,7 +168,8 @@ export interface CustomStation {
 
 // 应用级设置：放在专门的「设置」弹窗里，跨平台通用
 export interface AppSettings {
-  claudeAutoRefresh?: boolean; // Claude Code token 过期时用 refreshToken 自动刷新(默认关；有搞挂 Claude Code 登录的风险)
+  claudeAutoRefresh?: boolean; // Claude 订阅 token 快过期时用 refreshToken 自动续期(undefined 视为「开」)。
+  // 与官方 claude CLI 共用同一 client_id，续期会轮换 refresh 链、可能顶掉本机 CLI 登录 → 想避风险可在设置里关。
   secretsDetect?: boolean; // 发送前扫描/拦截疑似新密钥(默认开=undefined 视为 true)；关掉后长 token 不再被切成一堆弹窗
   brainEnabled?: boolean; // 启用本地知识网络 Brain：注入系统提示 + 提供 brain_* 工具(默认开)
   brainDocs?: boolean; // brain_recall 是否连带扫描文档冷存储的『相关文档』(默认开)
@@ -183,6 +188,10 @@ export function brainDocsEnabled(s: Settings | null): boolean {
 }
 export function resumeDetectEnabled(s: Settings | null): boolean {
   return s?.app?.resumeDetect !== false;
+}
+// Claude 订阅令牌自动续期：undefined 一律按「开」，与其它 app 开关一致(用户可主动关掉规避 CLI 顶号风险)
+export function claudeAutoRefreshEnabled(s: Settings | null): boolean {
+  return s?.app?.claudeAutoRefresh !== false;
 }
 
 export function loadSettings(): Settings | null {

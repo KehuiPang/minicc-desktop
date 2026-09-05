@@ -73,6 +73,40 @@ async function exchangeToken(
   };
 }
 
+// 用 refresh_token 换一枚新的 access_token（令牌快过期时自动续期，免得用户反复重授权）。
+// 注意：与官方 claude CLI 共用同一个 client_id，Anthropic 对「用户+client」通常只维护一条有效的
+// refresh 链——minicc 刷新会轮换该链，可能顶掉本机 `claude` CLI 已存的登录。是否启用由
+// settings.app.claudeAutoRefresh 决定，调用方自行把关。
+export async function claudeOAuthRefresh(refreshToken: string): Promise<ClaudeOAuthResult | null> {
+  if (!refreshToken) return null;
+  try {
+    const res = await fetch(TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: CLIENT_ID,
+      }),
+    });
+    const j: any = await res.json().catch(() => null);
+    if (!res.ok || !j?.access_token) {
+      log("claudeOAuth", "refresh 失败 status=", res.status, "resp=", JSON.stringify(j).slice(0, 200));
+      return null;
+    }
+    log("claudeOAuth", "✓ refresh 拿到新 access_token", String(j.access_token).slice(0, 12) + "…");
+    return {
+      token: j.access_token,
+      // 有的实现每次都回轮换后的新 refresh_token；没回传就沿用旧的，别丢
+      refreshToken: j.refresh_token || refreshToken,
+      expiresAt: j.expires_in ? Date.now() + j.expires_in * 1000 : undefined,
+    };
+  } catch (e) {
+    log("claudeOAuth", "refresh 异常", String(e));
+    return null;
+  }
+}
+
 // 构造一次 PKCE 授权：返回授权 URL、verifier、state
 // 关键：与官方/参考实现一致——state 直接用 verifier（不是另造随机值），否则 claude.ai 授权端点报 Invalid request format
 function buildAuth(redirectUri: string): { authUrl: string; verifier: string; state: string } {
