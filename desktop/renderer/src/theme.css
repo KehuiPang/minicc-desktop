@@ -1656,6 +1656,26 @@ body {
 .mq-item > span:first-child {
   white-space: nowrap;
 }
+/* 思考深度菜单：档位说明灰字 + 底部一句提示(留足内边距，不贴边) */
+.mq-menu-eff {
+  min-width: 300px;
+}
+.mq-desc {
+  margin-left: auto;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.mq-note {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  padding: 8px 10px 6px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  white-space: normal;
+}
 .mq-item:hover {
   background: var(--bg-raised);
 }

@@ -147,16 +147,17 @@ class AnthropicProvider implements Provider {
       (lastMsg.content[lastMsg.content.length - 1] as { cache_control?: typeof CC }).cache_control = CC;
     }
 
-    const stream = this.client.messages.stream(
-      {
-        model: this.cfg.model,
-        max_tokens: this.cfg.maxTokens,
-        system: systemParam,
-        messages: msgParams,
-        tools: toolParams,
-      },
-      { signal: handlers.signal },
-    );
+    const req = {
+      model: this.cfg.model,
+      max_tokens: this.cfg.maxTokens,
+      system: systemParam,
+      messages: msgParams,
+      tools: toolParams,
+    };
+    // 思考深度：output_config.effort(GA)。按模型能力裁剪档位，不支持的模型不发(老 SDK 类型未收录→any 挂上)
+    const eff = claudeEffort(this.cfg.model, this.cfg.effort);
+    if (eff) (req as any).output_config = { effort: eff };
+    const stream = this.client.messages.stream(req, { signal: handlers.signal });
 
     // 退化重复守卫：模型若把某词/行无限刷向 max_tokens，检测到即中止本次流(不白跑满额度)
     const guard = new RepetitionGuard();
@@ -505,6 +506,24 @@ function toOpenAIMessages(system: string, messages: Message[], vision: boolean):
   return out;
 }
 
+// ---------- 思考深度(effort)按平台/模型映射 ----------
+// Claude：output_config.effort，档位随模型能力裁剪——4.7+/5.x/Fable 全五档；4.6 无 xhigh；Opus 4.5 只到 high；
+// Haiku 4.5/Sonnet 4.5 及更老不支持(发了会 400)→不发。用户选了高于模型上限的档位时向下取整而非报错。
+export function claudeEffort(model: string, effort?: string): string | undefined {
+  if (!effort) return undefined;
+  const m = model.toLowerCase();
+  if (/claude-(fable|mythos|opus-5|sonnet-5|opus-4-[78])/.test(m)) return effort;
+  if (/claude-(opus|sonnet)-4-6/.test(m)) return effort === "xhigh" ? "high" : effort;
+  if (/claude-opus-4-5/.test(m)) return effort === "xhigh" || effort === "max" ? "high" : effort;
+  return undefined;
+}
+// Codex(Responses API)：reasoning.effort 取 low/medium/high/xhigh；空=medium(沿用原默认)，max→xhigh(Codex 无 max 档)
+export function codexEffort(effort?: string): string {
+  if (!effort) return "medium";
+  if (effort === "max") return "xhigh";
+  return effort;
+}
+
 // ---------- Codex 订阅版（ChatGPT 登录，Responses API）----------
 // 真机验证要点：endpoint=chatgpt.com/backend-api/codex/responses；
 // 头需 Authorization:Bearer + chatgpt-account-id + originator:codex_cli_rs；
@@ -537,7 +556,7 @@ class CodexProvider implements Provider {
       parallel_tool_calls: true,
       store: false,
       stream: true,
-      reasoning: { effort: "medium" },
+      reasoning: { effort: codexEffort(this.cfg.effort) }, // 思考深度：Responses 的 reasoning.effort(默认 medium=原行为)
     };
 
     const res = await fetchWithRetry(this.cfg.codexEndpoint, {

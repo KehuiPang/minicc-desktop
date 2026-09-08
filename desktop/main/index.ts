@@ -122,7 +122,8 @@ let ctxWindow = 1_000_000; // 当前模型上下文窗口(占用条用真实值)
 // 每会话的后端/模型标签(UI 显示各会话自己的平台/模型)
 const agentMeta = new Map<string, { backend: string; model: string; ctxWindow: number; sub: boolean }>();
 // 每会话的平台/模型选择(内存覆盖,即时生效,不依赖会话是否已落盘)——空会话切换也立刻生效
-const sessionProvOverride = new Map<string, { providerId: string; kind: Settings["kind"]; model: string }>();
+const sessionProvOverride = new Map<string, { providerId: string; kind: Settings["kind"]; model: string; effort?: string }>();
+let effortCur = ""; // 当前可见会话的思考深度(底栏显示用；空=平台默认)
 let subFlag = false; // 当前后端是否订阅类(决定前端是否显示 5小时/周额度)
 let cwd = process.cwd();
 const agents = new Map<string, Agent>();
@@ -947,14 +948,14 @@ function applySettings(sIn: Settings) {
 // 需临时覆写的 env(applyEnvFromSettings 会写这些)，快照法：写→loadConfig→还原，互不干扰、支持并发
 const PROV_ENV_KEYS = [
   "MINICC_PROVIDER", "MINICC_MODEL", "MINICC_OAUTH_TOKEN", "MINICC_BASE_URL",
-  "MINICC_API_KEY", "ANTHROPIC_API_KEY", "MINICC_VISION", "MINICC_NO_TOOLS",
+  "MINICC_API_KEY", "ANTHROPIC_API_KEY", "MINICC_VISION", "MINICC_NO_TOOLS", "MINICC_EFFORT",
 ];
 // 用指定平台的槽构造该会话专属 Config(复用 loadConfig，认证逻辑不变)。env 写→读→还原，全同步无 await
-function cfgForProvider(s: Settings, providerId: string, kind: Settings["kind"], model: string): ReturnType<typeof loadConfig> {
+function cfgForProvider(s: Settings, providerId: string, kind: Settings["kind"], model: string, effort?: string): ReturnType<typeof loadConfig> {
   const slot = (s.creds || {})[providerId] || {};
   const snap: Record<string, string | undefined> = {};
   for (const k of PROV_ENV_KEYS) snap[k] = process.env[k];
-  applyEnvFromSettings({ ...s, kind, providerId, model, apiKey: slot.apiKey, baseUrl: slot.baseUrl, oauthToken: slot.oauthToken });
+  applyEnvFromSettings({ ...s, kind, providerId, model, effort: effort ?? "", apiKey: slot.apiKey, baseUrl: slot.baseUrl, oauthToken: slot.oauthToken });
   const cfg = loadConfig();
   for (const k of PROV_ENV_KEYS) {
     if (snap[k] === undefined) delete process.env[k];
@@ -971,7 +972,7 @@ function refreshAllAgentSystems() {
   }
 }
 // 该会话应使用的平台/模型：会话自存优先，否则用全局默认(settings 顶层)
-function provForSession(id: string, s: Settings): { providerId: string; kind: Settings["kind"]; model: string } {
+function provForSession(id: string, s: Settings): { providerId: string; kind: Settings["kind"]; model: string; effort?: string } {
   const ov = sessionProvOverride.get(id); // 内存覆盖优先(即时生效，含未落盘会话)
   if (ov) return ov;
   // 模型必须「按平台」解析：本会话/本平台记住的 → 该平台默认模型。绝不跨平台把全局 s.model 带过来——
@@ -981,9 +982,9 @@ function provForSession(id: string, s: Settings): { providerId: string; kind: Se
     own || (s.creds || {})[pid]?.model || cfgForProvider(s, pid, kind, "").model || "";
   const m = listSessions().find((x) => x.id === id);
   if (m?.providerId && m?.providerKind)
-    return { providerId: m.providerId, kind: m.providerKind, model: modelFor(m.providerId, m.providerKind, m.model) };
+    return { providerId: m.providerId, kind: m.providerKind, model: modelFor(m.providerId, m.providerKind, m.model), effort: m.effort };
   const pid = s.providerId || "";
-  return { providerId: pid, kind: s.kind, model: modelFor(pid, s.kind) };
+  return { providerId: pid, kind: s.kind, model: modelFor(pid, s.kind), effort: s.effort };
 }
 // 把「当前可见会话」的平台/模型设为全局运行时(供 conn:check/fetchModels/底栏显示)——不落盘、不动其它会话
 function setRuntimeForSession(id: string) {
@@ -991,7 +992,7 @@ function setRuntimeForSession(id: string) {
   const sp = provForSession(id, s);
   const snap: Record<string, string | undefined> = {};
   for (const k of PROV_ENV_KEYS) snap[k] = process.env[k];
-  applyEnvFromSettings({ ...s, kind: sp.kind, providerId: sp.providerId, model: sp.model,
+  applyEnvFromSettings({ ...s, kind: sp.kind, providerId: sp.providerId, model: sp.model, effort: sp.effort ?? "",
     apiKey: (s.creds || {})[sp.providerId]?.apiKey, baseUrl: (s.creds || {})[sp.providerId]?.baseUrl, oauthToken: (s.creds || {})[sp.providerId]?.oauthToken });
   const cfg = loadConfig();
   // 全局 env 保留为当前会话的(供 conn:check 等读取)——此处不还原
@@ -1001,8 +1002,9 @@ function setRuntimeForSession(id: string) {
   modelLabel = cfg.model;
   ctxWindow = cfg.contextWindow;
   subFlag = isSub(sp.providerId);
+  effortCur = sp.effort || "";
   sysPrompt = buildSysPrompt(cwd, modelLabel, sp.providerId, id);
-  send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow, providerId: sp.providerId });
+  send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow, providerId: sp.providerId, effort: effortCur });
 }
 
 // —— 浏览器控制：Electron 内置 Chromium 的 WebContentsView，可嵌入主窗口面板"可视化" AI 操作 ——
@@ -1230,7 +1232,7 @@ function getAgent(id: string): Agent | null {
   if (!a) {
     const s = loadSettings() || ({} as Settings);
     const sp = provForSession(id, s);
-    const cfg = cfgForProvider(s, sp.providerId, sp.kind, sp.model);
+    const cfg = cfgForProvider(s, sp.providerId, sp.kind, sp.model, sp.effort);
     const p = makeProviderTagged(cfg);
     const sys = buildSysPrompt(cwd, cfg.model, sp.providerId, id);
     a = new Agent(p, sys, desktopTools(id), { cwd, sessionId: id }, desktopToolMap(id),
@@ -1244,14 +1246,16 @@ function getAgent(id: string): Agent | null {
   return a;
 }
 // 切换某会话的平台/模型：只重建它自己的 provider，不动其它会话；若是当前会话则同步全局运行时+底栏
-function switchSessionProvider(id: string, providerId: string, kind: Settings["kind"], model: string) {
+function switchSessionProvider(id: string, providerId: string, kind: Settings["kind"], model: string, effort?: string) {
   const s = loadSettings() || ({} as Settings);
+  // 思考深度不传=沿用本会话已选的(切平台/换模型不丢)；传 ""=清回平台默认
+  if (effort === undefined) effort = provForSession(id, s).effort || "";
   // 空 model→用该平台记住的模型，避免退化成 loadConfig 的通用默认
   model = model || (s.creds || {})[providerId]?.model || cfgForProvider(s, providerId, kind, "").model;
   log("switchProvider", "会话=", id.slice(0, 8), "平台=", providerId, "kind=", kind, "模型=", model, "当前会话=", currentId.slice(0, 8));
-  sessionProvOverride.set(id, { providerId, kind, model }); // 内存即时生效(不依赖落盘)
-  setSessionProvider(id, providerId, kind, model); // 已落盘的会话同步写盘
-  const cfg = cfgForProvider(s, providerId, kind, model);
+  sessionProvOverride.set(id, { providerId, kind, model, effort: effort || undefined }); // 内存即时生效(不依赖落盘)
+  setSessionProvider(id, providerId, kind, model, effort); // 已落盘的会话同步写盘
+  const cfg = cfgForProvider(s, providerId, kind, model, effort);
   const a = getAgent(id);
   if (a) {
     a.setProvider(makeProviderTagged(cfg));
@@ -1623,7 +1627,7 @@ function createWindow() {
   else win.loadURL("app://bundle/index.html");
 
   win.webContents.on("did-finish-load", () => {
-    send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow });
+    send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow, effort: effortCur });
     bootstrapSessions();
     void emitAccount();
     const pid = loadSettings()?.providerId;
@@ -1743,7 +1747,7 @@ function rebuildAgentsForProvider(pid: string) {
   for (const [aid, a] of agents.entries()) {
     const sp = provForSession(aid, s);
     if (sp.providerId !== pid) continue;
-    const cfg = cfgForProvider(s, sp.providerId, sp.kind, sp.model);
+    const cfg = cfgForProvider(s, sp.providerId, sp.kind, sp.model, sp.effort);
     a.setProvider(makeProviderTagged(cfg));
     n++;
   }
@@ -1752,7 +1756,7 @@ function rebuildAgentsForProvider(pid: string) {
   try {
     if (currentId && provForSession(currentId, s).providerId === pid) {
       setRuntimeForSession(currentId);
-      send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow });
+      send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow, effort: effortCur });
     }
   } catch {
     /* ignore */
@@ -1859,7 +1863,7 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
           }
           const s2 = loadSettings() || ({} as Settings);
           const sp2 = provForSession(useId, s2);
-          const cfg = cfgForProvider(s2, sp2.providerId, sp2.kind, sp2.model);
+          const cfg = cfgForProvider(s2, sp2.providerId, sp2.kind, sp2.model, sp2.effort);
           log("oauthRefresh", "401 兜底：按最新 token 重建本会话 provider 并重试一次", useId.slice(0, 8), "来源=", inSlot !== used ? "凭据槽已更新" : "强制续期");
           return makeProviderTagged(cfg);
         },
@@ -2127,7 +2131,7 @@ ipcMain.handle("session:handoff", async (_e, sid: string) => {
   const newId = randomUUID();
   currentId = newId;
   getAgent(newId);
-  switchSessionProvider(newId, sp.providerId, sp.kind, sp.model); // 继承平台/模型(内部会 setRuntime+刷底栏)
+  switchSessionProvider(newId, sp.providerId, sp.kind, sp.model, sp.effort); // 继承平台/模型(内部会 setRuntime+刷底栏)
   // 迁移总目标：源会话若定过总目标，交接给新会话并重新激活(active)，让它接着自主推进；
   // 即便源会话已标「完成」，交接的用意就是继续这个大目标，故 done 归零重新开跑。
   const srcGoal = sessionGoals[srcId];
@@ -2182,6 +2186,13 @@ ipcMain.on("session:set-provider", (_e, _sid: string, providerId: string, kind: 
 ipcMain.on("session:set-model", (_e, _sid: string, model: string) => {
   const sp = provForSession(currentId, loadSettings() || ({} as Settings));
   switchSessionProvider(currentId, sp.providerId, sp.kind, model);
+});
+// 每会话独立的思考深度(effort)：只改当前会话；""=回平台默认。走同一条 switchSessionProvider 链路重建 provider 即时生效
+ipcMain.on("session:set-effort", (_e, _sid: string, effort: string) => {
+  const ok = ["", "low", "medium", "high", "xhigh", "max"];
+  if (!ok.includes(effort)) return;
+  const sp = provForSession(currentId, loadSettings() || ({} as Settings));
+  switchSessionProvider(currentId, sp.providerId, sp.kind, sp.model, effort);
 });
 
 // 崩溃恢复——用户点「继续」：切到该会话、清中断标记，注入一句续跑指令让 AI 接着未完成的工作。
@@ -2452,6 +2463,7 @@ ipcMain.handle("settings:get", () => ({
   settings: loadSettings(),
   backend: backendLabel,
   model: modelLabel,
+  effort: effortCur,
   defaultPrompt: DEFAULT_SYSTEM_PROMPT, // 供设置页显示"未自定义时的默认提示词"
   defaultBrainPrompt: DEFAULT_BRAIN_NOTE, // 脑网络说明默认(知识网络设置页显示/恢复默认)
   defaultSecretsPrompt: secrets.SECRETS_SYSTEM_NOTE, // 密钥说明默认(密钥设置页显示/恢复默认)
@@ -3012,7 +3024,7 @@ ipcMain.handle("account:codex-login", async () => {
   if (s) saveSettings({ ...s, providerId: "codex", kind: "codex", model: s.model || "gpt-5.5" });
   try {
     initProvider();
-    send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow });
+    send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow, effort: effortCur });
     void emitAccount();
   } catch (e) {
     log("codex-login-ipc", "重载 provider 失败", String(e));

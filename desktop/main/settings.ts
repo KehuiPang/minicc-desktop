@@ -131,6 +131,7 @@ export interface Settings {
   kind: ProviderKind;
   providerId?: string; // UI 预设平台标识(codex/claude-oauth/anthropic/openai/deepseek/qwen/doubao/minimax/custom)
   model?: string;
+  effort?: string; // 思考深度(low/medium/high/xhigh/max)；空=平台默认。每会话独立存 SessionMeta.effort，这里是全局兜底
   // 下面三个是「当前生效平台」的凭证(loadConfig 据此构造环境变量)；随平台切换镜像自 creds[providerId]
   apiKey?: string; // anthropic-apikey / openai
   baseUrl?: string; // openai 兼容端点
@@ -218,11 +219,13 @@ export function applyEnvFromSettings(s: Settings | null) {
     "ANTHROPIC_API_KEY",
     "MINICC_VISION",
     "MINICC_NO_TOOLS",
+    "MINICC_EFFORT",
   ]) {
     delete process.env[k];
   }
   if (!s) return; // 无设置：走 loadConfig 自动推断（有 ~/.codex 即 codex）
   if (s.model) process.env.MINICC_MODEL = s.model;
+  if (s.effort) process.env.MINICC_EFFORT = s.effort;
   // 当前生效模型的能力开关：优先按模型(modelCaps[model])，回退到旧的平台级(迁移兼容)
   const slot = s.creds?.[s.providerId || ""] || {};
   const caps = slot.modelCaps?.[s.model || ""] || {};

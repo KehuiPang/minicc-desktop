@@ -41,6 +41,7 @@ export interface SessionMeta {
   providerId?: string;
   providerKind?: "codex" | "anthropic-oauth" | "anthropic-apikey" | "openai";
   model?: string;
+  effort?: string; // 本会话思考深度(low/medium/high/xhigh/max)；空=平台默认
   promptCfg?: SessionPromptCfg; // 本会话独立的提示词/工具配置(空=全用全局默认)
 }
 
@@ -133,6 +134,7 @@ export function setSessionProvider(
   providerId: string,
   providerKind: SessionMeta["providerKind"],
   model?: string,
+  effort?: string, // undefined=不动；""=清空回平台默认
 ) {
   const l = listSessions();
   const s = l.find((x) => x.id === id);
@@ -140,6 +142,7 @@ export function setSessionProvider(
   s.providerId = providerId || undefined;
   s.providerKind = providerKind;
   if (model) s.model = model;
+  if (effort !== undefined) s.effort = effort || undefined;
   saveList(l);
 }
 
@@ -432,6 +435,7 @@ export function saveSession(
     providerId: prev?.providerId, // 保留每会话独立平台/模型
     providerKind: prev?.providerKind,
     model: prev?.model,
+    effort: prev?.effort, // 保留每会话思考深度
     promptCfg: prev?.promptCfg, // 保留每会话「对话框配置」，别被每轮落盘抹掉
   });
   saveList(l);

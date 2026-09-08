@@ -21,6 +21,7 @@ export interface Config {
   vision?: boolean; // 强制按多模态处理(自建端点模型名不含 vl 时用)；MINICC_VISION=1
   disableTools?: boolean; // 不发工具(某些自建 vLLM 未开 --enable-auto-tool-choice 会 400)；MINICC_NO_TOOLS=1
   maxTokens: number;
+  effort?: string; // 思考深度 low/medium/high/xhigh/max(空=不发参数,走各平台默认)；MINICC_EFFORT
   anthropicBeta: string;
   // Codex 订阅
   codexToken: string;
@@ -126,6 +127,7 @@ export function loadConfig(): Config {
     vision: /^(1|true|yes)$/i.test(pick("MINICC_VISION", "")),
     disableTools: /^(1|true|yes)$/i.test(pick("MINICC_NO_TOOLS", "")),
     maxTokens: Number(pick("MINICC_MAX_TOKENS", "8192")),
+    effort: pick("MINICC_EFFORT") || undefined,
     anthropicBeta: pick("MINICC_ANTHROPIC_BETA", "oauth-2025-04-20"),
     codexToken: codex.token,
     codexAccountId: codex.accountId,

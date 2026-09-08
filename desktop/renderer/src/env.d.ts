@@ -81,6 +81,7 @@ export interface MiniccApi {
   handoffSession(sid: string): Promise<{ ok: boolean; newId?: string }>; // 一键总结→开新会话接着做
   switchSession(id: string): void;
   setSessionModel(sid: string, model: string): void;
+  setSessionEffort(sid: string, effort: string): void; // 思考深度 low/medium/high/xhigh/max；""=平台默认
   setSessionProvider(sid: string, providerId: string, kind: string, model: string): void;
   resumeSession(id: string): void;
   dismissInterrupted(id: string): void;

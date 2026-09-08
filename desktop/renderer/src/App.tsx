@@ -131,6 +131,15 @@ function saveImage(src: string): void {
 }
 
 const CTX_MAX = 1_000_000; // gpt-5.5 上下文窗口估算，用于占用条
+// 底栏「思考深度」档位(每会话独立)：Claude 走 output_config.effort，Codex 走 reasoning.effort；""=不发参数、平台默认
+const EFFORT_LEVELS: { id: string; label: string; desc: string }[] = [
+  { id: "", label: "默认", desc: "不指定，走平台默认(Claude=高 / Codex=中)" },
+  { id: "low", label: "低", desc: "最快最省，简单问答/小改动" },
+  { id: "medium", label: "中", desc: "均衡，常规任务" },
+  { id: "high", label: "高", desc: "写代码/排查的常用档" },
+  { id: "xhigh", label: "极高", desc: "复杂编码/长链路自主任务" },
+  { id: "max", label: "最高", desc: "最慢最贵，正确性优先的难题" },
+];
 
 // 把持久化的 messages 还原成展示用 items
 function messagesToItems(messages: any[]): Item[] {
@@ -355,6 +364,7 @@ export function App() {
     cwd: "",
     sub: false,
     ctxWindow: CTX_MAX,
+    effort: "" as string, // 本会话思考深度(""=平台默认)，随 evt:ready 同步
   });
   const [usage, setUsage] = useState<Usage>({ totalInput: 0, totalOutput: 0, lastInput: 0 });
   const usageBySid = useRef(new Map<string, Usage>()); // 各会话自己的用量快照(切会话直接取)
@@ -632,6 +642,7 @@ export function App() {
   const [allCustomModels, setAllCustomModels] = useState<Record<string, string[]>>({}); // 各供应商用户手加的模型(供底部快切,按当前平台取)
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [showProviderMenu, setShowProviderMenu] = useState(false);
+  const [showEffortMenu, setShowEffortMenu] = useState(false); // 底栏「思考深度」下拉
   const [sidebarW, setSidebarW] = useState(
     () => Number(localStorage.getItem("minicc-sidebar-w")) || 232,
   );
@@ -933,6 +944,15 @@ export function App() {
     // 只改「当前会话」的模型，不动别的会话(每会话独立)
     window.minicc.setSessionModel(currentIdRef.current, m);
     setShowModelMenu(false);
+  }
+  // 思考深度只对 Claude/Codex 有意义(走 output_config.effort / reasoning.effort)；OpenAI 兼容端点各家参数不一，不给选
+  const effortSupported = curPreset?.kind === "codex" || String(curPreset?.kind || "").startsWith("anthropic");
+  const curEffort = EFFORT_LEVELS.find((l) => l.id === (meta.effort || "")) || EFFORT_LEVELS[0];
+  function quickEffort(id: string) {
+    // 只改「当前会话」的思考深度；主进程重建 provider 即时生效并回推 evt:ready
+    window.minicc.setSessionEffort(currentIdRef.current, id);
+    setMeta((mt) => ({ ...mt, effort: id }));
+    setShowEffortMenu(false);
   }
 
   // 连通状态检测：更新状态灯（红/黄/绿）
@@ -3591,6 +3611,39 @@ export function App() {
                 <span className="mq-txt">{meta.model}</span>
                 <span className="mq-caret">▾</span>
               </button>
+              {effortSupported && (
+                <>
+                  <span className="mq-mid">·</span>
+                  <button
+                    className="mq-btn mq-eff"
+                    title={"思考深度：" + curEffort.label + " — " + curEffort.desc}
+                    onClick={() => setShowEffortMenu((v) => !v)}
+                  >
+                    <span className="mq-txt">思考·{curEffort.label}</span>
+                    <span className="mq-caret">▾</span>
+                  </button>
+                </>
+              )}
+              {showEffortMenu && (
+                <>
+                  <div className="mq-overlay" onClick={() => setShowEffortMenu(false)} />
+                  <div className="mq-menu mq-menu-eff">
+                    <div className="mq-head">思考深度 · 只影响本会话</div>
+                    {EFFORT_LEVELS.map((lv) => (
+                      <button
+                        key={lv.id || "auto"}
+                        className={"mq-item" + (lv.id === curEffort.id ? " on" : "")}
+                        onClick={() => quickEffort(lv.id)}
+                      >
+                        <span>{lv.label}</span>
+                        <span className="mq-desc">{lv.desc}</span>
+                        {lv.id === curEffort.id && <span className="mq-check">✓</span>}
+                      </button>
+                    ))}
+                    <div className="mq-note">越深越准也越慢越费额度；日常改代码用「高」，难题用「极高/最高」，简单问答用「低」。</div>
+                  </div>
+                </>
+              )}
               {showProviderMenu && (
                 <>
                   <div className="mq-overlay" onClick={() => setShowProviderMenu(false)} />

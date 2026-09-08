@@ -109,6 +109,7 @@ const API = {
 
   switchSession: (id: string) => ipcRenderer.send("session:switch", id),
   setSessionModel: (sid: string, model: string) => ipcRenderer.send("session:set-model", sid, model), // 每会话独立:只改本会话模型
+  setSessionEffort: (sid: string, effort: string) => ipcRenderer.send("session:set-effort", sid, effort), // 每会话独立:思考深度(""=平台默认)
   setSessionProvider: (sid: string, providerId: string, kind: string, model: string) =>
     ipcRenderer.send("session:set-provider", sid, providerId, kind, model), // 每会话独立:只改本会话平台
   resumeSession: (id: string) => ipcRenderer.send("session:resume", id), // 崩溃恢复:继续中断的任务
