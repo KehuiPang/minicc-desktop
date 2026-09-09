@@ -1,6 +1,6 @@
 // Electron 主进程：创建窗口，复用 minicc 核心(agent/tools/config)，
 // 通过 IPC 把 Agent 流式 hooks 推给渲染进程，权限确认走 IPC 往返。
-import { app, BrowserWindow, WebContentsView, ipcMain, protocol, net, shell, session, clipboard, Menu, safeStorage } from "electron";
+import { app, BrowserWindow, WebContentsView, ipcMain, protocol, net, shell, session, clipboard, Menu, safeStorage, nativeImage } from "electron";
 const safeStorageOk = () => {
   try {
     return safeStorage.isEncryptionAvailable();
@@ -15,7 +15,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { loadConfig } from "../../src/config.js";
 import { makeProvider, setHttpFetch } from "../../src/agent/provider.js";
-import type { Provider } from "../../src/types.js";
+import type { Provider, Message, ContentBlock } from "../../src/types.js";
 import { Agent } from "../../src/agent/loop.js";
 import { systemPrompt, renderPrompt, DEFAULT_SYSTEM_PROMPT } from "../../src/agent/prompt.js";
 import { ALL_TOOLS, TOOL_MAP, MEMORY_FILE } from "../../src/tools/index.js";
@@ -1237,7 +1237,7 @@ function getAgent(id: string): Agent | null {
     const sys = buildSysPrompt(cwd, cfg.model, sp.providerId, id);
     a = new Agent(p, sys, desktopTools(id), { cwd, sessionId: id }, desktopToolMap(id),
       { compactThreshold: cfg.compactThreshold, keepRecent: cfg.keepRecentTurns });
-    a.setMessages(loadMessages(id));
+    a.setMessages(shrinkImagesInHistory(loadMessages(id)));
     const meta = listSessions().find((s2) => s2.id === id); // 恢复该会话的用量
     if (meta?.usage) a.setUsage(meta.usage);
     agents.set(id, a);
@@ -1810,8 +1810,43 @@ function startOauthRefreshTimer() {
   log("oauthRefresh", "后台续期巡检已启动，间隔", OAUTH_REFRESH_TICK_MS / 1000, "秒");
 }
 
+// —— 图片尺寸兜底 ——
+// Anthropic 多图请求任一边 >2000px 直接 400("exceed max allowed size for many-image requests")，且长边 >1568 服务端也会
+// 缩到 1568 再看(更大只多花 token 不多长精度)。贴图/注入/历史加载统一把长边缩到 1568，从源头杜绝该 400。
+const IMG_MAX_EDGE = 1568;
+function shrinkImageDataUrl(dataUrl: string): string {
+  try {
+    if (!/^data:image\//.test(dataUrl)) return dataUrl;
+    const img = nativeImage.createFromDataURL(dataUrl);
+    if (img.isEmpty()) return dataUrl;
+    const { width, height } = img.getSize();
+    if (Math.max(width, height) <= IMG_MAX_EDGE) return dataUrl;
+    const scale = IMG_MAX_EDGE / Math.max(width, height);
+    const out = img.resize({ width: Math.round(width * scale), height: Math.round(height * scale), quality: "good" });
+    const shrunk = /^data:image\/jpe?g/i.test(dataUrl) ? out.toJPEG(88) : out.toPNG();
+    const mime = /^data:image\/jpe?g/i.test(dataUrl) ? "image/jpeg" : "image/png";
+    log("image", "缩图", `${width}x${height}`, "→ 长边", IMG_MAX_EDGE);
+    return `data:${mime};base64,${shrunk.toString("base64")}`;
+  } catch (e) {
+    log("image", "缩图失败(原图发送)", String(e));
+    return dataUrl;
+  }
+}
+const shrinkImages = (images?: string[]): string[] | undefined => images?.map(shrinkImageDataUrl);
+// 历史里已存的超大图(旧版贴进去的)在加载时一并缩，否则该会话每次发送都 400、只能删消息
+function shrinkImagesInHistory(msgs: Message[]): Message[] {
+  for (const m of msgs) {
+    if (!Array.isArray(m.content)) continue;
+    for (const b of m.content as ContentBlock[]) {
+      if (b.type === "image" && typeof b.dataUrl === "string") b.dataUrl = shrinkImageDataUrl(b.dataUrl);
+    }
+  }
+  return msgs;
+}
+
 async function startTurn(useId: string, text: string, images?: string[], sysOverride?: string) {
-  turnSid = useId; // 供 ask_user 工具的事件带上会话 id
+  turnSid = useId;
+  images = shrinkImages(images); // 长边 >1568 的贴图先缩，防 Anthropic 多图 2000px 限制 400 // 供 ask_user 工具的事件带上会话 id
   text = secrets.redact(text).text; // 兜底：已入库密钥出现在消息里→占位符替换，永不出网到模型
   const agent = getAgent(useId);
   if (!agent) {
@@ -1936,6 +1971,7 @@ ipcMain.on("chat:inject", (_e, sid: string, text: string, images?: string[]) => 
   const useId = sid || currentId;
   text = secrets.redact(text).text; // 同发送路径：注入的文本也脱敏
   const agent = getAgent(useId);
+  images = shrinkImages(images);
   if (agent && runs.has(useId)) {
     agent.injectUser(text, images);
     log("inject", useId.slice(0, 8), (text || "").slice(0, 40));

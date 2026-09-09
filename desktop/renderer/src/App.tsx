@@ -233,12 +233,15 @@ function friendlyError(raw: string): string {
   const r = raw || "";
   if (/authentication method|apiKey or authToken|x-api-key|unauthorized|\b401\b|invalid.*key|api key/i.test(r))
     return "出错：当前模型未授权或缺少凭证（API Key / 订阅授权），请先完成授权。";
-  if (/rate.?limit|\b429\b|quota|exceed|too many/i.test(r))
+  // 400 必须排在限流之前：Anthropic 的 400 文案常含 "exceed"(如图片超 2000px)，先匹配限流会把参数错误冒充成额度耗尽
+  if (/image.*(dimension|size|pixel)|pixels/i.test(r) && /\b400\b|invalid_request/i.test(r))
+    return "出错：图片尺寸超过模型限制（任一边不能超过 2000 像素），请把图缩小后重发。";
+  if (/\b400\b|invalid_request|bad request|context length|too long|max.*token/i.test(r))
+    return "出错：请求有误（可能是模型名不对或上下文超长）：" + (r.match(/"message":"([^"]{0,160})/)?.[1] || r.split("\n")[0].slice(0, 120));
+  if (/rate.?limit|\b429\b|quota|too many/i.test(r))
     return "出错：请求过于频繁或额度已用尽（触发限流），请稍后再试。";
   if (/timeout|ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN|network|fetch failed|socket hang/i.test(r))
     return "出错：网络连接失败，请检查网络 / 代理后重试。";
-  if (/\b400\b|invalid_request|bad request|context length|too long|max.*token/i.test(r))
-    return "出错：请求有误（可能是模型名不对或上下文超长）。";
   if (/\b5\d\d\b|server error|internal error|overloaded/i.test(r))
     return "出错：服务端错误或繁忙，请稍后重试。";
   // 未知错误：只取首行 + 截断，加中文前缀，不整段英文轰炸
