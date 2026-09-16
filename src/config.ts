@@ -59,6 +59,23 @@ function contextWindowFor(model: string): number {
   return 128_000;
 }
 
+// 单次请求的输出上限(max_tokens)。历史死写成 8192，长回复(整份文档/整文件重写)会顶到上限被截在半句，
+// 且 loop 拿到 stop_reason=max_tokens 也不续写→尾巴被静默切掉。这里按模型给到各家实际支持的输出上限。
+// 注意：provider 里已有护栏(maxTokens>=contextWindow 时不发 max_tokens，让服务端自适应)，故对大窗口模型放心给大值。
+function maxTokensFor(model: string): number {
+  const m = model.toLowerCase();
+  if (/claude-(sonnet|fable|mythos)/.test(m)) return 64_000; // Sonnet 系列支持 64K 输出
+  if (/claude-opus/.test(m)) return 32_000;
+  if (/claude-haiku/.test(m)) return 32_000;
+  if (/gpt-5|gpt-4\.1|\bo3\b|\bo4/.test(m)) return 32_000;
+  if (/deepseek-v4/.test(m)) return 32_000;
+  if (/glm-5|glm-4/.test(m)) return 32_000;
+  if (/\bk3\b|kimi/.test(m)) return 32_000;
+  if (/qwen|doubao|hunyuan|grok|minimax/.test(m)) return 32_000;
+  if (/moonshot-v1-8k/.test(m)) return 8_192; // 小窗口本地/旧模型保守
+  return 8_192; // 未知/本地小窗口 vLLM：保守，护栏会在越界时改成服务端自适应
+}
+
 function pick(name: string, fallback = ""): string {
   return process.env[name] ?? fallback;
 }
@@ -126,7 +143,7 @@ export function loadConfig(): Config {
     baseUrl: pick("MINICC_BASE_URL") || undefined,
     vision: /^(1|true|yes)$/i.test(pick("MINICC_VISION", "")),
     disableTools: /^(1|true|yes)$/i.test(pick("MINICC_NO_TOOLS", "")),
-    maxTokens: Number(pick("MINICC_MAX_TOKENS", "8192")),
+    maxTokens: Number(pick("MINICC_MAX_TOKENS")) || maxTokensFor(model),
     effort: pick("MINICC_EFFORT") || undefined,
     anthropicBeta: pick("MINICC_ANTHROPIC_BETA", "oauth-2025-04-20"),
     codexToken: codex.token,

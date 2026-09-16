@@ -112,6 +112,30 @@ function stripStrayText(content: ContentBlock[]): ContentBlock[] {
   return kept.length ? kept : content; // 万一全被判噪音，宁可不动也不返回空
 }
 
+// 把续写结果并进原回复：前者末块与后者首块都是 text 就拼成一块(正文无缝续上)，否则顺序拼接。
+function joinContent(a: ContentBlock[], b: ContentBlock[]): ContentBlock[] {
+  const out = a.slice();
+  const rest = b.slice();
+  if (out.length && rest.length && out[out.length - 1].type === "text" && rest[0].type === "text") {
+    const last = out[out.length - 1] as any;
+    const first = rest.shift() as any;
+    out[out.length - 1] = { type: "text", text: last.text + first.text } as ContentBlock;
+  }
+  out.push(...rest);
+  return out;
+}
+
+// Anthropic 不允许 prefill(历史末条 assistant)以空白结尾，否则 400；截断边界的尾部空白本就无意义，去掉。
+function trimTrailingWhitespace(content: ContentBlock[]): ContentBlock[] {
+  if (!content.length) return content;
+  const out = content.slice();
+  const last = out[out.length - 1];
+  if (last.type === "text") {
+    out[out.length - 1] = { type: "text", text: ((last as any).text || "").replace(/\s+$/, "") } as ContentBlock;
+  }
+  return out;
+}
+
 // 折叠退化重复：某文本块若被模型刷成「短单元无限重复」(如整块 count\ncount…)，
 // 折叠成几遍+提示。与流式守卫(provider 里已提前中止)互补——这里兜底清理已落地的重复块，
 // 让屏上(经 onRecover)和历史都干净，下一轮模型不会顺着旧输出继续刷。
@@ -562,6 +586,57 @@ export class Agent {
       const snap: UsageReport = { ...this.usage, round: { ...this.round } };
       hooks.onUsage?.(snap); // 每步都上报(即使无 usage 也让步数实时刷新)
       if (result.rateLimits) hooks.onRateLimits?.(result.rateLimits);
+
+      // —— 因 max_tokens 被截 → 自动续写 ——
+      // 纯文本轮(无工具调用)若因单次输出上限被截在半句，Anthropic 会顺着历史末尾的半截 assistant(prefill)续写。
+      // 这里把续写并进同一条回复，避免长回复(整份文档/整个文件重写)被静默腰斩。每次续写独立计一步用量。
+      // 出错(prefill 不被接受等)则优雅止步、保留已生成的，退回旧行为——绝不因续写把整条回复搞挂。
+      let contTries = 0;
+      while (
+        result.stopReason === "max_tokens" &&
+        !result.content.some((b) => b.type === "tool_use") &&
+        !signal?.aborted &&
+        !this.softStop &&
+        contTries < 6
+      ) {
+        contTries++;
+        const prefill = trimTrailingWhitespace(result.content);
+        this.messages.push({ role: "assistant", content: prefill, ts: Date.now() });
+        let cont: ProviderResult;
+        try {
+          cont = await this.provider.complete(this.system, this.messages, this.tools, {
+            onText: hooks.onText,
+            onReasoning: hooks.onReasoning,
+            signal,
+          });
+        } catch {
+          this.messages.pop(); // 撤掉临时 prefill；续写失败就保留已生成的，按旧行为收尾
+          break;
+        }
+        this.messages.pop(); // 撤掉临时 prefill，最终只保留并进后的整条
+        // 续写这一步的用量照常累计(每次续写都重发全上下文，input 计入总量属实)
+        this.usage.totalSteps += 1;
+        this.round.steps += 1;
+        if (cont.usage) {
+          const inTok = cont.usage.inputTokens;
+          const hit = cont.usage.cacheHitTokens ?? 0;
+          const miss = cont.usage.cacheMissTokens ?? Math.max(0, inTok - hit);
+          this.usage.totalInput += inTok;
+          this.usage.totalOutput += cont.usage.outputTokens;
+          this.usage.lastInput = inTok;
+          this.usage.totalCacheHit += hit;
+          this.usage.totalCacheMiss += miss;
+          this.round.input += inTok;
+          this.round.output += cont.usage.outputTokens;
+          this.round.cacheHit += hit;
+          this.round.cacheMiss += miss;
+          this.round.lastInput = inTok;
+        }
+        hooks.onUsage?.({ ...this.usage, round: { ...this.round } });
+        if (cont.rateLimits) hooks.onRateLimits?.(cont.rateLimits);
+        // 并进同一条：末块与首块都是 text 就拼成一块，正文无缝续上
+        result = { ...result, content: joinContent(prefill, cont.content), stopReason: cont.stopReason };
+      }
 
       // 盖上用量快照(累计 + 本轮自足值)：UI 直接读本轮值,不靠跨轮做差;并存进历史供重开后仍可看
       this.messages.push({
