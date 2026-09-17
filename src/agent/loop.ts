@@ -727,6 +727,7 @@ export class Agent {
 
       // 结果按原顺序回填(并行也不乱序)；只读工具并行跑，写类工具串行(防写竞态/保权限提示有序)
       const resultsBlocks: ContentBlock[] = new Array(toolUses.length);
+      const toolImages: ContentBlock[] = []; // 工具产出的图片(截屏),收齐后追加到 tool_result 之后
       const parallelJobs: Promise<void>[] = [];
       for (let idx = 0; idx < toolUses.length; idx++) {
         const call = toolUses[idx];
@@ -774,6 +775,15 @@ export class Agent {
             content: out.content,
             is_error: out.isError,
           };
+          // 工具带回的图片(截屏等)→暂存,循环收齐后统一追加到所有 tool_result 之后
+          // (Anthropic 要求 tool_result 块排在 user 消息最前,图片块必须放它们后面)
+          if (Array.isArray(out.images) && out.images.length) {
+            for (const dataUrl of out.images) {
+              if (typeof dataUrl === "string" && dataUrl.startsWith("data:image/")) {
+                toolImages.push({ type: "image", dataUrl });
+              }
+            }
+          }
         })();
         if (tool.readOnly) parallelJobs.push(job); // 只读：并行
         else await job; // 写类：等它跑完再继续下一个，串行执行
@@ -791,6 +801,8 @@ export class Agent {
         }
       }
 
+      // 工具产出的截屏图片：追加到所有 tool_result 之后(视觉模型即可"看到"截屏内容)
+      if (toolImages.length) resultsBlocks.push(...toolImages);
       // 运行中注入的新需求：并入本条 user 消息(tool_result + 文本/图片)，下一步模型即可看到并综合安排
       const inj = this.drainInject();
       if (inj.length) resultsBlocks.push(...inj);

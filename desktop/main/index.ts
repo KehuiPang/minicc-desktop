@@ -19,6 +19,8 @@ import type { Provider, Message, ContentBlock } from "../../src/types.js";
 import { Agent } from "../../src/agent/loop.js";
 import { systemPrompt, renderPrompt, DEFAULT_SYSTEM_PROMPT } from "../../src/agent/prompt.js";
 import { ALL_TOOLS, TOOL_MAP, MEMORY_FILE } from "../../src/tools/index.js";
+import { CHROME_TOOLS } from "../../src/tools/chrome.js";
+import { COMPUTER_TOOLS } from "../../src/tools/computer.js";
 import * as brain from "../../src/brain/index.js";
 import type { Tool, ToolResult } from "../../src/types.js";
 import { connectMcp, mcpTools, mcpToolsBySource, mcpStatus, loadMcpConfig, searchMcpRegistry, MCP_CONFIG_PATH } from "./mcp.js";
@@ -2924,9 +2926,12 @@ ipcMain.handle("tools:get", () => {
     readOnly: !!t.readOnly,
     inputSchema: t.inputSchema || { type: "object", properties: {} },
   });
+  const ctrlNames = new Set([...CHROME_TOOLS, ...COMPUTER_TOOLS].map((t) => t.name));
   const groups: { source: string; kind: "builtin" | "browser" | "mcp"; tools: ReturnType<typeof mk>[] }[] = [
-    { source: "内置工具", kind: "builtin", tools: ALL_TOOLS.map(mk) },
-    { source: "浏览器", kind: "browser", tools: BROWSER_TOOLS.map(mk) },
+    { source: "内置工具", kind: "builtin", tools: ALL_TOOLS.filter((t) => !ctrlNames.has(t.name)).map(mk) },
+    { source: "浏览器(内置)", kind: "browser", tools: BROWSER_TOOLS.map(mk) },
+    { source: "调试 Chrome(CDP)", kind: "browser", tools: CHROME_TOOLS.map(mk) },
+    { source: "电脑控制(截屏/鼠标/键盘)", kind: "builtin", tools: COMPUTER_TOOLS.map(mk) },
     ...mcpToolsBySource().map((g) => ({
       source: g.server,
       kind: "mcp" as const,

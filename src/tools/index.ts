@@ -7,6 +7,8 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { Tool, ToolContext, ToolResult } from "../types.js";
 import * as brain from "../brain/index.js";
+import { CHROME_TOOLS } from "./chrome.js";
+import { COMPUTER_TOOLS } from "./computer.js";
 
 // 全局记忆文件：跨会话持久，注入到每次对话的系统提示词
 export const MEMORY_FILE = join(homedir(), ".minicc", "memory.md");
@@ -644,6 +646,8 @@ export const ALL_TOOLS: Tool[] = [
   brainLinkTool,
   brainForgetTool,
   brainReadDocTool,
+  ...CHROME_TOOLS, // 调试模式 Chrome 控制(CDP)
+  ...COMPUTER_TOOLS, // 全屏截图 + 鼠标键盘控制整机
 ];
 
 export const TOOL_MAP: Map<string, Tool> = new Map(ALL_TOOLS.map((t) => [t.name, t]));

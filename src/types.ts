@@ -55,6 +55,9 @@ export interface ToolContext {
 export interface ToolResult {
   content: string;
   isError?: boolean;
+  // 工具产出的图片（截屏等），data:image/...;base64,xxx。loop 会把它们作为 image 块
+  // 追加到本次 tool_result 之后回喂给（视觉）模型，实现"截屏理解"。
+  images?: string[];
 }
 
 export interface Tool extends ToolSpec {
