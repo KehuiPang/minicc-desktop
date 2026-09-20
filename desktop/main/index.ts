@@ -22,6 +22,7 @@ import { ALL_TOOLS, TOOL_MAP, MEMORY_FILE } from "../../src/tools/index.js";
 import { CHROME_TOOLS } from "../../src/tools/chrome.js";
 import { COMPUTER_TOOLS } from "../../src/tools/computer.js";
 import * as brain from "../../src/brain/index.js";
+import * as sop from "../../src/sop/store.js";
 import type { Tool, ToolResult } from "../../src/types.js";
 import { connectMcp, mcpTools, mcpToolsBySource, mcpStatus, loadMcpConfig, searchMcpRegistry, MCP_CONFIG_PATH } from "./mcp.js";
 import * as secrets from "./secrets.js";
@@ -82,6 +83,7 @@ import {
   loadSessionBalances,
   saveSessionBalances,
   secretsDetectEnabled,
+  secretsMasterEnabled,
   brainEnabled,
   brainDocsEnabled,
   resumeDetectEnabled,
@@ -152,6 +154,26 @@ function emitTasks() {
 function send(channel: string, payload?: unknown) {
   win?.webContents.send(channel, payload);
 }
+
+// SOP 库改动（含 AI 用 sop_save 落库）→ 广播给渲染层，侧栏面板实时刷新
+sop.sopEvents.on("changed", () => send("evt:sop"));
+
+// —— SOP 标准作业流程库 IPC ——
+ipcMain.handle("sop:list", () => sop.listSops());
+ipcMain.handle("sop:categories", () => sop.listCategories());
+ipcMain.handle("sop:get", (_e, id: string) => sop.getSop(String(id)));
+ipcMain.handle("sop:save", (_e, input: any) => sop.saveSop(input || {}));
+ipcMain.handle("sop:move", (_e, id: string, category: string, subcategory?: string) => sop.moveSop(String(id), String(category), subcategory));
+ipcMain.handle("sop:updateMeta", (_e, id: string, patch: any) => sop.updateMeta(String(id), patch || {}));
+ipcMain.handle("sop:rollback", (_e, id: string, v: number) => sop.rollbackSop(String(id), Number(v)));
+ipcMain.handle("sop:delVersion", (_e, id: string, v: number) => sop.deleteVersion(String(id), Number(v)));
+ipcMain.handle("sop:delete", (_e, id: string) => sop.deleteSop(String(id)));
+ipcMain.handle("sop:search", (_e, q: string, limit?: number) => sop.searchSop(String(q || ""), Number(limit) || 12));
+ipcMain.handle("sop:addCategory", (_e, name: string) => sop.addCategory(String(name)));
+ipcMain.handle("sop:addSub", (_e, category: string, sub: string) => sop.addSubcategory(String(category), String(sub)));
+ipcMain.handle("sop:renameCategory", (_e, oldName: string, newName: string) => sop.renameCategory(String(oldName), String(newName)));
+ipcMain.handle("sop:delCategory", (_e, name: string) => sop.deleteCategory(String(name)));
+ipcMain.handle("sop:delSub", (_e, category: string, sub: string) => sop.deleteSubcategory(String(category), String(sub)));
 
 function mimeFor(path: string): string | null {
   if (path.endsWith(".js") || path.endsWith(".mjs")) return "text/javascript";
@@ -841,6 +863,10 @@ async function emitAccount() {
 export const DEFAULT_BRAIN_NOTE =
   `\n\n## 本地知识网络（Brain）\n你有一个本地概念知识网络，沉淀着项目/服务器/脚本/部署/注意事项等结构化知识。\n- 涉及具体项目或部署/环境的任务，**开工前先用 brain_recall 检索**，按返回的结构化子图行动，别每次全量翻文档、省 token。\n- 发现值得长期固化的高价值知识（项目背景、git路径、测试/线上环境、部署脚本位置、踩坑注意事项）时，用 brain_learn 记住、brain_link 串联关系；旧信息有误就用同名 brain_learn 覆盖纠正。\n- brain_recall 还会命中知识宫殿等文档库的原文片段（『相关文档』），只给摘要+路径；需要完整内容时用 brain_read_doc 按该路径读全文，不必全量翻。`;
 
+// SOP 标准作业流程库：让 AI 沉淀/取用可复用的标准流程资产。
+const SOP_NOTE =
+  `\n\n## SOP 标准作业流程库\n你有一个本地 SOP 库（sop_save/sop_search/sop_get/sop_list），沉淀「部署 figcheck 到测试环境」这类反复要做、要越做越稳的标准流程。\n- 用户说「总结成 SOP / 存进 SOP 库 / 记成标准流程」时，用 sop_save 落库：标题=这件事的唯一名，正文用分步骤 Markdown（前置条件→步骤→校验→回滚→踩坑）；**一事一 SOP**，同名会自动追加新版本（可回滚），别新造重复条目。\n- 要执行一件有标准流程的事之前，先 sop_search 看有没有现成 SOP，有就 sop_get 取来照着做，别每次重新摸索。\n- 流程有改进就用同一标题再 sop_save 一版，note 写清这版改了啥，让 SOP 越迭代越成熟稳定、少出错。`;
+
 const INTERACT_NOTE =
   `\n\n## 与用户交互（务必遵守）\n每当你要让用户在几个明确选项里做选择、确认或拍板——例如“走方案A还是B”“删哪个文件”“要不要继续”“选哪个分支”——你**必须调用 ask_user 工具**弹出可点击选择框，**禁止**在正文里用“方案A/方案B”“1. …2. …”这类文字罗列选项让用户打字。单选/多选/一次多问都支持。只有当答案是自由文本(不是从选项里挑)时，才在正文直接问。这条优先于你平时“用文字提问”的习惯。`;
 
@@ -878,8 +904,9 @@ function sysSections(
     { key: "system", label: "系统提示词", text: base, on: true },
     { key: "memory", label: "长期记忆", text: memText, on: !cfg?.memoryOff },
     { key: "brain", label: "知识网络", text: brainText, on: !!brainText && !cfg?.brainOff },
-    { key: "secrets", label: "密钥说明", text: secretsText, on: !cfg?.secretsOff },
+    { key: "secrets", label: "密钥说明", text: secretsText, on: !cfg?.secretsOff && secretsMasterEnabled(loadSettings()) },
     { key: "interact", label: "交互规则(ask_user)", text: INTERACT_NOTE, on: !cfg?.interactOff },
+    { key: "sop", label: "SOP 流程库", text: SOP_NOTE, on: true },
   ];
 }
 
@@ -1195,6 +1222,7 @@ function wrapSecret(t: Tool): Tool {
   return {
     ...t,
     async run(input, ctx) {
+      if (!secretsMasterEnabled(loadSettings())) return t.run(input, ctx); // 总开关关掉：不回填/不注入/不脱敏，原样执行
       const realInput = deepRehydrate(input); // 占位符→明文，供本机执行
       const r = await t.run(realInput, { ...ctx, env: secrets.envForTools() });
       return { ...r, content: secrets.redact(r.content).text }; // 结果里的明文→占位符再回模型
@@ -1849,7 +1877,7 @@ function shrinkImagesInHistory(msgs: Message[]): Message[] {
 async function startTurn(useId: string, text: string, images?: string[], sysOverride?: string) {
   turnSid = useId;
   images = shrinkImages(images); // 长边 >1568 的贴图先缩，防 Anthropic 多图 2000px 限制 400 // 供 ask_user 工具的事件带上会话 id
-  text = secrets.redact(text).text; // 兜底：已入库密钥出现在消息里→占位符替换，永不出网到模型
+  if (secretsMasterEnabled(loadSettings())) text = secrets.redact(text).text; // 兜底：已入库密钥出现在消息里→占位符替换，永不出网到模型(总开关关掉则不脱敏)
   const agent = getAgent(useId);
   if (!agent) {
     send("evt:error", { sid: useId, message: "未初始化：缺少模型凭证。请确认 ~/.codex/auth.json 或设置 API key 后重启。" });
@@ -1971,7 +1999,7 @@ ipcMain.on("chat:send", (_e, sid: string, text: string, images?: string[]) => {
 // 运行中注入新需求：正在跑→注入到当前循环边界(AI 综合权衡/优先处理，不必等整轮跑完)；没在跑→当普通发送
 ipcMain.on("chat:inject", (_e, sid: string, text: string, images?: string[]) => {
   const useId = sid || currentId;
-  text = secrets.redact(text).text; // 同发送路径：注入的文本也脱敏
+  if (secretsMasterEnabled(loadSettings())) text = secrets.redact(text).text; // 同发送路径：注入的文本也脱敏(总开关关掉则不脱敏)
   const agent = getAgent(useId);
   images = shrinkImages(images);
   if (agent && runs.has(useId)) {
@@ -2909,9 +2937,12 @@ ipcMain.handle("secrets:reveal", async (_e, pw: string) => {
 // 发送前扫描：脱敏已入库密钥 + 返回尚未入库的疑似新密钥(给确认弹窗)。永不抛错,否则会挡住发送。
 ipcMain.handle("secrets:scan", (_e, text: string) => {
   try {
-    // redact 始终跑：已入库密钥→占位符，永不出网(与"检测新密钥"是两回事，不受开关影响)。
+    const st = loadSettings();
+    // 总开关关掉：整套密钥管理停摆，原文返回、不扫描。
+    if (!secretsMasterEnabled(st)) return { redacted: text, candidates: [] };
+    // redact 始终跑(总开关开着时)：已入库密钥→占位符，永不出网(与"检测新密钥"是两回事，不受检测开关影响)。
     // detect 受「密钥检测」开关控制：关掉后不再扫描/弹窗拦截疑似新密钥(如临时长 token)。
-    const detect = secretsDetectEnabled(loadSettings());
+    const detect = secretsDetectEnabled(st);
     return { redacted: secrets.redact(text).text, candidates: detect ? secrets.detect(text) : [] };
   } catch {
     return { redacted: text, candidates: [] };

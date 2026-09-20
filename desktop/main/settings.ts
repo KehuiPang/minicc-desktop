@@ -171,6 +171,7 @@ export interface CustomStation {
 export interface AppSettings {
   claudeAutoRefresh?: boolean; // Claude 订阅 token 快过期时用 refreshToken 自动续期(undefined 视为「开」)。
   // 与官方 claude CLI 共用同一 client_id，续期会轮换 refresh 链、可能顶掉本机 CLI 登录 → 想避风险可在设置里关。
+  secretsMaster?: boolean; // 【总开关】整套本地密钥管理是否启用(默认开=undefined 视为 true)。关掉后：不脱敏、不注入环境变量、不回填占位符、不扫描、不注入密钥说明——发送/工具执行一律按原文走，等于完全不走密钥管理。
   secretsDetect?: boolean; // 发送前扫描/拦截疑似新密钥(默认开=undefined 视为 true)；关掉后长 token 不再被切成一堆弹窗
   brainEnabled?: boolean; // 启用本地知识网络 Brain：注入系统提示 + 提供 brain_* 工具(默认开)
   brainDocs?: boolean; // brain_recall 是否连带扫描文档冷存储的『相关文档』(默认开)
@@ -178,8 +179,13 @@ export interface AppSettings {
 }
 
 // 三个开关的取值：undefined 一律按「开」处理，保持历史默认行为，只让用户能主动关
+// 密钥管理总开关：undefined 视为「开」。关掉后整套脱敏/注入/扫描全部停摆，走原文。
+export function secretsMasterEnabled(s: Settings | null): boolean {
+  return s?.app?.secretsMaster !== false;
+}
 export function secretsDetectEnabled(s: Settings | null): boolean {
-  return s?.app?.secretsDetect !== false;
+  // 总开关关掉时，检测也一并视为关：不再扫描新密钥
+  return secretsMasterEnabled(s) && s?.app?.secretsDetect !== false;
 }
 export function brainEnabled(s: Settings | null): boolean {
   return s?.app?.brainEnabled !== false;

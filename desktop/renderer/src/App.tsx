@@ -6,6 +6,7 @@ import { BabyAvatar, inferBabyState } from "./baby/BabyAvatar.js";
 import { BabyHero } from "./baby/BabyHero.js";
 import { BabyPyramid } from "./baby/BabyPyramid.js";
 import * as Ic from "./baby/icons.js";
+import { SopSidebar, SopManager } from "./sop/SopPanel.js";
 
 // 数字婴儿生命体征：后端 /alive/status 一次给全，界面状态卡片全靠它渲染
 type BabyVitals = {
@@ -538,6 +539,8 @@ export function App() {
   const [settingsTab, setSettingsTab] = useState("model"); // 统一设置页的初始/当前左侧菜单项
   // ——— AGI 板块:数字婴儿 ———
   const [agiEnabled, setAgiEnabled] = useState(() => localStorage.getItem("minicc-agi-enabled") !== "0"); // 默认开
+  const [sopEnabled, setSopEnabled] = useState(() => localStorage.getItem("minicc-sop-enabled") !== "0"); // SOP 板块，默认开
+  const [sopView, setSopView] = useState<null | { id?: string }>(null); // 主区是否显示 SOP 管理器（含定位到某条）
   const [agiExpanded, setAgiExpanded] = useState(() => localStorage.getItem("minicc-agi-expanded") !== "0");
   const [agiView, setAgiView] = useState<null | "baby">(null); // 主区是否显示数字婴儿面板
   const [babyExists, setBabyExists] = useState(() => localStorage.getItem("minicc-baby-exists") === "1");
@@ -576,6 +579,14 @@ export function App() {
     const onToggle = (e: any) => setAgiEnabled(!!e.detail);
     window.addEventListener("minicc-agi-toggle", onToggle);
     return () => window.removeEventListener("minicc-agi-toggle", onToggle);
+  }, []);
+  useEffect(() => {
+    const onToggle = (e: any) => {
+      setSopEnabled(!!e.detail);
+      if (!e.detail) setSopView(null); // 关掉板块时若正开着管理器，退回对话
+    };
+    window.addEventListener("minicc-sop-toggle", onToggle);
+    return () => window.removeEventListener("minicc-sop-toggle", onToggle);
   }, []);
   // 手动模式默认藏起来(设置里开了才显示)；关掉时若正停在手动，自动切回自动
   useEffect(() => {
@@ -2129,7 +2140,13 @@ export function App() {
             )}
           </div>
         )}
-        <button className="new-session" onClick={() => { setAgiView(null); window.minicc.newSession(); }}>
+        {sopEnabled && (
+          <>
+            <SopSidebar onOpenManager={(id) => { setAgiView(null); setSopView({ id }); }} />
+            <div className="sop-divider" />
+          </>
+        )}
+        <button className="new-session" onClick={() => { setAgiView(null); setSopView(null); window.minicc.newSession(); }}>
           ＋ 新对话
         </button>
         <div className="session-list">
@@ -2189,7 +2206,7 @@ export function App() {
                   setDragId(null);
                   setDragOverId(null);
                 }}
-                onClick={() => { setAgiView(null); window.minicc.switchSession(s.id); }}
+                onClick={() => { setAgiView(null); setSopView(null); window.minicc.switchSession(s.id); }}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setGroupInputSid(null);
@@ -2663,6 +2680,7 @@ export function App() {
 
       {/* 主区 */}
       <div className="main">
+        {sopView && <SopManager initialId={sopView.id} onClose={() => setSopView(null)} />}
         {agiView === "baby" && (
           <div className="baby-panel">
             <div className="baby-header">
@@ -7316,6 +7334,7 @@ function SettingsModal({
   credsRef.current = creds;
   const loadedRef = useRef<any>({}); // 保存加载时的完整 settings，保存时 spread 保留 theme/app 等本页不管的字段
   // 三个应用级开关(app.*)：undefined 一律视为「开」，保持历史默认；改动即时落盘+热更(走独立 settings:set-app，不重启 provider)
+  const [secretsMaster, setSecretsMaster] = useState(true); // 【总开关】整套本地密钥管理是否启用；关掉后不脱敏/不注入/不扫描
   const [secretsDetect, setSecretsDetect] = useState(true); // 发送前扫描/拦截疑似新密钥
   const [brainOn, setBrainOn] = useState(true); // 启用本地知识网络 Brain
   const [brainDocsOn, setBrainDocsOn] = useState(true); // recall 连带扫描『相关文档』
@@ -7727,6 +7746,7 @@ function SettingsModal({
       if (!s) return;
       loadedRef.current = s; // 存完整 settings，保存时 spread 保留本页不管的字段
       // 三个应用级开关：undefined 视为开
+      setSecretsMaster(s.app?.secretsMaster !== false);
       setSecretsDetect(s.app?.secretsDetect !== false);
       setBrainOn(s.app?.brainEnabled !== false);
       setBrainDocsOn(s.app?.brainDocs !== false);
@@ -8340,6 +8360,22 @@ function SettingsModal({
               <div style={{ fontSize: 11, opacity: .55, marginBottom: 14, lineHeight: 1.5 }}>
                 数字婴儿依赖本地 Python 与 gpu01 大模型。默认路径:python=/Users/logic/anaconda3/bin/python3,
                 目录=git/agi-lab/d1_digital_baby。如需改,编辑 ~/.minicc/config.json 的 agi 字段。
+              </div>
+              <div className="app-set-group">SOP 流程库</div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  defaultChecked={localStorage.getItem("minicc-sop-enabled") !== "0"}
+                  onChange={(e) => {
+                    localStorage.setItem("minicc-sop-enabled", e.target.checked ? "1" : "0");
+                    window.dispatchEvent(new CustomEvent("minicc-sop-toggle", { detail: e.target.checked }));
+                  }}
+                />
+                在侧边栏顶部显示 📋 SOP 标准作业流程库(可分类/拖动/多版本/回滚)
+              </label>
+              <div style={{ fontSize: 11, opacity: .55, marginBottom: 14, lineHeight: 1.5 }}>
+                把「部署 figcheck 到测试环境」这类反复要做的流程沉淀成标准 SOP，一事一条、可多版本迭代与回滚，越用越稳。
+                在聊天里说「把刚才这套流程总结成 SOP 存进库」，AI 会自动落库。数据存 ~/.minicc/sop/sop.json。
               </div>
               <div className="app-set-group">会话分组</div>
               <div className="theme-pick" style={{ marginBottom: "6px" }}>
@@ -9959,6 +9995,25 @@ function SettingsModal({
 
               <div className="app-set-row" style={{ cursor: "default" }}>
                 <div className="app-set-text">
+                  <div className="app-set-label">启用本地密钥管理（总开关）</div>
+                  <div className="app-set-hint">
+                    开：正常走密钥管理——已入库密钥自动脱敏、工具执行注入环境变量/回填占位符、按下方开关扫描新密钥。
+                    关：<b>整套密钥管理停摆</b>——不脱敏、不注入、不回填、不扫描、也不注入密钥说明，发送与工具执行一律按原文走（保险箱里的密钥仍在，只是暂不参与）。
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  className="app-set-toggle"
+                  checked={secretsMaster}
+                  onChange={(e) => {
+                    setSecretsMaster(e.target.checked);
+                    setAppToggle({ secretsMaster: e.target.checked });
+                  }}
+                />
+              </div>
+
+              <div className="app-set-row" style={{ cursor: "default", opacity: secretsMaster ? 1 : 0.45 }}>
+                <div className="app-set-text">
                   <div className="app-set-label">发送前检测疑似新密钥</div>
                   <div className="app-set-hint">
                     开：发送前扫描文本、发现疑似新密钥就弹窗让你确认是否入库。关：不再扫描拦截——传很长的临时
@@ -9969,6 +10024,7 @@ function SettingsModal({
                   type="checkbox"
                   className="app-set-toggle"
                   checked={secretsDetect}
+                  disabled={!secretsMaster}
                   onChange={(e) => {
                     setSecretsDetect(e.target.checked);
                     setAppToggle({ secretsDetect: e.target.checked });
