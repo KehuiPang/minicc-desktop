@@ -97,6 +97,19 @@ const PRIO_TITLE: Record<string, string> = Object.fromEntries(
   [...PRIO_HL, ...PRIO_QUAD].map((p) => [p.tag, p.label]),
 );
 
+// 当前工作目录(随 evt:ready 更新)：把 show_images/show_table 里的本地相对路径解析成绝对路径
+let uiCwd = "";
+// 把图片引用(本地路径/URL/dataURL)解析成 <img src> 可加载的地址。
+// 本地文件走同源 app://__localimg__(主进程伺服，CSP 'self' 放行)；远程/内联图原样返回。
+function toImgSrc(ref: string): string {
+  const s = String(ref || "").trim();
+  if (!s) return "";
+  if (/^(https?:|data:|app:|blob:)/i.test(s)) return s;
+  let abs = s;
+  if (!s.startsWith("/")) abs = (uiCwd ? uiCwd.replace(/\/+$/, "") + "/" : "") + s; // 相对→绝对(当前工作目录)
+  return "app://bundle/__localimg__?p=" + encodeURIComponent(abs);
+}
+
 // 图片放大预览：模块级 opener，供 ItemView(消息里的图) 调用，避免逐层传 props
 let openImageLightbox: ((src: string) => void) | null = null;
 // 图片右键菜单：模块级 opener（同上，消息里的图在顶层组件 ItemView 里）
@@ -1195,6 +1208,7 @@ export function App() {
       switch (ch) {
         case "evt:ready":
           setMeta(payload);
+          if (payload.cwd) uiCwd = payload.cwd; // 供 show_images/show_table 解析本地相对路径
           if (payload.providerId !== undefined) setCurProviderId(payload.providerId); // 底栏平台标签跟随当前会话
           setApiKeyStep("idle"); // 切平台/模型：重置 key 等待态，避免残留
           setOauthStep("idle");
@@ -4917,7 +4931,88 @@ function ItemView({
     );
   if (item.type === "assistant") return <AssistantMsg text={item.text} anchor={item.anchor} />;
   if (item.type === "notice") return <div className="notice">ⓘ {item.text}</div>;
+  // show_images / show_table：不当普通工具卡片，直接渲染成图片网格 / 带图表格给用户看
+  if (item.type === "tool" && (item.name === "show_images" || item.name === "show_table"))
+    return <MediaView item={item} />;
   return <ToolView item={item} />;
+}
+
+// 一张可点开放大 / 右键菜单的图（复用消息里图片的交互）
+function MediaImg({ src, alt }: { src: string; alt?: string }) {
+  const url = toImgSrc(src);
+  if (!url) return null;
+  return (
+    <img
+      className="media-img"
+      src={url}
+      alt={alt || ""}
+      loading="lazy"
+      style={{ cursor: "zoom-in" }}
+      onClick={() => openImageLightbox?.(url)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        openImageMenu?.(e.clientX, e.clientY, url);
+      }}
+    />
+  );
+}
+
+// 展示媒体：show_images(图片网格) / show_table(带图表格)。数据全部来自已持久化的 tool_use.input，
+// 图片字节从不进模型上下文；本地图经 toImgSrc 走同源 app://__localimg__ 加载。
+function MediaView({ item }: { item: Extract<Item, { type: "tool" }> }) {
+  const input: any = item.input || {};
+  if (item.name === "show_images") {
+    const imgs: any[] = Array.isArray(input.images) ? input.images : [];
+    return (
+      <div className="media-block">
+        {input.note && <div className="media-note">{String(input.note)}</div>}
+        <div className="media-grid">
+          {imgs.map((im, i) => (
+            <figure key={i} className="media-fig">
+              <MediaImg src={String(im?.src || "")} />
+              {im?.caption && <figcaption>{String(im.caption)}</figcaption>}
+            </figure>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  // show_table
+  const cols: any[] = Array.isArray(input.columns) ? input.columns : [];
+  const rows: any[] = Array.isArray(input.rows) ? input.rows : [];
+  return (
+    <div className="media-block">
+      {input.title && <div className="media-note">{String(input.title)}</div>}
+      <div className="media-table-wrap">
+        <table className="media-table">
+          <thead>
+            <tr>
+              {cols.map((c, i) => (
+                <th key={i}>{String(c)}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, ri) => (
+              <tr key={ri}>
+                {(Array.isArray(row) ? row : []).map((cell: any, ci: number) => (
+                  <td key={ci}>
+                    {cell?.image && (
+                      <figure className="media-fig">
+                        <MediaImg src={String(cell.image)} />
+                        {cell?.caption && <figcaption>{String(cell.caption)}</figcaption>}
+                      </figure>
+                    )}
+                    {cell?.text && <div className="media-cell-text">{String(cell.text)}</div>}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 // 把"松散列表"(列表项间有空行)转成紧凑列表，从源头消除列表大间距；段落空行保留

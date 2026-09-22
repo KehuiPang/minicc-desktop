@@ -4485,3 +4485,78 @@ body {
   border-color: rgba(255, 255, 255, 0.85);
   border-top-color: transparent;
 }
+
+/* —— show_images / show_table：AI 直接发给用户看的图片与带图表格(不进模型上下文) —— */
+.media-block {
+  margin: 6px 0 10px;
+}
+.media-note {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.media-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.media-fig {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 260px;
+}
+.media-img {
+  max-width: 260px;
+  max-height: 260px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  display: block;
+}
+.media-fig figcaption {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  word-break: break-word;
+}
+.media-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.media-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+.media-table th,
+.media-table td {
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.media-table th {
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.media-table td .media-img {
+  max-width: 220px;
+  max-height: 220px;
+}
+.media-cell-text {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

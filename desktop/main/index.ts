@@ -8,7 +8,7 @@ const safeStorageOk = () => {
     return false;
   }
 };
-import { join } from "node:path";
+import { join, resolve as pathResolve, isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -182,8 +182,16 @@ function mimeFor(path: string): string | null {
   if (path.endsWith(".json")) return "application/json";
   if (path.endsWith(".svg")) return "image/svg+xml";
   if (path.endsWith(".woff2")) return "font/woff2";
+  if (/\.png$/i.test(path)) return "image/png";
+  if (/\.jpe?g$/i.test(path)) return "image/jpeg";
+  if (/\.gif$/i.test(path)) return "image/gif";
+  if (/\.webp$/i.test(path)) return "image/webp";
+  if (/\.bmp$/i.test(path)) return "image/bmp";
+  if (/\.avif$/i.test(path)) return "image/avif";
   return null;
 }
+// 可展示的图片扩展名（show_images/show_table 伺服本地图 + 校验用）
+const IMG_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
 
 // 平台友好名（各兼容端点的 cfg.provider 都是 openai，改用 UI 预设 providerId 显示真实平台）
 const PROVIDER_LABELS: Record<string, string> = {
@@ -1203,6 +1211,113 @@ const askUserTool: Tool = {
   },
 };
 
+// —— 展示媒体给用户看（图片不进模型上下文）——
+// 关键点：图片「字节」永不回喂模型，省 token。渲染完全靠已持久化的 tool_use.input（只有路径/文本，体积极小），
+// 渲染层对 show_images/show_table 这两个工具做特殊渲染（图片网格 / 带图表格）。本地图走同源 app://__localimg__ 伺服。
+// 本地相对路径在这里绝对化 + 存在性校验，把绝对路径写回 input，这样刷新/切会话重载后也能正确定位。
+function normImgRef(src: string, cwd: string): { src: string; missing?: boolean } {
+  const s = String(src || "").trim();
+  if (!s) return { src: "", missing: true };
+  if (/^(https?:|data:image\/)/i.test(s)) return { src: s }; // 远程/内联图直接用
+  const abs = isAbsolute(s) ? s : pathResolve(cwd, s); // 本地文件 → 绝对化
+  return { src: abs, missing: !existsSync(abs) };
+}
+
+const showImagesTool: Tool = {
+  name: "show_images",
+  description:
+    "把一张或多张图片直接展示在对话框里给用户肉眼看。图片不会进入模型上下文(省 token)，可一次发多张。用于：找出来的图/对照图/截图/示意图等需要用户看的图。每项 src 可为本地文件路径(绝对，或相对当前工作目录)或 http(s) 链接。优先用绝对路径或 URL。",
+  readOnly: true, // 只展示、不改动，免权限确认
+  inputSchema: {
+    type: "object",
+    properties: {
+      note: { type: "string", description: "整组图上方的说明文字(可选)" },
+      images: {
+        type: "array",
+        description: "要展示的图片列表",
+        items: {
+          type: "object",
+          properties: {
+            src: { type: "string", description: "本地文件路径或 http(s) 链接" },
+            caption: { type: "string", description: "这张图下方的图注(可选)" },
+          },
+          required: ["src"],
+        },
+      },
+    },
+    required: ["images"],
+  },
+  async run(input, ctx): Promise<ToolResult> {
+    const raw = Array.isArray((input as any).images) ? (input as any).images : [];
+    if (!raw.length) return { content: "show_images 需要至少一张图片(images 数组为空)", isError: true };
+    const missing: string[] = [];
+    let ok = 0;
+    for (const it of raw) {
+      const n = normImgRef(String(it?.src || ""), ctx.cwd);
+      if (!n.src) continue;
+      it.src = n.src; // 绝对路径写回 input(供渲染层 + 重载定位)
+      if (n.missing) missing.push(n.src);
+      else ok++;
+    }
+    if (!ok && missing.length) return { content: "以下图片路径都不存在，未能展示：\n" + missing.join("\n"), isError: true };
+    let msg = `已在对话框展示 ${ok} 张图片（未纳入上下文）`;
+    if (missing.length) msg += `；另有 ${missing.length} 张路径不存在未展示：\n` + missing.join("\n");
+    return { content: msg };
+  },
+};
+
+const showTableTool: Tool = {
+  name: "show_table",
+  description:
+    "在对话框里展示一个表格给用户看，单元格里可嵌入图片(图片不进模型上下文)。适合对照展示，如一列放『找出来的图』、一列放『找不出来的图』，或图文并排的清单。columns 是表头文字数组；rows 是每行的单元格数组，单元格 {text?, image?, caption?}：image 为本地路径或 http(s) 链接，text/caption 为文字。",
+  readOnly: true,
+  inputSchema: {
+    type: "object",
+    properties: {
+      title: { type: "string", description: "表格标题(可选)" },
+      columns: { type: "array", items: { type: "string" }, description: "表头文字，如 ['能找出来的图','找不出来的图']" },
+      rows: {
+        type: "array",
+        description: "每一行；每行是若干单元格，个数应与 columns 对应",
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              text: { type: "string", description: "单元格文字(可选)" },
+              image: { type: "string", description: "单元格图片：本地路径或 http(s) 链接(可选)" },
+              caption: { type: "string", description: "图下方图注(可选)" },
+            },
+          },
+        },
+      },
+    },
+    required: ["columns", "rows"],
+  },
+  async run(input, ctx): Promise<ToolResult> {
+    const cols = Array.isArray((input as any).columns) ? (input as any).columns : [];
+    const rows = Array.isArray((input as any).rows) ? (input as any).rows : [];
+    if (!cols.length) return { content: "show_table 需要 columns 表头", isError: true };
+    if (!rows.length) return { content: "show_table 需要至少一行 rows", isError: true };
+    const missing: string[] = [];
+    let imgCount = 0;
+    for (const row of rows) {
+      if (!Array.isArray(row)) continue;
+      for (const cell of row) {
+        if (cell && typeof cell === "object" && cell.image) {
+          const n = normImgRef(String(cell.image), ctx.cwd);
+          cell.image = n.src; // 绝对路径写回
+          if (n.missing) missing.push(n.src);
+          else imgCount++;
+        }
+      }
+    }
+    let msg = `已在对话框展示表格（${cols.length} 列 × ${rows.length} 行，含 ${imgCount} 张图；未纳入上下文）`;
+    if (missing.length) msg += `；有 ${missing.length} 张图路径不存在：\n` + missing.join("\n");
+    return { content: msg };
+  },
+};
+
 // 密钥安全包装：入参占位符→真实值回填、bash 注入密钥环境变量、工具结果→脱敏后再回给模型。
 // 闭环:模型能用密钥(env/占位符)但读不回明文(输出被脱敏)，想 echo 偷取也会被拦。
 function deepRehydrate(input: Record<string, unknown>): Record<string, unknown> {
@@ -1235,7 +1350,7 @@ function wrapSecret(t: Tool): Tool {
 function desktopTools(sessionId?: string): Tool[] {
   const brainOn = brainEnabled(loadSettings());
   const base = brainOn ? ALL_TOOLS : ALL_TOOLS.filter((t) => !t.name.startsWith("brain_"));
-  let all = [...base, askUserTool, ...BROWSER_TOOLS, ...mcpTools()].map(wrapSecret);
+  let all = [...base, askUserTool, showImagesTool, showTableTool, ...BROWSER_TOOLS, ...mcpTools()].map(wrapSecret);
   // 本会话「对话框配置」禁用的工具→不发给模型(省 token / 收窄能力)
   if (sessionId) {
     const off = listSessions().find((s) => s.id === sessionId)?.promptCfg?.disabledTools;
@@ -1697,7 +1812,24 @@ if (!gotLock) {
     loadStopRules();
     // app://bundle/xxx → out/renderer/xxx（打包后 renderer 与 main 同级 out 下）
     protocol.handle("app", async (request) => {
-      const { pathname } = new URL(request.url);
+      const u = new URL(request.url);
+      const { pathname } = u;
+      // 本地图片伺服：show_images/show_table 里用户要看的本地图，走同源 app:// (CSP 'self' 放行)、不进模型上下文。
+      // 安全：仅伺服图片扩展名、且真实存在的本地文件；其它一律拒绝。
+      if (pathname === "/__localimg__") {
+        const p = u.searchParams.get("p") || "";
+        if (!p || !IMG_EXT_RE.test(p) || !existsSync(p)) return new Response("forbidden", { status: 403 });
+        try {
+          const res = await net.fetch(pathToFileURL(p).toString());
+          const headers = new Headers(res.headers);
+          const type = mimeFor(p);
+          if (type) headers.set("content-type", type);
+          headers.set("cache-control", "no-cache");
+          return new Response(res.body, { status: res.status, headers });
+        } catch {
+          return new Response("not found", { status: 404 });
+        }
+      }
       const rel = pathname === "/" || pathname === "" ? "/index.html" : pathname;
       const filePath = join(__dirname, "../renderer", rel);
       const res = await net.fetch(pathToFileURL(filePath).toString());
