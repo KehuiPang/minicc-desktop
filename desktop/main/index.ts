@@ -1318,6 +1318,77 @@ const showTableTool: Tool = {
   },
 };
 
+// —— view_image：把图片读进【模型自己】的视野(进上下文)，让 AI 亲眼看懂图后继续 ——
+// 与 show_images 相反：show_images 只给用户看、不进上下文；view_image 让模型看到图像内容(占 token)。
+// 底层走 ToolResult.images：loop 会把 data:image URL 作为 image 块追加到 tool_result 之后回喂视觉模型。
+const VIEW_IMG_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const viewImageTool: Tool = {
+  name: "view_image",
+  description:
+    "把一张或多张图片读进你自己的视野(上下文)，让你能亲眼看到并理解图像内容，然后据此继续判断/回答。用于：需要你判读的图/截图/示意图/对照图/WB 条带图等。与 show_images 的区别——show_images 只把图展示给用户看、不进你的上下文；view_image 是让【你自己】看懂这张图。src 可为本地文件路径(绝对或相对工作目录)或 http(s) 链接。注意：图片会占用较多上下文 token，只在确需看图时用，一次别塞太多(最多 8 张)。",
+  readOnly: true, // 只读图、不改动，免权限确认
+  inputSchema: {
+    type: "object",
+    properties: {
+      images: {
+        type: "array",
+        description: "要查看的图片列表：本地文件路径或 http(s) 链接",
+        items: { type: "string" },
+      },
+    },
+    required: ["images"],
+  },
+  async run(input, ctx): Promise<ToolResult> {
+    const refs = Array.isArray((input as any).images) ? (input as any).images : [];
+    if (!refs.length) return { content: "view_image 需要至少一张图片(images 为空)", isError: true };
+    const dataUrls: string[] = [];
+    const errs: string[] = [];
+    for (const r of refs.slice(0, 8)) {
+      const ref = String(r || "").trim();
+      if (!ref) continue;
+      try {
+        let du: string;
+        if (/^data:image\//i.test(ref)) {
+          du = ref;
+        } else if (/^https?:\/\//i.test(ref)) {
+          const res = await fetch(ref, { signal: ctx.signal, headers: { "User-Agent": VIEW_IMG_UA } });
+          if (!res.ok) {
+            errs.push(`${ref}（HTTP ${res.status}）`);
+            continue;
+          }
+          const ct = (res.headers.get("content-type") || "").split(";")[0];
+          if (!/^image\//i.test(ct)) {
+            errs.push(`${ref}（不是图片：${ct || "未知类型"}）`);
+            continue;
+          }
+          const buf = Buffer.from(await res.arrayBuffer());
+          du = `data:${ct};base64,${buf.toString("base64")}`;
+        } else {
+          const absPath = isAbsolute(ref) ? ref : pathResolve(ctx.cwd, ref);
+          if (!existsSync(absPath)) {
+            errs.push(`${absPath}（不存在）`);
+            continue;
+          }
+          if (!IMG_EXT_RE.test(absPath)) {
+            errs.push(`${absPath}（非图片扩展名）`);
+            continue;
+          }
+          const mime = mimeFor(absPath) || "image/png";
+          du = `data:${mime};base64,${readFileSync(absPath).toString("base64")}`;
+        }
+        dataUrls.push(shrinkImageDataUrl(du)); // 缩到 1568 长边内，避免超 Anthropic 尺寸限制
+      } catch (e: any) {
+        errs.push(`${ref}（${e?.message || e}）`);
+      }
+    }
+    if (!dataUrls.length) return { content: "没能读到可查看的图片：\n" + errs.join("\n"), isError: true };
+    let msg = `已把 ${dataUrls.length} 张图片读入你的视野，请查看图像内容后继续。`;
+    if (errs.length) msg += `\n（另有 ${errs.length} 张未能读取：\n${errs.join("\n")}）`;
+    return { content: msg, images: dataUrls };
+  },
+};
+
 // 密钥安全包装：入参占位符→真实值回填、bash 注入密钥环境变量、工具结果→脱敏后再回给模型。
 // 闭环:模型能用密钥(env/占位符)但读不回明文(输出被脱敏)，想 echo 偷取也会被拦。
 function deepRehydrate(input: Record<string, unknown>): Record<string, unknown> {
@@ -1350,7 +1421,7 @@ function wrapSecret(t: Tool): Tool {
 function desktopTools(sessionId?: string): Tool[] {
   const brainOn = brainEnabled(loadSettings());
   const base = brainOn ? ALL_TOOLS : ALL_TOOLS.filter((t) => !t.name.startsWith("brain_"));
-  let all = [...base, askUserTool, showImagesTool, showTableTool, ...BROWSER_TOOLS, ...mcpTools()].map(wrapSecret);
+  let all = [...base, askUserTool, showImagesTool, showTableTool, viewImageTool, ...BROWSER_TOOLS, ...mcpTools()].map(wrapSecret);
   // 本会话「对话框配置」禁用的工具→不发给模型(省 token / 收窄能力)
   if (sessionId) {
     const off = listSessions().find((s) => s.id === sessionId)?.promptCfg?.disabledTools;
