@@ -5966,6 +5966,9 @@ function toolInputPreview(item: Extract<Item, { type: "tool" }>): string {
 }
 
 const ToolView = React.memo(function ToolView({ item }: { item: Extract<Item, { type: "tool" }> }) {
+  // show_images / show_table：不当普通工具卡片，直接渲染成图片网格 / 带图表格给用户看。
+  // 放在最前(任何 hook 之前)——同一 keyed item 的 name 稳定，不会在两条路径间来回切，符合 hooks 规则。
+  if (item.name === "show_images" || item.name === "show_table") return <MediaView item={item} />;
   const [open, setOpen] = useState(false); // 默认折叠
   const m = toolMeta(item);
   const running = item.status === "running";
@@ -6007,8 +6010,22 @@ const ToolView = React.memo(function ToolView({ item }: { item: Extract<Item, { 
 type ToolItem = Extract<Item, { type: "tool" }>;
 
 // 连续的工具调用合并成一组，收起显示概括；点开列步骤，再点开看命令
+const isMediaTool = (t: ToolItem) => t.name === "show_images" || t.name === "show_table";
 function ToolGroup({ tools }: { tools: ToolItem[] }) {
   const [open, setOpen] = useState(false);
+  // 媒体工具(show_images/show_table)始终单独整卡展示，不折进多工具组里被藏起来
+  const media = tools.filter(isMediaTool);
+  const rest = tools.filter((t) => !isMediaTool(t));
+  if (media.length) {
+    return (
+      <>
+        {media.map((t, i) => (
+          <MediaView key={"m" + i} item={t} />
+        ))}
+        {rest.length > 0 && <ToolGroup tools={rest} />}
+      </>
+    );
+  }
   if (tools.length === 1) return <ToolView item={tools[0]} />;
   const running = tools.some((t) => t.status === "running");
   const done = tools.filter((t) => t.status === "done").length;
