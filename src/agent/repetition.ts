@@ -7,9 +7,11 @@
 //      屏上(经 onRecover)和历史都干净，下一轮模型也不会顺着旧输出继续刷。
 //
 // 判定核心：只认「精确周期重复」。为不误伤合法重复：
-//   · 单字符周期(period=1，如分隔线 "------"、省略号 "……"、进度条 "██")门槛高（≥120 字符）；
-//   · 多字符单元(period≥2，如 "count"/"count\n"/"ha ")连续 ≥12 遍即判定——正常文字/代码几乎不会
-//     把同一个 ≥2 字符的串精确重复十几遍，故极少误伤；一旦误伤最坏也只是把已明显跑飞的回答早点截断。
+//   · 单字符周期(period=1，如分隔线 "------"、省略号 "……"、进度条 "██")门槛高（≥200 字符）；
+//   · 多字符单元(period≥2，如 "count"/"count\n"/"ha ")需连续 ≥20 遍且累计 ≥100 字符才判定。
+//     早先门槛(≥10 遍/≥20 字符)太松：像 "0, 0, 0…" 的列表、markdown 表格 "| "、代码里的重复
+//     结构只重复十来遍就被误杀（曾把正常的 `for rf in raws:` 后整段代码截掉）。真·退化循环是刷向
+//     max_tokens 的失控，动辄成百上千遍，抬高门槛后仍能在几十~上百字符内早停，只是不再误伤正常正文/代码。
 
 export interface RepeatHit {
   period: number; // 重复单元长度（字符）
@@ -29,8 +31,9 @@ export function findRepeatSuffix(s: string, maxPeriod = 200, win = 8192): Repeat
     for (let i = L - 1; i - p >= lo && s[i] === s[i - p]; i--) run++;
     if (run <= 0) continue;
     const repeats = run / p + 1; // 连续出现的单元遍数（近似）
-    // 单字符周期易撞合法重复(分隔线/省略号/进度条/单字叠词)→ 要够长；多字符单元约十遍即判定，冒头就抓
-    const qualifies = p === 1 ? run >= 120 : repeats >= 10 && run >= 20;
+    // 单字符周期易撞合法重复(分隔线/省略号/进度条/单字叠词)→ 要够长(≥200)；
+    // 多字符单元需 ≥20 遍且累计 ≥100 字符——正常正文/代码/列表/表格很少精确重复二十遍，真·失控远超此数
+    const qualifies = p === 1 ? run >= 200 : repeats >= 20 && run >= 100;
     if (qualifies) {
       const repStart = Math.max(0, L - (run + p)); // 末尾 run+p 字符 = 单元×多遍
       return { period: p, run, repStart };
