@@ -88,6 +88,7 @@ export interface AgentHooks {
   onUsage?(u: UsageReport): void; // 每步回报累计用量 + 本轮自足值
   onRateLimits?(rl: import("../types.js").RateLimits): void; // 订阅额度快照
   onCompact?(before: number, after: number): void; // 压缩发生时回报条数变化
+  onCompactArchive?(discarded: Message[]): void; // 压缩丢弃旧历史前，把被丢弃的原始消息交出去归档(供 read_history 找回)
   onStep?(): void; // 每完成一段(助手消息/工具结果)后回调：用于即时落盘，重启不丢进度
   onRecover?(cleanedText: string): void; // 模型把工具调用当文本吐出→兜底解析后，回传清理后的正文供前端修正显示
   onAuthError?(): Promise<Provider | null>; // 撞 401(token 过期/吊销)→上层按最新凭据给一个新 provider 则重试本步；null=放弃抛错
@@ -1000,6 +1001,12 @@ export class Agent {
     // ⚠ 摘要为空/失败：宁可不压、也不能把历史丢成空摘要(否则 AI 直接失忆)
     if (!summaryText) return false;
 
+    // 丢弃旧历史前先归档原始消息(压缩是唯一会从会话文件抹掉原始细节的地方)，供 read_history 找回
+    try {
+      hooks.onCompactArchive?.(older);
+    } catch {
+      /* 归档失败不影响压缩 */
+    }
     this.messages = [
       { role: "user", content: [{ type: "text", text: `【之前对话摘要】\n${summaryText}` }] },
       ...recent,

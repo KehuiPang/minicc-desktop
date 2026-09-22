@@ -2,6 +2,7 @@
 import {
   readFileSync,
   writeFileSync,
+  appendFileSync,
   mkdirSync,
   rmSync,
   renameSync,
@@ -363,6 +364,78 @@ export function loadMessages(id: string): Message[] {
   } catch {
     return [];
   }
+}
+
+// —— 历史归档 + 读取(供 read_history 工具找回被压缩/丢失的上下文) ——
+// 压缩会把旧历史替换成一段摘要并落盘 → 原始细节从会话文件消失。这里在压缩丢弃前，把被丢弃的原始
+// 消息追加到 ~/.minicc/history/<id>.jsonl(只增不减)，即便压缩了也能翻回全文。
+const HDIR = join(DIR, "history");
+
+export interface TranscriptLine {
+  ts?: number;
+  role: string;
+  text: string;
+}
+
+// 把一条消息摊平成可读文本(文本 + 工具调用/结果要点；图片略去为标记，别把 base64 塞进归档)
+function flattenMessage(m: Message): string {
+  const parts = ((m.content as any[]) || [])
+    .map((b: any) => {
+      if (b.type === "text") return b.text || "";
+      if (b.type === "image") return "[图片]";
+      if (b.type === "tool_use") return `[调用 ${b.name}: ${JSON.stringify(b.input || {}).slice(0, 400)}]`;
+      if (b.type === "tool_result") return `[结果: ${String(b.content ?? "").slice(0, 800)}]`;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+  return parts;
+}
+
+// 压缩丢弃旧历史前调用：把被丢弃的原始消息追加进归档(JSONL，每行一条 TranscriptLine)
+export function archiveDiscarded(id: string, msgs: Message[]): void {
+  try {
+    if (!id || !Array.isArray(msgs) || !msgs.length) return;
+    mkdirSync(HDIR, { recursive: true });
+    const lines = msgs
+      .map((m) => {
+        const text = flattenMessage(m);
+        if (!text || text.trim().length < 2) return "";
+        // 跳过压缩摘要本身(避免重复归档摘要；原始内容早已在更早的归档里)
+        if (m.role === "user" && text.startsWith("【之前对话摘要】")) return "";
+        const line: TranscriptLine = { ts: (m as any).ts, role: m.role, text };
+        return JSON.stringify(line);
+      })
+      .filter(Boolean);
+    if (lines.length) {
+      appendFileSync(join(HDIR, id + ".jsonl"), lines.join("\n") + "\n", "utf8");
+    }
+  } catch {
+    /* 归档失败不影响主流程 */
+  }
+}
+
+// 读取某会话的完整可读历史 = 归档(被压缩掉的旧史) + 当前会话文件(摘要+最近)。按时间顺序。
+export function readSessionTranscript(id: string): TranscriptLine[] {
+  const out: TranscriptLine[] = [];
+  try {
+    const raw = readFileSync(join(HDIR, id + ".jsonl"), "utf8");
+    for (const ln of raw.split("\n")) {
+      if (!ln.trim()) continue;
+      try {
+        out.push(JSON.parse(ln) as TranscriptLine);
+      } catch {
+        /* 跳过坏行 */
+      }
+    }
+  } catch {
+    /* 无归档 */
+  }
+  for (const m of loadMessages(id)) {
+    const text = flattenMessage(m);
+    if (text && text.trim().length >= 2) out.push({ ts: (m as any).ts, role: m.role, text });
+  }
+  return out;
 }
 
 // —— 会话正文异步合并写 ——

@@ -69,7 +69,10 @@ import {
   emptyTrash,
   autoPurgeTrash,
   setSessionPromptCfg,
+  archiveDiscarded,
+  readSessionTranscript,
 } from "./sessions.js";
+import type { TranscriptLine } from "./sessions.js";
 import type { SessionPromptCfg } from "./sessions.js";
 import { ensureFresh as ensureSearchIndex, searchSessions as searchInSessions } from "./search.js";
 import {
@@ -1389,6 +1392,81 @@ const viewImageTool: Tool = {
   },
 };
 
+// —— read_history：读取历史对话，找回被压缩/清空/停止后丢失的上下文 ——
+// 数据源 = 会话文件(摘要+最近) + 压缩归档(被丢弃的原始旧史)，合并成完整可读时间线。
+const readHistoryTool: Tool = {
+  name: "read_history",
+  description:
+    "读取历史对话内容——当你发现当前上下文被压缩/清空、或任务被停止后想不起之前聊过什么、做过什么时，用它翻回之前的对话(包含已被自动压缩归档的旧内容)。默认读【当前会话】。用法：不给参数=按时间返回当前会话最近的历史；给 query=在历史里搜关键词(session_id 传 'all' 则搜所有会话)；list:true=列出所有会话(拿到 id 再指定 session_id 读别的会话)；offset=往更早翻页。",
+  readOnly: true, // 只读本地会话文件，安全，免权限确认
+  inputSchema: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "关键词：在历史里搜相关内容(不给则按时间返回最近历史)" },
+      session_id: { type: "string", description: "目标会话 id；不给=当前会话；配合 query 传 'all'=搜所有会话" },
+      list: { type: "boolean", description: "true=列出所有会话(id/标题/时间)供挑选" },
+      limit: { type: "number", description: "返回条数，默认 40" },
+      offset: { type: "number", description: "从末尾往前跳过多少条(翻看更早内容)，默认 0" },
+    },
+  },
+  async run(input, ctx): Promise<ToolResult> {
+    try {
+      const limit = Math.min(200, Math.max(1, Number((input as any).limit) || 40));
+      const offset = Math.max(0, Number((input as any).offset) || 0);
+      const sidIn = String((input as any).session_id || "").trim();
+      const curSid = ctx.sessionId || "";
+      const metaOf = (id: string) => listSessions().find((s) => s.id === id);
+
+      if ((input as any).list) {
+        const rows = listSessions()
+          .slice(0, limit)
+          .map((s) => `${s.id}  |  ${s.title || "(无题)"}  |  ${new Date(s.updatedAt).toLocaleString()}${s.id === curSid ? "  ← 当前会话" : ""}`);
+        return { content: rows.length ? "会话列表(最新在前)：\n" + rows.join("\n") + "\n\n(用 session_id 指定其一读取/搜索)" : "还没有任何会话。" };
+      }
+
+      const query = String((input as any).query || "").trim();
+      if (query) {
+        const scanIds = sidIn === "all" ? listSessions().map((s) => s.id) : [sidIn || curSid].filter(Boolean);
+        if (!scanIds.length) return { content: "无法确定要搜哪个会话(缺 sessionId)。可先 list:true 列出会话。", isError: true };
+        const ql = query.toLowerCase();
+        const hits: string[] = [];
+        for (const id of scanIds) {
+          const title = metaOf(id)?.title || id;
+          for (const ln of readSessionTranscript(id)) {
+            if (ln.text.toLowerCase().includes(ql)) {
+              const who = ln.role === "user" ? "用户" : "助手";
+              const snip = ln.text.length > 700 ? ln.text.slice(0, 700) + "…" : ln.text;
+              hits.push(`【${title}】${who}${ln.ts ? " · " + new Date(ln.ts).toLocaleString() : ""}\n${snip}`);
+              if (hits.length >= limit) break;
+            }
+          }
+          if (hits.length >= limit) break;
+        }
+        if (!hits.length) return { content: `在${sidIn === "all" ? "所有会话" : "该会话"}历史里没找到「${query}」。` };
+        return { content: `搜索「${query}」命中 ${hits.length} 段：\n\n` + hits.join("\n\n———\n\n") };
+      }
+
+      // 读取模式：按时间返回最近 limit 条(offset 往前翻)
+      const id = sidIn || curSid;
+      if (!id) return { content: "无法确定要读哪个会话(缺 sessionId)。可传 list:true 列出会话后指定 session_id。", isError: true };
+      const all: TranscriptLine[] = readSessionTranscript(id);
+      if (!all.length) return { content: "该会话暂无历史记录。" };
+      const end = Math.max(0, all.length - offset);
+      const start = Math.max(0, end - limit);
+      const slice = all.slice(start, end);
+      const header =
+        `会话历史 [第 ${start + 1}-${end} 条 / 共 ${all.length} 条]` +
+        (start > 0 ? `（还有更早的 ${start} 条，把 offset 调到 ${offset + limit} 可继续往前翻）` : "（已到最早）");
+      const body = slice
+        .map((ln) => `${ln.role === "user" ? "用户" : "助手"}${ln.ts ? " [" + new Date(ln.ts).toLocaleString() + "]" : ""}：${ln.text}`)
+        .join("\n\n");
+      return { content: header + "\n\n" + body };
+    } catch (e: any) {
+      return { content: `读取历史失败: ${e?.message || e}`, isError: true };
+    }
+  },
+};
+
 // 密钥安全包装：入参占位符→真实值回填、bash 注入密钥环境变量、工具结果→脱敏后再回给模型。
 // 闭环:模型能用密钥(env/占位符)但读不回明文(输出被脱敏)，想 echo 偷取也会被拦。
 function deepRehydrate(input: Record<string, unknown>): Record<string, unknown> {
@@ -1421,7 +1499,7 @@ function wrapSecret(t: Tool): Tool {
 function desktopTools(sessionId?: string): Tool[] {
   const brainOn = brainEnabled(loadSettings());
   const base = brainOn ? ALL_TOOLS : ALL_TOOLS.filter((t) => !t.name.startsWith("brain_"));
-  let all = [...base, askUserTool, showImagesTool, showTableTool, viewImageTool, ...BROWSER_TOOLS, ...mcpTools()].map(wrapSecret);
+  let all = [...base, askUserTool, showImagesTool, showTableTool, viewImageTool, readHistoryTool, ...BROWSER_TOOLS, ...mcpTools()].map(wrapSecret);
   // 本会话「对话框配置」禁用的工具→不发给模型(省 token / 收窄能力)
   if (sessionId) {
     const off = listSessions().find((s) => s.id === sessionId)?.promptCfg?.disabledTools;
@@ -2157,6 +2235,7 @@ async function startTurn(useId: string, text: string, images?: string[], sysOver
           if (useId === currentId) send("evt:ratelimits", { ...rl, providerId: rlPid });
         },
         onCompact: (b, a) => send("evt:compact", { sid: useId, before: b, after: a }),
+        onCompactArchive: (discarded) => archiveDiscarded(useId, discarded), // 压缩丢弃前归档原始历史,供 read_history 找回
         onAssistantDone: () => send("evt:done", { sid: useId }),
       },
       ac.signal,
