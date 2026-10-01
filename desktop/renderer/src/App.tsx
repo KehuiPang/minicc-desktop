@@ -134,6 +134,36 @@ async function copyImageToClipboard(src: string): Promise<boolean> {
   }
 }
 
+// 发送前自动缩放：多数视觉模型限制任一边 ≤2000px，超了直接报错。
+// 把最长边等比缩到 ≤MAX_EDGE(留点余量取 1960)，不足则原样返回。
+const MAX_IMG_EDGE = 1960;
+async function downscaleImageDataUrl(src: string): Promise<string> {
+  try {
+    if (!src.startsWith("data:image/")) return src;
+    const img = new Image();
+    img.src = src;
+    await img.decode();
+    const w = img.naturalWidth,
+      h = img.naturalHeight;
+    const longest = Math.max(w, h);
+    if (!longest || longest <= MAX_IMG_EDGE) return src; // 没超限，原样发
+    const scale = MAX_IMG_EDGE / longest;
+    const nw = Math.max(1, Math.round(w * scale));
+    const nh = Math.max(1, Math.round(h * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = nw;
+    canvas.height = nh;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return src;
+    ctx.drawImage(img, 0, 0, nw, nh);
+    // jpeg 原图继续输出 jpeg(更小)，其余统一 png 保无损/透明
+    const isJpeg = /^data:image\/jpe?g/i.test(src);
+    return isJpeg ? canvas.toDataURL("image/jpeg", 0.92) : canvas.toDataURL("image/png");
+  } catch {
+    return src; // 缩放失败不拦截发送，交给后端/模型兜底
+  }
+}
+
 // 保存图片到本地(浏览器下载)。dataURL 直接可下。
 function saveImage(src: string): void {
   const a = document.createElement("a");
@@ -1749,12 +1779,15 @@ export function App() {
     localStorage.setItem("minicc-sidebar-collapsed", v ? "1" : "0");
   }
 
-  // 读取图片文件为 dataURL
+  // 读取图片文件为 dataURL（发送前自动把最长边缩到 ≤2000px，避开模型尺寸限制）
   function addFiles(files: FileList | File[]) {
     for (const f of Array.from(files)) {
       if (!f.type.startsWith("image/")) continue;
       const reader = new FileReader();
-      reader.onload = () => setPendingImages((p) => [...p, reader.result as string]);
+      reader.onload = async () => {
+        const scaled = await downscaleImageDataUrl(reader.result as string);
+        setPendingImages((p) => [...p, scaled]);
+      };
       reader.readAsDataURL(f);
     }
   }
@@ -5300,7 +5333,10 @@ function AskModal({
     for (const f of Array.from(files)) {
       if (!f.type.startsWith("image/")) continue;
       const reader = new FileReader();
-      reader.onload = () => setImgs((m) => ({ ...m, [step]: [...(m[step] || []), reader.result as string] }));
+      reader.onload = async () => {
+        const scaled = await downscaleImageDataUrl(reader.result as string);
+        setImgs((m) => ({ ...m, [step]: [...(m[step] || []), scaled] }));
+      };
       reader.readAsDataURL(f);
     }
   };
