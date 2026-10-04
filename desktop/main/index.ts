@@ -1044,7 +1044,7 @@ function setRuntimeForSession(id: string) {
   subFlag = isSub(sp.providerId);
   effortCur = sp.effort || "";
   sysPrompt = buildSysPrompt(cwd, modelLabel, sp.providerId, id);
-  send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow, providerId: sp.providerId, effort: effortCur });
+  send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow, contextWindowSource: cfg.contextWindowSource, providerId: sp.providerId, effort: effortCur });
 }
 
 // —— 浏览器控制：Electron 内置 Chromium 的 WebContentsView，可嵌入主窗口面板"可视化" AI 操作 ——
@@ -1921,7 +1921,7 @@ function createWindow() {
   else win.loadURL("app://bundle/index.html");
 
   win.webContents.on("did-finish-load", () => {
-    send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow, effort: effortCur });
+    send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow, contextWindowSource: loadConfig().contextWindowSource, effort: effortCur });
     bootstrapSessions();
     void emitAccount();
     const pid = loadSettings()?.providerId;
@@ -2067,7 +2067,7 @@ function rebuildAgentsForProvider(pid: string) {
   try {
     if (currentId && provForSession(currentId, s).providerId === pid) {
       setRuntimeForSession(currentId);
-      send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow, effort: effortCur });
+      send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow, contextWindowSource: loadConfig().contextWindowSource, effort: effortCur });
     }
   } catch {
     /* ignore */
@@ -3378,7 +3378,7 @@ ipcMain.handle("account:codex-login", async () => {
   if (s) saveSettings({ ...s, providerId: "codex", kind: "codex", model: s.model || "gpt-5.5" });
   try {
     initProvider();
-    send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow, effort: effortCur });
+    send("evt:ready", { backend: backendLabel, model: modelLabel, cwd, sub: subFlag, ctxWindow, contextWindowSource: loadConfig().contextWindowSource, effort: effortCur });
     void emitAccount();
   } catch (e) {
     log("codex-login-ipc", "重载 provider 失败", String(e));

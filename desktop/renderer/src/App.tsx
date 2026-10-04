@@ -411,6 +411,7 @@ export function App() {
     cwd: "",
     sub: false,
     ctxWindow: CTX_MAX,
+    contextWindowSource: "estimate" as string,
     effort: "" as string, // 本会话思考深度(""=平台默认)，随 evt:ready 同步
   });
   const [usage, setUsage] = useState<Usage>({ totalInput: 0, totalOutput: 0, lastInput: 0 });
@@ -3863,7 +3864,9 @@ export function App() {
         {showUsage && (
           <div className="usage-panel">
             <div className="u-row">
-              <span>上下文窗口</span>
+              <span title={meta.contextWindowSource === "codex-metadata" ? "采用 Codex 模型元数据的最大容量；实际请求上限由服务端决定" : undefined}>
+                上下文窗口{meta.contextWindowSource === "estimate" ? "（估算）" : meta.contextWindowSource === "codex-metadata" ? "（最大）" : ""}
+              </span>
               <span>
                 {(usage.lastInput / 1000).toFixed(1)}k / {ctxWinLabel} ({ctxPct}%)
               </span>

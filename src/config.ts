@@ -8,10 +8,11 @@
 //      真机验证：model 必须用主线名(如 gpt-5.5)，gpt-5*-codex 后缀在订阅通道被拒。
 import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { resolveContextWindow, type ContextInfo } from "./context-window.js";
 
 export type AuthMode = "api-key" | "oauth";
 
-export interface Config {
+export interface Config extends ContextInfo {
   provider: "anthropic" | "openai" | "codex";
   authMode: AuthMode;
   model: string;
@@ -33,31 +34,7 @@ export interface Config {
   keepRecentTurns: number; // 压缩时保留最近多少条原始消息
 }
 
-// 各模型上下文窗口(按 model id 推断；不确定的取保守 128k，避免超限报错)
-function contextWindowFor(model: string): number {
-  const m = model.toLowerCase();
-  if (/claude-(opus|sonnet|fable|mythos)/.test(m)) return 1_000_000;
-  if (/claude-haiku/.test(m)) return 200_000;
-  if (/deepseek-v4/.test(m)) return 1_000_000; // V4 Pro/Flash 均 1M
-  if (/minimax-m3/.test(m)) return 1_000_000;
-  if (/minimax/.test(m)) return 200_000;
-  if (/gpt-5/.test(m)) return 1_000_000; // GPT-5.x 模型窗口 ~1M(Codex 通道会在 loadConfig 里封到 400k)
-  if (/gpt-4\.1|\bo3\b|\bo4/.test(m)) return 400_000;
-  if (/qwen3?[.-]?(max|7)|qwen-max|qwen-plus/.test(m)) return 256_000;
-  if (/doubao/.test(m)) return 256_000;
-  if (/glm-5/.test(m)) return 1_000_000; // GLM-5.2/5.1 1M
-  if (/glm-4/.test(m)) return 200_000;
-  if (/moonshot-v1-8k/.test(m)) return 8_192;
-  if (/moonshot-v1-32k/.test(m)) return 32_000;
-  if (/moonshot-v1-128k/.test(m)) return 128_000;
-  if (/\bk3\b|kimi-k3/.test(m)) return 1_000_000; // Kimi K3 旗舰 1M(订阅端 model id 就叫 k3)
-  if (/kimi-for-coding|kimi/.test(m)) return 256_000; // Kimi Code K2.7 / K2.x / kimi-latest
-  if (/hunyuan/.test(m)) return 256_000;
-  if (/grok-4\.[35]/.test(m)) return 1_000_000; // grok-4.3/4.5 旗舰
-  if (/grok/.test(m)) return 256_000;
-  // 旧 deepseek-chat / gpt-4o / qwen-其它 / 未知 → 128k(保守；本地小窗口 vLLM 请在设置里手填上下文)
-  return 128_000;
-}
+// 上下文容量统一由 context-window.ts 解析，显示与压缩共用同一结果。
 
 // 单次请求的输出上限(max_tokens)。历史死写成 8192，长回复(整份文档/整文件重写)会顶到上限被截在半句，
 // 且 loop 拿到 stop_reason=max_tokens 也不续写→尾巴被静默切掉。这里按模型给到各家实际支持的输出上限。
@@ -130,9 +107,8 @@ export function loadConfig(): Config {
   const apiKey =
     provider === "anthropic" ? pick("ANTHROPIC_API_KEY") : pick("MINICC_API_KEY", "not-needed");
 
-  let ctxWindow = Number(pick("MINICC_CONTEXT_WINDOW")) || contextWindowFor(model);
-  // Codex 订阅通道对 gpt-5.x 封顶 400k(OpenAI Codex 自身限制，模型本身支持 1M 需走 API key)
-  if (provider === "codex" && ctxWindow > 400_000) ctxWindow = 400_000;
+  const contextInfo = resolveContextWindow(model, provider, pick("MINICC_CONTEXT_WINDOW"));
+  const ctxWindow = contextInfo.contextWindow;
 
   return {
     provider,
@@ -152,7 +128,7 @@ export function loadConfig(): Config {
       "MINICC_CODEX_ENDPOINT",
       "https://chatgpt.com/backend-api/codex/responses",
     ),
-    contextWindow: ctxWindow,
+    ...contextInfo,
     // 阈值默认=窗口的 80%(留 20% 余量再压缩)；env 可显式覆盖
     compactThreshold: pick("MINICC_COMPACT_THRESHOLD")
       ? Number(pick("MINICC_COMPACT_THRESHOLD"))
